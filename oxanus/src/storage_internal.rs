@@ -21,6 +21,7 @@ const RESURRECT_THRESHOLD_SECS: i64 = 5;
 pub(crate) struct StorageInternal {
     pool: deadpool_redis::Pool,
     keys: StorageKeys,
+    started_at: i64,
 }
 
 #[derive(Clone)]
@@ -94,6 +95,7 @@ pub struct Process {
     pub hostname: String,
     pub pid: u32,
     pub heartbeat_at: i64,
+    pub started_at: i64,
 }
 
 impl Process {
@@ -135,7 +137,11 @@ enum JobEnqueueAction {
 impl StorageInternal {
     pub fn new(pool: deadpool_redis::Pool, namespace: Option<String>) -> Self {
         let keys = StorageKeys::new(namespace.unwrap_or_default());
-        Self { pool, keys }
+        Self {
+            pool,
+            keys,
+            started_at: chrono::Utc::now().timestamp(),
+        }
     }
 
     pub fn namespace(&self) -> &str {
@@ -1070,6 +1076,7 @@ impl StorageInternal {
             hostname,
             pid,
             heartbeat_at: chrono::Utc::now().timestamp(),
+            started_at: self.started_at,
         }
     }
 
