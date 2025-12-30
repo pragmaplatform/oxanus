@@ -11,6 +11,7 @@ use crate::{
     OxanusError,
     job_envelope::{JobConflictStrategy, JobEnvelope, JobId},
     result_collector::{JobResult, JobResultKind},
+    storage_keys::StorageKeys,
     worker_registry::CronJob,
 };
 
@@ -22,20 +23,6 @@ pub(crate) struct StorageInternal {
     pool: deadpool_redis::Pool,
     keys: StorageKeys,
     started_at: i64,
-}
-
-#[derive(Clone)]
-struct StorageKeys {
-    namespace: String,
-    jobs: String,
-    dead: String,
-    schedule: String,
-    retry: String,
-    queue_prefix: String,
-    processing_queue_prefix: String,
-    processes: String,
-    processes_data: String,
-    stats: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -101,30 +88,6 @@ pub struct Process {
 impl Process {
     pub fn id(&self) -> String {
         format!("{}-{}", self.hostname, self.pid)
-    }
-}
-
-impl StorageKeys {
-    pub fn new(namespace: impl Into<String>) -> Self {
-        let namespace = namespace.into();
-        let namespace = if namespace.is_empty() {
-            "oxanus".to_string()
-        } else {
-            format!("oxanus:{namespace}")
-        };
-
-        Self {
-            jobs: format!("{namespace}:jobs"),
-            dead: format!("{namespace}:dead"),
-            schedule: format!("{namespace}:schedule"),
-            retry: format!("{namespace}:retry"),
-            queue_prefix: format!("{namespace}:queue"),
-            processing_queue_prefix: format!("{namespace}:processing"),
-            processes: format!("{namespace}:processes"),
-            processes_data: format!("{namespace}:processes_data"),
-            stats: format!("{namespace}:stats"),
-            namespace,
-        }
     }
 }
 
