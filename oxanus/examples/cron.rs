@@ -22,6 +22,10 @@ impl oxanus::Worker for TestWorker {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         Ok(())
     }
+
+    fn cron_schedule() -> Option<String> {
+        Some("*/5 * * * * *".to_string())
+    }
 }
 
 #[derive(Serialize)]
@@ -43,7 +47,7 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
     let ctx = oxanus::Context::value(WorkerState {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = oxanus::Config::new(&storage)
-        .register_cron_worker::<TestWorker>("*/5 * * * * *", QueueOne)
+        .register_cron_worker::<TestWorker>(QueueOne)
         .with_graceful_shutdown(tokio::signal::ctrl_c());
 
     oxanus::run(config, ctx).await?;

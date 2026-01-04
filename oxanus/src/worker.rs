@@ -33,6 +33,14 @@ pub trait Worker: Send + Sync + UnwindSafe {
     fn on_conflict(&self) -> JobConflictStrategy {
         JobConflictStrategy::Skip
     }
+
+    /// 6 part cron schedule: "* * * * * *"
+    fn cron_schedule() -> Option<String>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 #[cfg(test)]

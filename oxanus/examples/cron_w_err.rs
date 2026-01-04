@@ -37,6 +37,10 @@ impl oxanus::Worker for TestWorker {
     fn retry_delay(&self, _retries: u32) -> u64 {
         0
     }
+
+    fn cron_schedule() -> Option<String> {
+        Some("*/10 * * * * *".to_string())
+    }
 }
 
 #[derive(Serialize)]
@@ -58,7 +62,7 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
     let ctx = oxanus::Context::value(WorkerState {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = oxanus::Config::new(&storage)
-        .register_cron_worker::<TestWorker>("*/10 * * * * *", QueueOne)
+        .register_cron_worker::<TestWorker>(QueueOne)
         .with_graceful_shutdown(tokio::signal::ctrl_c());
 
     oxanus::run(config, ctx).await?;

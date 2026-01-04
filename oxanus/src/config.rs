@@ -57,12 +57,13 @@ impl<DT, ET> Config<DT, ET> {
         self
     }
 
-    pub fn register_cron_worker<T>(mut self, schedule: &str, queue: impl Queue) -> Self
+    pub fn register_cron_worker<W>(mut self, queue: impl Queue) -> Self
     where
-        T: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
+        W: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
     {
         self.queues.insert(queue.config());
-        self.registry.register_cron::<T>(schedule, queue.key());
+        let schedule = W::cron_schedule().expect("Cron Worker must have cron_schedule defined");
+        self.registry.register_cron::<W>(&schedule, queue.key());
         self
     }
 
