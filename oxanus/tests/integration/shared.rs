@@ -52,6 +52,24 @@ impl oxanus::Worker for WorkerRedisSet {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CronWorkerRedisCounter {}
+
+#[async_trait::async_trait]
+impl oxanus::Worker for CronWorkerRedisCounter {
+    type Context = WorkerState;
+    type Error = WorkerError;
+
+    async fn process(
+        &self,
+        oxanus::Context { ctx, .. }: &oxanus::Context<WorkerState>,
+    ) -> Result<(), WorkerError> {
+        let mut redis = ctx.redis.get().await?;
+        let _: () = redis.incr("cron:counter", 1).await?;
+        Ok(())
+    }
+}
+
 #[derive(Serialize)]
 pub struct QueueOne;
 
