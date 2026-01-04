@@ -182,4 +182,64 @@ mod tests {
             "test_dynamic_queue#name=John:age=30:is_student=true"
         );
     }
+
+    #[cfg(feature = "macros")]
+    #[test]
+    fn test_define_queue_with_macro() {
+        use crate as oxanus; // needed for unit test
+
+        #[derive(Serialize, oxanus::Queue)]
+        struct DefaultQueue;
+
+        assert_eq!(DefaultQueue.key(), "default_queue");
+        assert_eq!(DefaultQueue.config().concurrency, 1);
+
+        #[derive(Serialize, oxanus::Queue)]
+        #[oxanus(key = "static_queue")]
+        struct QueueWithKey;
+
+        assert_eq!(QueueWithKey.key(), "static_queue");
+        assert_eq!(QueueWithKey.config().concurrency, 1);
+
+        #[derive(Serialize, oxanus::Queue)]
+        #[oxanus(concurrency = 2)]
+        struct QueueWithConcurrency;
+
+        assert_eq!(QueueWithConcurrency.key(), "queue_with_concurrency");
+        assert_eq!(QueueWithConcurrency.config().concurrency, 2);
+
+        #[derive(Serialize, oxanus::Queue)]
+        #[oxanus(concurrency = 2)]
+        #[oxanus(throttle(window_ms = 3, limit = 4))]
+        struct QueueWithThrottle;
+
+        assert_eq!(QueueWithThrottle.key(), "queue_with_throttle");
+        assert_eq!(QueueWithThrottle.config().concurrency, 2);
+        assert_eq!(QueueWithThrottle.config().throttle.unwrap().window_ms, 3);
+        assert_eq!(QueueWithThrottle.config().throttle.unwrap().limit, 4);
+
+        #[derive(Serialize, oxanus::Queue)]
+        #[oxanus(key = "static_queue_key")]
+        #[oxanus(concurrency = 2)]
+        struct QueueWithKeyAndConcurrency;
+
+        assert_eq!(QueueWithKeyAndConcurrency.key(), "static_queue_key");
+        assert_eq!(QueueWithKeyAndConcurrency.config().concurrency, 2);
+
+        #[derive(Serialize, oxanus::Queue)]
+        #[oxanus(key = "static_queue_key", concurrency = 3)]
+        struct QueueWithKeyAndConcurrency1 {}
+
+        assert_eq!(QueueWithKeyAndConcurrency1 {}.key(), "static_queue_key");
+        assert_eq!(QueueWithKeyAndConcurrency1 {}.config().concurrency, 3);
+
+        #[derive(Serialize, oxanus::Queue)]
+        #[oxanus(prefix = "dyn_queue", concurrency = 2)]
+        struct DynQueue {
+            i: i32,
+        }
+
+        assert_eq!(DynQueue { i: 2 }.key(), "dyn_queue#i=2");
+        assert_eq!(DynQueue::to_config().concurrency, 2);
+    }
 }
