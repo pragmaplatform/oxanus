@@ -20,16 +20,6 @@ struct ThrottleArgs {
     limit: u64,
 }
 
-/// Generates impl for `oxanus::Queue`.
-///
-/// Example usage:
-/// ```ignore
-/// #[derive(Serialize, oxanus::Queue)]
-/// #[oxanus(key = "my_queue")]
-/// #[oxanus(concurrency = 2)]
-/// #[oxanus(throttle(window_ms = 3, limit = 4))]
-/// pub struct MyQueue;
-/// ```
 pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
     let args = match OxanusArgs::from_derive_input(&input) {
         Ok(v) => v,
@@ -88,6 +78,7 @@ pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
     };
 
     quote! {
+        #[automatically_derived]
         impl oxanus::Queue for #struct_ident {
             fn to_config() -> QueueConfig {
                 QueueConfig::#kind(#key)

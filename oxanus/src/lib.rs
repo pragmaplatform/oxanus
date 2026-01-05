@@ -111,4 +111,4 @@ pub use crate::storage_builder::{StorageBuilder, StorageBuilderTimeouts};
 pub use crate::worker::Worker;
 
 #[cfg(feature = "macros")]
-pub use oxanus_macros::Queue;
+pub use oxanus_macros::{Queue, Worker};
