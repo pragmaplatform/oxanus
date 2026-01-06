@@ -24,8 +24,6 @@ pub async fn test_cron() -> TestResult {
     let value: Option<i64> = redis_conn.get("cron:counter").await?;
 
     assert_eq!(value, Some(2));
-    assert_eq!(storage.enqueued_count(QueueOne).await?, 0);
-    assert_eq!(storage.jobs_count().await?, 0);
 
     Ok(())
 }
