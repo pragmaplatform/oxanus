@@ -55,6 +55,7 @@ impl FromMeta for UniqueIdSpec {
                 for meta in metas {
                     match meta {
                         Meta::NameValue(nv) if nv.path.is_ident("fmt") => {
+                            #[allow(clippy::collapsible_if)] // requires 1.88
                             if let syn::Expr::Lit(expr_lit) = nv.value {
                                 if let syn::Lit::Str(s) = expr_lit.lit {
                                     fmt = Some(s);

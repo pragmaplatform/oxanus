@@ -59,9 +59,10 @@ mod tests {
 
         impl TestWorker {
             async fn process(&self, ctx: &Context<WorkerContext>) -> Result<(), WorkerError> {
-                *ctx.ctx.count.lock().map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                })? += 1;
+                *ctx.ctx
+                    .count
+                    .lock()
+                    .map_err(|e| std::io::Error::other(e.to_string()))? += 1;
                 Ok(())
             }
         }
