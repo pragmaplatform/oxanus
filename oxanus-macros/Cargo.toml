@@ -1,0 +1,19 @@
+[package]
+name = "oxanus-macros"
+version = "0.7.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+darling = "0.23"
+heck = { version = "0.5", default-features = false }
+proc-macro-error2 = "2.0"
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2", features = ["parsing", "proc-macro", "derive"] }
+
+[features]
+default = []

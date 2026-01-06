@@ -1,5 +1,5 @@
 [workspace]
-members = ["oxanus"]
+members = ["oxanus", "oxanus-macros"]
 resolver = "3"
 default-members = ["oxanus"]
 
@@ -8,3 +8,4 @@ rust-version = "1.75"
 
 [workspace.dependencies]
 oxanus = { path = "oxanus" }
+oxanus-macros = { path = "oxanus-macros" }

@@ -34,3 +34,182 @@ pub trait Worker: Send + Sync + UnwindSafe {
         JobConflictStrategy::Skip
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{JobConflictStrategy, Worker};
+    use crate::Context;
+    use crate::test_helper::create_worker_context;
+    use serde::Serialize;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct WorkerContext {
+        count: Arc<Mutex<usize>>,
+    }
+
+    #[cfg(feature = "macros")]
+    #[tokio::test]
+    async fn test_define_worker_with_macro() {
+        use crate as oxanus;
+        use std::io::Error as WorkerError;
+
+        #[derive(Serialize, oxanus::Worker)]
+        struct TestWorker {}
+
+        impl TestWorker {
+            async fn process(&self, ctx: &Context<WorkerContext>) -> Result<(), WorkerError> {
+                *ctx.ctx
+                    .count
+                    .lock()
+                    .map_err(|e| std::io::Error::other(e.to_string()))? += 1;
+                Ok(())
+            }
+        }
+
+        assert_eq!(TestWorker {}.max_retries(), 2);
+        assert_eq!(TestWorker {}.on_conflict(), JobConflictStrategy::Skip);
+
+        let ctx = WorkerContext::default();
+        let context = create_worker_context(ctx.clone(), TestWorker {}).await;
+
+        Worker::process(&TestWorker {}, &context).await.unwrap();
+
+        assert_eq!(*ctx.count.lock().unwrap(), 1);
+
+        Worker::process(&TestWorker {}, &context).await.unwrap();
+
+        assert_eq!(*ctx.count.lock().unwrap(), 2);
+
+        #[derive(Serialize, oxanus::Worker)]
+        #[oxanus(error = std::fmt::Error)]
+        #[oxanus(max_retries = 3)]
+        #[oxanus(on_conflict = Replace)]
+        struct TestWorkerCustomError {}
+
+        impl TestWorkerCustomError {
+            async fn process(&self, _: &Context<WorkerContext>) -> Result<(), std::fmt::Error> {
+                use std::fmt::Write;
+
+                let mut s = String::new();
+                write!(&mut s, "hi")
+            }
+        }
+
+        assert_eq!(TestWorkerCustomError {}.unique_id(), None);
+        assert_eq!(TestWorkerCustomError {}.max_retries(), 3);
+        assert_eq!(
+            TestWorkerCustomError {}.on_conflict(),
+            JobConflictStrategy::Replace
+        );
+
+        #[derive(Serialize, oxanus::Worker)]
+        #[oxanus(unique_id = "test_worker_{id}")]
+        struct TestWorkerUniqueId {
+            id: i32,
+        }
+
+        impl TestWorkerUniqueId {
+            async fn process(&self, _: &Context<WorkerContext>) -> Result<(), WorkerError> {
+                Ok(())
+            }
+        }
+
+        assert_eq!(TestWorkerUniqueId { id: 1 }.max_retries(), 2);
+        assert_eq!(
+            TestWorkerUniqueId { id: 1 }.unique_id().unwrap(),
+            "test_worker_1"
+        );
+        assert_eq!(
+            TestWorkerUniqueId { id: 12 }.unique_id().unwrap(),
+            "test_worker_12"
+        );
+
+        #[derive(Serialize, oxanus::Worker)]
+        #[oxanus(unique_id(fmt = "test_worker_{id}_{task}", id = self.id, task = self.task.name))]
+        struct TestWorkerNestedUniqueId {
+            id: i32,
+            task: TestWorkerNestedTask,
+        }
+
+        #[derive(Serialize, Default)]
+        struct TestWorkerNestedTask {
+            name: String,
+        }
+
+        impl TestWorkerNestedUniqueId {
+            async fn process(&self, _: &Context<WorkerContext>) -> Result<(), WorkerError> {
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            TestWorkerNestedUniqueId {
+                id: 1,
+                task: Default::default()
+            }
+            .max_retries(),
+            2
+        );
+        assert_eq!(
+            TestWorkerNestedUniqueId {
+                id: 1,
+                task: TestWorkerNestedTask {
+                    name: "task1".to_owned(),
+                }
+            }
+            .unique_id()
+            .unwrap(),
+            "test_worker_1_task1"
+        );
+        assert_eq!(
+            TestWorkerNestedUniqueId {
+                id: 2,
+                task: TestWorkerNestedTask {
+                    name: "task2".to_owned(),
+                }
+            }
+            .unique_id()
+            .unwrap(),
+            "test_worker_2_task2"
+        );
+
+        #[derive(Serialize, oxanus::Worker)]
+        #[oxanus(unique_id = Self::unique_id)]
+        struct TestWorkerCustomUniqueId {
+            id: i32,
+            task: TestWorkerNestedTask,
+        }
+
+        impl TestWorkerCustomUniqueId {
+            async fn process(&self, _: &Context<WorkerContext>) -> Result<(), WorkerError> {
+                Ok(())
+            }
+
+            fn unique_id(&self) -> Option<String> {
+                Some(format!("worker_id_{}_task_{}", self.id, self.task.name))
+            }
+        }
+
+        assert_eq!(
+            Worker::unique_id(&TestWorkerCustomUniqueId {
+                id: 1,
+                task: TestWorkerNestedTask {
+                    name: "11".to_owned(),
+                }
+            })
+            .unwrap(),
+            "worker_id_1_task_11"
+        );
+        assert_eq!(
+            Worker::unique_id(&TestWorkerCustomUniqueId {
+                id: 2,
+                task: TestWorkerNestedTask {
+                    name: "22".to_owned(),
+                }
+            })
+            .unwrap(),
+            "worker_id_2_task_22"
+        );
+    }
+}

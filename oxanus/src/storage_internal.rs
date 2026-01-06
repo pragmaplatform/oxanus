@@ -933,7 +933,7 @@ impl StorageInternal {
             }
 
             let scheduled_at = next.timestamp_micros();
-            let job_id = format!("{}-{}", job_name, scheduled_at);
+            let job_id = format!("{job_name}-{scheduled_at}");
             let envelope = JobEnvelope::new_cron(
                 cron_job.queue_key.clone(),
                 job_id,
