@@ -185,8 +185,8 @@ mod tests {
                 Ok(())
             }
 
-            fn unique_id(&self) -> String {
-                format!("worker_id_{}_task_{}", self.id, self.task.name)
+            fn unique_id(&self) -> Option<String> {
+                Some(format!("worker_id_{}_task_{}", self.id, self.task.name))
             }
         }
 

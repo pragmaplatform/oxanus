@@ -164,10 +164,10 @@ fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
             });
 
             quote! {
-                format!(
+                Some(format!(
                     #fmt,
                     #(#args),*
-                )
+                ))
             }
         }
 
@@ -175,10 +175,10 @@ fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
             let args = args.iter().map(|(name, expr)| quote!(#name = #expr));
 
             quote! {
-                format!(
+                Some(format!(
                     #fmt,
                     #(#args),*
-                )
+                ))
             }
         }
 
@@ -187,7 +187,7 @@ fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
 
     quote! {
         fn unique_id(&self) -> Option<String> {
-            Some(#formatter)
+            #formatter
         }
     }
 }
