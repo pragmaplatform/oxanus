@@ -12,23 +12,17 @@ enum WorkerError {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct WorkerState {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[oxanus(context = WorkerState, max_retries = 10, retry_delay = 3)]
 struct ResumableTestWorker {}
 
-#[async_trait::async_trait]
-impl oxanus::Worker for ResumableTestWorker {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { state, .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
-        let progress = state.get::<i32>().await?;
+impl ResumableTestWorker {
+    async fn process(&self, ctx: &oxanus::Context<WorkerState>) -> Result<(), WorkerError> {
+        let progress = ctx.state.get::<i32>().await?;
 
         dbg!(&progress);
 
-        state.update(progress.unwrap_or(0) + 1).await?;
+        ctx.state.update(progress.unwrap_or(0) + 1).await?;
 
         if progress.unwrap_or(0) == 10 {
             Ok(())
@@ -36,30 +30,11 @@ impl oxanus::Worker for ResumableTestWorker {
             Err(WorkerError::GenericError("test".to_string()))
         }
     }
-
-    fn max_retries(&self) -> u32 {
-        10
-    }
-
-    fn retry_delay(&self, _retries: u32) -> u64 {
-        3
-    }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, oxanus::Queue)]
+#[oxanus(key = "one", concurrency = 1)]
 struct QueueOne;
-
-impl oxanus::Queue for QueueOne {
-    fn to_config() -> oxanus::QueueConfig {
-        oxanus::QueueConfig {
-            kind: oxanus::QueueKind::Static {
-                key: "one".to_string(),
-            },
-            concurrency: 1,
-            throttle: None,
-        }
-    }
-}
 
 #[tokio::main]
 pub async fn main() -> Result<(), oxanus::OxanusError> {

@@ -12,6 +12,7 @@ struct OxanusArgs {
     context: Option<Path>,
     error: Option<Path>,
     max_retries: Option<u32>,
+    retry_delay: Option<RetryDelay>,
     unique_id: Option<UniqueIdSpec>,
     on_conflict: Option<Ident>,
     cron: Option<Cron>,
@@ -32,10 +33,40 @@ enum UniqueIdSpec {
     CustomFunc(Path),
 }
 
+#[derive(Debug)]
+enum RetryDelay {
+    /// #[retry_delay = 3]
+    Value(u64),
+    /// #[retry_delay = mymod::func]
+    CustomFunc(Path),
+}
+
 #[derive(Debug, FromMeta)]
 struct Cron {
-    schedule: Option<String>,
+    schedule: String,
     queue: Option<Path>,
+}
+
+impl FromMeta for RetryDelay {
+    fn from_meta(meta: &Meta) -> darling::Result<Self> {
+        match meta {
+            Meta::NameValue(nv) => match &nv.value {
+                Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Int(lit),
+                    ..
+                }) => {
+                    let value = lit.base10_parse::<u64>()?;
+                    Ok(RetryDelay::Value(value))
+                }
+                Expr::Path(expr_path) => Ok(RetryDelay::CustomFunc(expr_path.path.clone())),
+                other => Err(Error::custom(format!(
+                    "unsupported retry_delay value: {:?}",
+                    other
+                ))),
+            },
+            _ => Err(Error::custom("retry_delay must be a name-value attribute")),
+        }
+    }
 }
 
 impl FromMeta for UniqueIdSpec {
@@ -123,6 +154,11 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
+    let retry_delay = match args.retry_delay {
+        Some(retry_delay) => expand_retry_delay(retry_delay),
+        None => quote!(),
+    };
+
     let on_conflict = match args.on_conflict {
         Some(on_conflict) => quote! {
             fn on_conflict(&self) -> oxanus::JobConflictStrategy {
@@ -163,9 +199,30 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
 
             #max_retries
 
+            #retry_delay
+
             #on_conflict
 
             #cron
+        }
+    }
+}
+
+fn expand_retry_delay(retry_delay: RetryDelay) -> TokenStream {
+    match retry_delay {
+        RetryDelay::Value(value) => {
+            quote! {
+                fn retry_delay(&self, _retries: u32) -> u64 {
+                    #value
+                }
+            }
+        }
+        RetryDelay::CustomFunc(func) => {
+            quote! {
+                fn retry_delay(&self, retries: u32) -> u64 {
+                    #func(self, retries)
+                }
+            }
         }
     }
 }
@@ -197,7 +254,7 @@ fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
             }
         }
 
-        UniqueIdSpec::CustomFunc(path) => quote!(#path(self)),
+        UniqueIdSpec::CustomFunc(func) => quote!(#func(self)),
     };
 
     quote! {
@@ -209,7 +266,19 @@ fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
 
 fn expand_cron(cron: Cron) -> TokenStream {
     let cron_schedule = cron.schedule;
-    let queue = cron.queue;
+    let cron_queue_config = match cron.queue {
+        Some(queue) => quote! {
+            fn cron_queue_config() -> Option<oxanus::QueueConfig>
+            where
+                Self: Sized,
+            {
+                use oxanus::Queue;
+                Some(#queue::to_config())
+            }
+        },
+        None => quote!(),
+    };
+
     quote! {
         fn cron_schedule() -> Option<String>
         where
@@ -218,12 +287,6 @@ fn expand_cron(cron: Cron) -> TokenStream {
             Some(#cron_schedule.to_string())
         }
 
-        fn cron_queue_config() -> Option<oxanus::QueueConfig>
-        where
-            Self: Sized,
-        {
-            use oxanus::Queue;
-            Some(#queue::to_config())
-        }
+        #cron_queue_config
     }
 }

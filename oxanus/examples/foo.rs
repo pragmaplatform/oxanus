@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
 struct Worker1Sec {
     id: usize,
     payload: String,
@@ -11,81 +11,57 @@ struct Worker1Sec {
 enum WorkerError {}
 
 #[derive(Debug, Clone)]
-struct WorkerState {}
+struct WorkerContext {}
 
-#[async_trait::async_trait]
-impl oxanus::Worker for Worker1Sec {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
+impl Worker1Sec {
+    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
         Ok(())
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
 struct Worker2Sec {
     id: usize,
     foo: i32,
 }
 
-#[async_trait::async_trait]
-impl oxanus::Worker for Worker2Sec {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
+impl Worker2Sec {
+    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
         Ok(())
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
 struct WorkerInstant {}
 
-#[async_trait::async_trait]
-impl oxanus::Worker for WorkerInstant {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
+impl WorkerInstant {
+    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
         Ok(())
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
 struct WorkerInstant2 {}
 
-#[async_trait::async_trait]
-impl oxanus::Worker for WorkerInstant2 {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
+impl WorkerInstant2 {
+    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
         Ok(())
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, oxanus::Queue)]
+#[oxanus(key = "one", concurrency = 1)]
 struct QueueOne;
 
-#[derive(Serialize)]
+#[derive(Serialize, oxanus::Queue)]
+#[oxanus(prefix = "two")]
 struct QueueTwo(Animal, i32);
 
-#[derive(Serialize)]
+#[derive(Serialize, oxanus::Queue)]
+#[oxanus(key = "throttled")]
+#[oxanus(throttle(window_ms = 1500, limit = 1))]
 struct QueueThrottled;
 
 #[derive(Debug, Serialize)]
@@ -95,38 +71,6 @@ enum Animal {
     Bird,
 }
 
-impl oxanus::Queue for QueueOne {
-    fn to_config() -> oxanus::QueueConfig {
-        oxanus::QueueConfig {
-            kind: oxanus::QueueKind::Static {
-                key: "one".to_string(),
-            },
-            concurrency: 1,
-            throttle: None,
-        }
-    }
-}
-
-impl oxanus::Queue for QueueTwo {
-    fn to_config() -> oxanus::QueueConfig {
-        oxanus::QueueConfig::as_dynamic("two")
-    }
-}
-
-impl oxanus::Queue for QueueThrottled {
-    fn to_config() -> oxanus::QueueConfig {
-        oxanus::QueueConfig {
-            kind: oxanus::QueueKind::Static {
-                key: "throttled".to_string(),
-            },
-            concurrency: 1,
-            throttle: Some(oxanus::QueueThrottle {
-                limit: 1,
-                window_ms: 1500,
-            }),
-        }
-    }
-}
 #[tokio::main]
 pub async fn main() -> Result<(), oxanus::OxanusError> {
     tracing_subscriber::registry()
@@ -134,7 +78,7 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::Context::value(WorkerState {});
+    let ctx = oxanus::Context::value(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = oxanus::Config::new(&storage.clone())
         .register_queue::<QueueOne>()
@@ -144,7 +88,7 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .register_worker::<Worker2Sec>()
         .register_worker::<WorkerInstant>()
         .register_worker::<WorkerInstant2>()
-        .exit_when_processed(13);
+        .exit_when_processed(12);
 
     storage
         .enqueue(

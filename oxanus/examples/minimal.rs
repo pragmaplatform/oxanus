@@ -5,41 +5,23 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 enum WorkerError {}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct WorkerState {}
+struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
 struct TestWorker {
     sleep_s: u64,
 }
 
-#[async_trait::async_trait]
-impl oxanus::Worker for TestWorker {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
+impl TestWorker {
+    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_secs(self.sleep_s)).await;
         Ok(())
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, oxanus::Queue)]
+#[oxanus(key = "one", concurrency = 2)]
 struct QueueOne;
-
-impl oxanus::Queue for QueueOne {
-    fn to_config() -> oxanus::QueueConfig {
-        oxanus::QueueConfig {
-            kind: oxanus::QueueKind::Static {
-                key: "one".to_string(),
-            },
-            concurrency: 2,
-            throttle: None,
-        }
-    }
-}
 
 #[tokio::main]
 pub async fn main() -> Result<(), oxanus::OxanusError> {
@@ -48,7 +30,7 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::Context::value(WorkerState {});
+    let ctx = oxanus::Context::value(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = oxanus::Config::new(&storage)
         .register_queue::<QueueOne>()

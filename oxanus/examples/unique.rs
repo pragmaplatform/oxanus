@@ -5,49 +5,24 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 enum WorkerError {}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct WorkerState {}
+struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[oxanus(unique_id = "worker2sec:{id}", on_conflict = Skip)]
 struct Worker2Sec {
     id: usize,
 }
 
-#[async_trait::async_trait]
-impl oxanus::Worker for Worker2Sec {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
+impl Worker2Sec {
+    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
         Ok(())
     }
-
-    fn unique_id(&self) -> Option<String> {
-        Some(format!("worker2sec:{}", self.id))
-    }
-
-    fn on_conflict(&self) -> oxanus::JobConflictStrategy {
-        oxanus::JobConflictStrategy::Skip
-    }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, oxanus::Queue)]
+#[oxanus(key = "one")]
 struct QueueOne;
-
-impl oxanus::Queue for QueueOne {
-    fn to_config() -> oxanus::QueueConfig {
-        oxanus::QueueConfig {
-            kind: oxanus::QueueKind::Static {
-                key: "one".to_string(),
-            },
-            concurrency: 1,
-            throttle: None,
-        }
-    }
-}
 
 #[tokio::main]
 pub async fn main() -> Result<(), oxanus::OxanusError> {
@@ -56,7 +31,7 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::Context::value(WorkerState {});
+    let ctx = oxanus::Context::value(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = oxanus::Config::new(&storage)
         .register_queue::<QueueOne>()

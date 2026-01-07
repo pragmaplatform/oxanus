@@ -7,35 +7,21 @@ enum WorkerError {}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct WorkerState {}
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[oxanus(context = WorkerState)]
+#[oxanus(cron(schedule = "*/5 * * * * *", queue = QueueOne))]
 struct TestWorker {}
 
-#[async_trait::async_trait]
-impl oxanus::Worker for TestWorker {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
+impl TestWorker {
+    async fn process(&self, _: &oxanus::Context<WorkerState>) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         Ok(())
     }
-
-    fn cron_schedule() -> Option<String> {
-        Some("*/5 * * * * *".to_string())
-    }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, oxanus::Queue)]
+#[oxanus(key = "one")]
 struct QueueOne;
-
-impl oxanus::Queue for QueueOne {
-    fn to_config() -> oxanus::QueueConfig {
-        oxanus::QueueConfig::as_static("one")
-    }
-}
 
 #[tokio::main]
 pub async fn main() -> Result<(), oxanus::OxanusError> {
@@ -47,7 +33,7 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
     let ctx = oxanus::Context::value(WorkerState {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = oxanus::Config::new(&storage)
-        .register_cron_worker::<TestWorker>(QueueOne)
+        .register_worker::<TestWorker>()
         .with_graceful_shutdown(tokio::signal::ctrl_c());
 
     oxanus::run(config, ctx).await?;
