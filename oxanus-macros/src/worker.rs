@@ -60,8 +60,7 @@ impl FromMeta for RetryDelay {
                 }
                 Expr::Path(expr_path) => Ok(RetryDelay::CustomFunc(expr_path.path.clone())),
                 other => Err(Error::custom(format!(
-                    "unsupported retry_delay value: {:?}",
-                    other
+                    "Unsupported retry_delay value: {other:?}",
                 ))),
             },
             _ => Err(Error::custom("retry_delay must be a name-value attribute")),
@@ -112,14 +111,14 @@ impl FromMeta for UniqueIdSpec {
                             args.push((ident, nv.value));
                         }
 
-                        _ => return Err(Error::custom("unsupported unique_id syntax")),
+                        _ => return Err(Error::custom("Unsupported unique_id syntax")),
                     }
                 }
 
                 let fmt = fmt.ok_or_else(|| Error::custom("missing fmt = \"...\""))?;
                 Ok(UniqueIdSpec::NamedFormatter { fmt, args })
             }
-            _ => Err(Error::custom("invalid unique_id attribute")),
+            _ => Err(Error::custom("Invalid unique_id attribute")),
         }
     }
 }

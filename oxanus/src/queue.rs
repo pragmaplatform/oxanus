@@ -74,7 +74,7 @@ impl QueueConfig {
     pub fn static_key(&self) -> Option<String> {
         match &self.kind {
             QueueKind::Static { key } => Some(key.clone()),
-            _ => None,
+            QueueKind::Dynamic { .. } => None,
         }
     }
 }
