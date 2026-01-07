@@ -1,5 +1,6 @@
 use crate::shared::*;
 use deadpool_redis::redis::AsyncCommands;
+use oxanus::{Queue, QueueConfig};
 use serde::{Deserialize, Serialize};
 use testresult::TestResult;
 
@@ -23,6 +24,10 @@ impl oxanus::Worker for CronWorkerRedisCounter {
     fn cron_schedule() -> Option<String> {
         Some("* * * * * *".to_string())
     }
+
+    fn cron_queue_config() -> Option<QueueConfig> {
+        Some(QueueOne::to_config())
+    }
 }
 
 #[tokio::test]
@@ -39,7 +44,7 @@ pub async fn test_cron() -> TestResult {
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
     let config = oxanus::Config::new(&storage)
-        .register_cron_worker::<CronWorkerRedisCounter>(QueueOne)
+        .register_worker::<CronWorkerRedisCounter>()
         .exit_when_processed(2);
 
     oxanus::run(config, ctx).await?;

@@ -14,6 +14,7 @@ struct OxanusArgs {
     max_retries: Option<u32>,
     unique_id: Option<UniqueIdSpec>,
     on_conflict: Option<Ident>,
+    cron: Option<Cron>,
 }
 
 #[derive(Debug)]
@@ -29,6 +30,12 @@ enum UniqueIdSpec {
 
     /// #[unique_id = mymod::func]
     CustomFunc(Path),
+}
+
+#[derive(Debug, FromMeta)]
+struct Cron {
+    schedule: Option<String>,
+    queue: Option<Path>,
 }
 
 impl FromMeta for UniqueIdSpec {
@@ -136,6 +143,11 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
+    let cron = match args.cron {
+        Some(cron) => expand_cron(cron),
+        None => quote!(),
+    };
+
     quote! {
         #[automatically_derived]
         #[async_trait::async_trait]
@@ -152,6 +164,8 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
             #max_retries
 
             #on_conflict
+
+            #cron
         }
     }
 }
@@ -189,6 +203,27 @@ fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
     quote! {
         fn unique_id(&self) -> Option<String> {
             #formatter
+        }
+    }
+}
+
+fn expand_cron(cron: Cron) -> TokenStream {
+    let cron_schedule = cron.schedule;
+    let queue = cron.queue;
+    quote! {
+        fn cron_schedule() -> Option<String>
+        where
+            Self: Sized,
+        {
+            Some(#cron_schedule.to_string())
+        }
+
+        fn cron_queue_config() -> Option<oxanus::QueueConfig>
+        where
+            Self: Sized,
+        {
+            use oxanus::Queue;
+            Some(#queue::to_config())
         }
     }
 }

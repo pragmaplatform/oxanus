@@ -1,4 +1,4 @@
-use crate::{context::Context, job_envelope::JobConflictStrategy};
+use crate::{QueueConfig, context::Context, job_envelope::JobConflictStrategy};
 use std::panic::UnwindSafe;
 
 pub type BoxedWorker<DT, ET> = Box<dyn Worker<Context = DT, Error = ET>>;
@@ -36,6 +36,13 @@ pub trait Worker: Send + Sync + UnwindSafe {
 
     /// 6 part cron schedule: "* * * * * *"
     fn cron_schedule() -> Option<String>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
+    fn cron_queue_config() -> Option<QueueConfig>
     where
         Self: Sized,
     {
@@ -218,6 +225,34 @@ mod tests {
             })
             .unwrap(),
             "worker_id_2_task_22"
+        );
+    }
+
+    #[cfg(feature = "macros")]
+    #[tokio::test]
+    async fn test_define_cron_worker_with_macro() {
+        use crate as oxanus; // needed for unit test
+        use crate::Queue;
+        use std::io::Error as WorkerError;
+
+        #[derive(Serialize, oxanus::Queue)]
+        struct DefaultQueue;
+
+        #[derive(Serialize, oxanus::Worker)]
+        #[oxanus(cron(schedule = "*/1 * * * * *", queue = DefaultQueue))]
+        struct TestCronWorker {}
+
+        impl TestCronWorker {
+            async fn process(&self, _: &Context<WorkerContext>) -> Result<(), WorkerError> {
+                Ok(())
+            }
+        }
+
+        assert_eq!(TestCronWorker {}.unique_id(), None);
+        assert_eq!(TestCronWorker::cron_schedule().unwrap(), "*/1 * * * * *");
+        assert_eq!(
+            TestCronWorker::cron_queue_config().unwrap(),
+            DefaultQueue::to_config(),
         );
     }
 }
