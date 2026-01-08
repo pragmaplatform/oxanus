@@ -98,7 +98,7 @@ mod tests {
 
         #[derive(Serialize, oxanus::Worker)]
         #[oxanus(error = std::fmt::Error)]
-        #[oxanus(max_retries = 3)]
+        #[oxanus(max_retries = 3, retry_delay = 10)]
         #[oxanus(on_conflict = Replace)]
         struct TestWorkerCustomError {}
 
@@ -113,6 +113,7 @@ mod tests {
 
         assert_eq!(TestWorkerCustomError {}.unique_id(), None);
         assert_eq!(TestWorkerCustomError {}.max_retries(), 3);
+        assert_eq!(TestWorkerCustomError {}.retry_delay(1), 10);
         assert_eq!(
             TestWorkerCustomError {}.on_conflict(),
             JobConflictStrategy::Replace
@@ -191,6 +192,7 @@ mod tests {
 
         #[derive(Serialize, oxanus::Worker)]
         #[oxanus(unique_id = Self::unique_id)]
+        #[oxanus(retry_delay = Self::retry_delay)]
         struct TestWorkerCustomUniqueId {
             id: i32,
             task: TestWorkerNestedTask,
@@ -204,6 +206,10 @@ mod tests {
             fn unique_id(&self) -> Option<String> {
                 Some(format!("worker_id_{}_task_{}", self.id, self.task.name))
             }
+
+            fn retry_delay(&self, retries: u32) -> u64 {
+                retries as u64 * 2
+            }
         }
 
         assert_eq!(
@@ -216,16 +222,15 @@ mod tests {
             .unwrap(),
             "worker_id_1_task_11"
         );
-        assert_eq!(
-            Worker::unique_id(&TestWorkerCustomUniqueId {
-                id: 2,
-                task: TestWorkerNestedTask {
-                    name: "22".to_owned(),
-                }
-            })
-            .unwrap(),
-            "worker_id_2_task_22"
-        );
+        let worker2 = TestWorkerCustomUniqueId {
+            id: 2,
+            task: TestWorkerNestedTask {
+                name: "22".to_owned(),
+            },
+        };
+        assert_eq!(Worker::unique_id(&worker2).unwrap(), "worker_id_2_task_22");
+        assert_eq!(worker2.retry_delay(1), 2);
+        assert_eq!(worker2.retry_delay(2), 4);
     }
 
     #[cfg(feature = "macros")]
