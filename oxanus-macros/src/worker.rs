@@ -189,7 +189,7 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         None => quote!(ComponentRegistry),
     };
 
-    let registry = if cfg!(feature = "registry") {
+    let registry = if cfg!(feature = "registry") && component_registry.to_string() != "None" {
         quote! {
             oxanus::register_component! {
                 #component_registry(oxanus::ComponentRegistry {

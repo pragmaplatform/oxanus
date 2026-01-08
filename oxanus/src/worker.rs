@@ -53,6 +53,7 @@ pub trait Worker: Send + Sync + UnwindSafe {
     where
         Self: Sized,
     {
+        #[allow(clippy::collapsible_if)] // requires 1.88
         if let (Some(schedule), Some(queue_config)) =
             (Self::cron_schedule(), Self::cron_queue_config())
         {

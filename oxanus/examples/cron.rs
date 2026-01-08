@@ -1,19 +1,22 @@
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+#[derive(oxanus::Registry)]
+struct ComponentRegistry(oxanus::ComponentRegistry<WorkerContext, WorkerError>);
+
 #[derive(Debug, thiserror::Error)]
 enum WorkerError {}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct WorkerState {}
+struct WorkerContext {}
 
 #[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
-#[oxanus(context = WorkerState)]
+#[oxanus(context = WorkerContext)]
 #[oxanus(cron(schedule = "*/5 * * * * *", queue = QueueOne))]
 struct TestWorker {}
 
 impl TestWorker {
-    async fn process(&self, _: &oxanus::Context<WorkerState>) -> Result<(), WorkerError> {
+    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         Ok(())
     }
@@ -30,11 +33,10 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::Context::value(WorkerState {});
+    let ctx = oxanus::Context::value(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
-    let config = oxanus::Config::new(&storage)
-        .register_worker::<TestWorker>()
-        .with_graceful_shutdown(tokio::signal::ctrl_c());
+    let config =
+        ComponentRegistry::build_config(&storage).with_graceful_shutdown(tokio::signal::ctrl_c());
 
     oxanus::run(config, ctx).await?;
 
