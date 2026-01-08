@@ -3,11 +3,12 @@ use heck::ToSnakeCase;
 use proc_macro_error2::abort;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields};
+use syn::{Data, DeriveInput, Fields, Path};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(oxanus), supports(struct_any))]
 struct OxanusArgs {
+    registry: Option<Path>,
     key: Option<String>,
     prefix: Option<String>,
     concurrency: Option<usize>,
@@ -77,6 +78,29 @@ pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
+    let component_registry = match args.registry {
+        Some(registry) => quote!(#registry),
+        None => quote!(ComponentRegistry),
+    };
+
+    let registry = if cfg!(feature = "registry") {
+        quote! {
+            oxanus::register_component! {
+                #component_registry(oxanus::ComponentRegistry {
+                    module_path: module_path!(),
+                    type_name: stringify!(#struct_ident),
+                    definition: || {
+                        oxanus::ComponentDefinition::Queue(
+                            <#struct_ident as oxanus::Queue>::to_config()
+                        )
+                    }
+                })
+            }
+        }
+    } else {
+        quote!()
+    };
+
     quote! {
         #[automatically_derived]
         impl oxanus::Queue for #struct_ident {
@@ -86,5 +110,7 @@ pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
                     #throttle
             }
         }
+
+        #registry
     }
 }

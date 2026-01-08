@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 use crate::Storage;
 use crate::queue::{Queue, QueueConfig};
 use crate::worker::Worker;
-use crate::worker_registry::WorkerRegistry;
+use crate::worker_registry::{WorkerConfig, WorkerRegistry};
 
 pub struct Config<DT, ET> {
     pub(crate) registry: WorkerRegistry<DT, ET>,
@@ -35,8 +35,12 @@ impl<DT, ET> Config<DT, ET> {
     where
         Q: Queue,
     {
-        self.queues.insert(Q::to_config());
+        self.register_queue_with(Q::to_config());
         self
+    }
+
+    pub fn register_queue_with(&mut self, config: QueueConfig) {
+        self.queues.insert(config);
     }
 
     pub fn register_queue_with_concurrency<Q>(mut self, concurrency: usize) -> Self
@@ -45,7 +49,7 @@ impl<DT, ET> Config<DT, ET> {
     {
         let mut config = Q::to_config();
         config.concurrency = concurrency;
-        self.queues.insert(config);
+        self.register_queue_with(config);
         self
     }
 
@@ -57,7 +61,7 @@ impl<DT, ET> Config<DT, ET> {
             let key = queue_config
                 .static_key()
                 .expect("Statically defined cron workers can only use static queues");
-            self.queues.insert(queue_config);
+            self.register_queue_with(queue_config);
             self.registry.register_cron::<W>(&schedule, key);
         } else {
             self.registry.register::<W>();
@@ -70,10 +74,14 @@ impl<DT, ET> Config<DT, ET> {
     where
         W: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
     {
-        self.queues.insert(queue.config());
+        self.register_queue_with(queue.config());
         let schedule = W::cron_schedule().expect("Cron Worker must have cron_schedule defined");
         self.registry.register_cron::<W>(&schedule, queue.key());
         self
+    }
+
+    pub fn register_worker_with(&mut self, config: WorkerConfig<DT, ET>) {
+        self.registry.register_worker_with(config);
     }
 
     pub fn exit_when_processed(mut self, processed: u64) -> Self {
@@ -95,6 +103,17 @@ impl<DT, ET> Config<DT, ET> {
         let mut shutdown_signal = no_signal();
         std::mem::swap(&mut self.shutdown_signal, &mut shutdown_signal);
         shutdown_signal
+    }
+
+    pub fn has_registered_queue<Q: Queue>(&self) -> bool {
+        self.queues.contains(&Q::to_config())
+    }
+
+    pub fn has_registered_worker<W>(&self) -> bool
+    where
+        W: Worker<Context = DT, Error = ET>,
+    {
+        self.registry.has_registered::<W>()
     }
 }
 

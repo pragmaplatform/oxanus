@@ -12,10 +12,32 @@ pub struct WorkerRegistry<DT, ET> {
     pub schedules: HashMap<String, CronJob>,
 }
 
+pub struct WorkerConfig<DT, ET> {
+    pub name: String,
+    pub factory: JobFactory<DT, ET>,
+    pub kind: WorkerConfigKind,
+}
+
+pub enum WorkerConfigKind {
+    Normal,
+    Cron { schedule: String, queue_key: String },
+}
+
 #[derive(Debug, Clone)]
 pub struct CronJob {
     pub schedule: cron::Schedule,
     pub queue_key: String,
+}
+
+pub fn job_factory<
+    T: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
+    DT,
+    ET,
+>(
+    value: serde_json::Value,
+) -> Result<BoxedJob<DT, ET>, OxanusError> {
+    let job: T = serde_json::from_value(value)?;
+    Ok(Box::new(job))
 }
 
 impl<DT, ET> WorkerRegistry<DT, ET> {
@@ -30,20 +52,9 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
     where
         T: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
     {
-        fn factory<
-            T: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
-            DT,
-            ET,
-        >(
-            value: serde_json::Value,
-        ) -> Result<BoxedJob<DT, ET>, OxanusError> {
-            let job: T = serde_json::from_value(value)?;
-            Ok(Box::new(job))
-        }
-
         let name = type_name::<T>();
 
-        self.jobs.insert(name.to_string(), factory::<T, DT, ET>);
+        self.jobs.insert(name.to_string(), job_factory::<T, DT, ET>);
         self
     }
 
@@ -67,6 +78,41 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
         );
 
         self
+    }
+
+    pub fn register_worker_with(&mut self, config: WorkerConfig<DT, ET>) {
+        match config.kind {
+            WorkerConfigKind::Normal => {
+                self.jobs.insert(config.name, config.factory);
+            }
+            WorkerConfigKind::Cron {
+                schedule,
+                queue_key,
+            } => {
+                // we can enforce cron worker being `struct Worker {}` in macro
+
+                self.jobs.insert(config.name.clone(), config.factory);
+
+                let schedule = cron::Schedule::from_str(&schedule).unwrap_or_else(|_| {
+                    panic!("{}: Invalid cron schedule: {schedule}", config.name)
+                });
+
+                self.schedules.insert(
+                    config.name,
+                    CronJob {
+                        schedule,
+                        queue_key,
+                    },
+                );
+            }
+        }
+    }
+
+    pub fn has_registered<T>(&self) -> bool
+    where
+        T: Worker<Context = DT, Error = ET>,
+    {
+        self.jobs.contains_key(type_name::<T>())
     }
 
     pub fn build(

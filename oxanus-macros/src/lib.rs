@@ -1,7 +1,9 @@
 mod queue;
+mod registry;
 mod worker;
 
 use queue::*;
+use registry::*;
 use worker::*;
 
 use proc_macro::TokenStream;
@@ -43,4 +45,13 @@ pub fn derive_worker(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     expand_derive_worker(input).into()
+}
+
+/// Helper to define a component registry.
+#[proc_macro_error]
+#[proc_macro_derive(Registry, attributes(oxanus))]
+pub fn derive_registry(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    expand_derive_registry(input).into()
 }

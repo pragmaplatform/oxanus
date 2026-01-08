@@ -1,4 +1,4 @@
-use crate::{QueueConfig, context::Context, job_envelope::JobConflictStrategy};
+use crate::{QueueConfig, WorkerConfigKind, context::Context, job_envelope::JobConflictStrategy};
 use std::panic::UnwindSafe;
 
 pub type BoxedWorker<DT, ET> = Box<dyn Worker<Context = DT, Error = ET>>;
@@ -48,28 +48,52 @@ pub trait Worker: Send + Sync + UnwindSafe {
     {
         None
     }
+
+    fn to_config() -> WorkerConfigKind
+    where
+        Self: Sized,
+    {
+        if let (Some(schedule), Some(queue_config)) =
+            (Self::cron_schedule(), Self::cron_queue_config())
+        {
+            if let Some(queue_key) = queue_config.static_key() {
+                return WorkerConfigKind::Cron {
+                    schedule,
+                    queue_key,
+                };
+            }
+        }
+        WorkerConfigKind::Normal
+    }
 }
 
+#[cfg(feature = "macros")]
 #[cfg(test)]
 mod tests {
     use super::{JobConflictStrategy, Worker};
+    use crate as oxanus;
     use crate::Context;
     use crate::test_helper::create_worker_context;
-    use serde::Serialize;
-    use std::sync::{Arc, Mutex};
+    use serde::{Deserialize, Serialize};
+    use std::io::Error as WorkerError;
+    use std::sync::{Arc, Mutex}; // needed for unit test
 
     #[derive(Clone, Default)]
     struct WorkerContext {
         count: Arc<Mutex<usize>>,
     }
 
-    #[cfg(feature = "macros")]
+    #[derive(oxanus::Registry)]
+    #[allow(dead_code)]
+    struct ComponentRegistry(oxanus::ComponentRegistry<WorkerContext, WorkerError>);
+
+    #[derive(oxanus::Registry)]
+    #[allow(dead_code)]
+    struct ComponentRegistryFmt(oxanus::ComponentRegistry<WorkerContext, std::fmt::Error>);
+
     #[tokio::test]
     async fn test_define_worker_with_macro() {
-        use crate as oxanus;
-        use std::io::Error as WorkerError;
-
-        #[derive(Serialize, oxanus::Worker)]
+        #[derive(Serialize, Deserialize, oxanus::Worker)]
         struct TestWorker {}
 
         impl TestWorker {
@@ -96,8 +120,8 @@ mod tests {
 
         assert_eq!(*ctx.count.lock().unwrap(), 2);
 
-        #[derive(Serialize, oxanus::Worker)]
-        #[oxanus(error = std::fmt::Error)]
+        #[derive(Serialize, Deserialize, oxanus::Worker)]
+        #[oxanus(error = std::fmt::Error, registry = ComponentRegistryFmt)]
         #[oxanus(max_retries = 3, retry_delay = 10)]
         #[oxanus(on_conflict = Replace)]
         struct TestWorkerCustomError {}
@@ -119,7 +143,7 @@ mod tests {
             JobConflictStrategy::Replace
         );
 
-        #[derive(Serialize, oxanus::Worker)]
+        #[derive(Serialize, Deserialize, oxanus::Worker)]
         #[oxanus(unique_id = "test_worker_{id}")]
         struct TestWorkerUniqueId {
             id: i32,
@@ -141,14 +165,14 @@ mod tests {
             "test_worker_12"
         );
 
-        #[derive(Serialize, oxanus::Worker)]
+        #[derive(Serialize, Deserialize, oxanus::Worker)]
         #[oxanus(unique_id(fmt = "test_worker_{id}_{task}", id = self.id, task = self.task.name))]
         struct TestWorkerNestedUniqueId {
             id: i32,
             task: TestWorkerNestedTask,
         }
 
-        #[derive(Serialize, Default)]
+        #[derive(Serialize, Deserialize, Default)]
         struct TestWorkerNestedTask {
             name: String,
         }
@@ -190,7 +214,7 @@ mod tests {
             "test_worker_2_task2"
         );
 
-        #[derive(Serialize, oxanus::Worker)]
+        #[derive(Serialize, Deserialize, oxanus::Worker)]
         #[oxanus(unique_id = Self::unique_id)]
         #[oxanus(retry_delay = Self::retry_delay)]
         struct TestWorkerCustomUniqueId {
@@ -233,7 +257,6 @@ mod tests {
         assert_eq!(worker2.retry_delay(2), 4);
     }
 
-    #[cfg(feature = "macros")]
     #[tokio::test]
     async fn test_define_cron_worker_with_macro() {
         use crate as oxanus; // needed for unit test
@@ -243,7 +266,7 @@ mod tests {
         #[derive(Serialize, oxanus::Queue)]
         struct DefaultQueue;
 
-        #[derive(Serialize, oxanus::Worker)]
+        #[derive(Serialize, Deserialize, oxanus::Worker)]
         #[oxanus(cron(schedule = "*/1 * * * * *", queue = DefaultQueue))]
         struct TestCronWorker {}
 
