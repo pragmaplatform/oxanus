@@ -70,6 +70,13 @@ impl QueueConfig {
         self.throttle = Some(throttle);
         self
     }
+
+    pub fn static_key(&self) -> Option<String> {
+        match &self.kind {
+            QueueKind::Static { key } => Some(key.clone()),
+            QueueKind::Dynamic { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

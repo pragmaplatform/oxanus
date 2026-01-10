@@ -80,8 +80,8 @@ pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
     quote! {
         #[automatically_derived]
         impl oxanus::Queue for #struct_ident {
-            fn to_config() -> QueueConfig {
-                QueueConfig::#kind(#key)
+            fn to_config() -> oxanus::QueueConfig {
+                oxanus::QueueConfig::#kind(#key)
                     #concurrency
                     #throttle
             }

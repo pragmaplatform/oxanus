@@ -12,8 +12,10 @@ struct OxanusArgs {
     context: Option<Path>,
     error: Option<Path>,
     max_retries: Option<u32>,
+    retry_delay: Option<RetryDelay>,
     unique_id: Option<UniqueIdSpec>,
     on_conflict: Option<Ident>,
+    cron: Option<Cron>,
 }
 
 #[derive(Debug)]
@@ -29,6 +31,41 @@ enum UniqueIdSpec {
 
     /// #[unique_id = mymod::func]
     CustomFunc(Path),
+}
+
+#[derive(Debug)]
+enum RetryDelay {
+    /// #[retry_delay = 3]
+    Value(u64),
+    /// #[retry_delay = mymod::func]
+    CustomFunc(Path),
+}
+
+#[derive(Debug, FromMeta)]
+struct Cron {
+    schedule: String,
+    queue: Option<Path>,
+}
+
+impl FromMeta for RetryDelay {
+    fn from_meta(meta: &Meta) -> darling::Result<Self> {
+        match meta {
+            Meta::NameValue(nv) => match &nv.value {
+                Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Int(lit),
+                    ..
+                }) => {
+                    let value = lit.base10_parse::<u64>()?;
+                    Ok(RetryDelay::Value(value))
+                }
+                Expr::Path(expr_path) => Ok(RetryDelay::CustomFunc(expr_path.path.clone())),
+                other => Err(Error::custom(format!(
+                    "Unsupported retry_delay value: {other:?}",
+                ))),
+            },
+            _ => Err(Error::custom("retry_delay must be a name-value attribute")),
+        }
+    }
 }
 
 impl FromMeta for UniqueIdSpec {
@@ -74,14 +111,14 @@ impl FromMeta for UniqueIdSpec {
                             args.push((ident, nv.value));
                         }
 
-                        _ => return Err(Error::custom("unsupported unique_id syntax")),
+                        _ => return Err(Error::custom("Unsupported unique_id syntax")),
                     }
                 }
 
                 let fmt = fmt.ok_or_else(|| Error::custom("missing fmt = \"...\""))?;
                 Ok(UniqueIdSpec::NamedFormatter { fmt, args })
             }
-            _ => Err(Error::custom("invalid unique_id attribute")),
+            _ => Err(Error::custom("Invalid unique_id attribute")),
         }
     }
 }
@@ -116,6 +153,11 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
+    let retry_delay = match args.retry_delay {
+        Some(retry_delay) => expand_retry_delay(retry_delay),
+        None => quote!(),
+    };
+
     let on_conflict = match args.on_conflict {
         Some(on_conflict) => quote! {
             fn on_conflict(&self) -> oxanus::JobConflictStrategy {
@@ -136,6 +178,11 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
+    let cron = match args.cron {
+        Some(cron) => expand_cron(cron),
+        None => quote!(),
+    };
+
     quote! {
         #[automatically_derived]
         #[async_trait::async_trait]
@@ -151,7 +198,30 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
 
             #max_retries
 
+            #retry_delay
+
             #on_conflict
+
+            #cron
+        }
+    }
+}
+
+fn expand_retry_delay(retry_delay: RetryDelay) -> TokenStream {
+    match retry_delay {
+        RetryDelay::Value(value) => {
+            quote! {
+                fn retry_delay(&self, _retries: u32) -> u64 {
+                    #value
+                }
+            }
+        }
+        RetryDelay::CustomFunc(func) => {
+            quote! {
+                fn retry_delay(&self, retries: u32) -> u64 {
+                    #func(self, retries)
+                }
+            }
         }
     }
 }
@@ -183,12 +253,39 @@ fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
             }
         }
 
-        UniqueIdSpec::CustomFunc(path) => quote!(#path(self)),
+        UniqueIdSpec::CustomFunc(func) => quote!(#func(self)),
     };
 
     quote! {
         fn unique_id(&self) -> Option<String> {
             #formatter
         }
+    }
+}
+
+fn expand_cron(cron: Cron) -> TokenStream {
+    let cron_schedule = cron.schedule;
+    let cron_queue_config = match cron.queue {
+        Some(queue) => quote! {
+            fn cron_queue_config() -> Option<oxanus::QueueConfig>
+            where
+                Self: Sized,
+            {
+                use oxanus::Queue;
+                Some(#queue::to_config())
+            }
+        },
+        None => quote!(),
+    };
+
+    quote! {
+        fn cron_schedule() -> Option<String>
+        where
+            Self: Sized,
+        {
+            Some(#cron_schedule.to_string())
+        }
+
+        #cron_queue_config
     }
 }

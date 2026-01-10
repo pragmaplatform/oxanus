@@ -7,55 +7,31 @@ enum WorkerError {}
 #[derive(Debug, Clone)]
 struct WorkerState {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[oxanus(context = WorkerState)]
 struct WorkerInstant {}
 
-#[async_trait::async_trait]
-impl oxanus::Worker for WorkerInstant {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
+impl WorkerInstant {
+    async fn process(&self, _: &oxanus::Context<WorkerState>) -> Result<(), WorkerError> {
         Ok(())
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[oxanus(context = WorkerState)]
 struct WorkerInstant2 {}
 
-#[async_trait::async_trait]
-impl oxanus::Worker for WorkerInstant2 {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
+impl WorkerInstant2 {
+    async fn process(&self, _: &oxanus::Context<WorkerState>) -> Result<(), WorkerError> {
         Ok(())
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, oxanus::Queue)]
+#[oxanus(key = "throttled")]
+#[oxanus(throttle(window_ms = 2000, limit = 2))]
 struct QueueThrottled;
 
-impl oxanus::Queue for QueueThrottled {
-    fn to_config() -> oxanus::QueueConfig {
-        oxanus::QueueConfig {
-            kind: oxanus::QueueKind::Static {
-                key: "throttled".to_string(),
-            },
-            concurrency: 1,
-            throttle: Some(oxanus::QueueThrottle {
-                limit: 2,
-                window_ms: 2000,
-            }),
-        }
-    }
-}
 #[tokio::main]
 pub async fn main() -> Result<(), oxanus::OxanusError> {
     tracing_subscriber::registry()

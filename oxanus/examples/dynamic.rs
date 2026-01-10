@@ -7,24 +7,19 @@ enum WorkerError {}
 #[derive(Debug, Clone)]
 struct WorkerState {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[oxanus(context = WorkerState)]
 struct Worker2Sec {}
 
-#[async_trait::async_trait]
-impl oxanus::Worker for Worker2Sec {
-    type Context = WorkerState;
-    type Error = WorkerError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
-        tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
+impl Worker2Sec {
+    async fn process(&self, _: &oxanus::Context<WorkerState>) -> Result<(), WorkerError> {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         Ok(())
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, oxanus::Queue)]
+#[oxanus(prefix = "two")]
 struct QueueDynamic(Animal, i32);
 
 #[derive(Debug, Serialize)]
@@ -32,12 +27,6 @@ enum Animal {
     Dog,
     Cat,
     Bird,
-}
-
-impl oxanus::Queue for QueueDynamic {
-    fn to_config() -> oxanus::QueueConfig {
-        oxanus::QueueConfig::as_dynamic("two")
-    }
 }
 
 #[tokio::main]

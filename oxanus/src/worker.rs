@@ -1,4 +1,4 @@
-use crate::{context::Context, job_envelope::JobConflictStrategy};
+use crate::{QueueConfig, context::Context, job_envelope::JobConflictStrategy};
 use std::panic::UnwindSafe;
 
 pub type BoxedWorker<DT, ET> = Box<dyn Worker<Context = DT, Error = ET>>;
@@ -32,6 +32,21 @@ pub trait Worker: Send + Sync + UnwindSafe {
 
     fn on_conflict(&self) -> JobConflictStrategy {
         JobConflictStrategy::Skip
+    }
+
+    /// 6 part cron schedule: "* * * * * *"
+    fn cron_schedule() -> Option<String>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
+    fn cron_queue_config() -> Option<QueueConfig>
+    where
+        Self: Sized,
+    {
+        None
     }
 }
 
@@ -83,7 +98,7 @@ mod tests {
 
         #[derive(Serialize, oxanus::Worker)]
         #[oxanus(error = std::fmt::Error)]
-        #[oxanus(max_retries = 3)]
+        #[oxanus(max_retries = 3, retry_delay = 10)]
         #[oxanus(on_conflict = Replace)]
         struct TestWorkerCustomError {}
 
@@ -98,6 +113,7 @@ mod tests {
 
         assert_eq!(TestWorkerCustomError {}.unique_id(), None);
         assert_eq!(TestWorkerCustomError {}.max_retries(), 3);
+        assert_eq!(TestWorkerCustomError {}.retry_delay(1), 10);
         assert_eq!(
             TestWorkerCustomError {}.on_conflict(),
             JobConflictStrategy::Replace
@@ -176,6 +192,7 @@ mod tests {
 
         #[derive(Serialize, oxanus::Worker)]
         #[oxanus(unique_id = Self::unique_id)]
+        #[oxanus(retry_delay = Self::retry_delay)]
         struct TestWorkerCustomUniqueId {
             id: i32,
             task: TestWorkerNestedTask,
@@ -189,6 +206,10 @@ mod tests {
             fn unique_id(&self) -> Option<String> {
                 Some(format!("worker_id_{}_task_{}", self.id, self.task.name))
             }
+
+            fn retry_delay(&self, retries: u32) -> u64 {
+                retries as u64 * 2
+            }
         }
 
         assert_eq!(
@@ -201,15 +222,42 @@ mod tests {
             .unwrap(),
             "worker_id_1_task_11"
         );
+        let worker2 = TestWorkerCustomUniqueId {
+            id: 2,
+            task: TestWorkerNestedTask {
+                name: "22".to_owned(),
+            },
+        };
+        assert_eq!(Worker::unique_id(&worker2).unwrap(), "worker_id_2_task_22");
+        assert_eq!(worker2.retry_delay(1), 2);
+        assert_eq!(worker2.retry_delay(2), 4);
+    }
+
+    #[cfg(feature = "macros")]
+    #[tokio::test]
+    async fn test_define_cron_worker_with_macro() {
+        use crate as oxanus; // needed for unit test
+        use crate::Queue;
+        use std::io::Error as WorkerError;
+
+        #[derive(Serialize, oxanus::Queue)]
+        struct DefaultQueue;
+
+        #[derive(Serialize, oxanus::Worker)]
+        #[oxanus(cron(schedule = "*/1 * * * * *", queue = DefaultQueue))]
+        struct TestCronWorker {}
+
+        impl TestCronWorker {
+            async fn process(&self, _: &Context<WorkerContext>) -> Result<(), WorkerError> {
+                Ok(())
+            }
+        }
+
+        assert_eq!(TestCronWorker {}.unique_id(), None);
+        assert_eq!(TestCronWorker::cron_schedule().unwrap(), "*/1 * * * * *");
         assert_eq!(
-            Worker::unique_id(&TestWorkerCustomUniqueId {
-                id: 2,
-                task: TestWorkerNestedTask {
-                    name: "22".to_owned(),
-                }
-            })
-            .unwrap(),
-            "worker_id_2_task_22"
+            TestCronWorker::cron_queue_config().unwrap(),
+            DefaultQueue::to_config(),
         );
     }
 }

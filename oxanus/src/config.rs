@@ -49,20 +49,30 @@ impl<DT, ET> Config<DT, ET> {
         self
     }
 
-    pub fn register_worker<T>(mut self) -> Self
+    pub fn register_worker<W>(mut self) -> Self
     where
-        T: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
+        W: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
     {
-        self.registry.register::<T>();
+        if let (Some(schedule), Some(queue_config)) = (W::cron_schedule(), W::cron_queue_config()) {
+            let key = queue_config
+                .static_key()
+                .expect("Statically defined cron workers can only use static queues");
+            self.queues.insert(queue_config);
+            self.registry.register_cron::<W>(&schedule, key);
+        } else {
+            self.registry.register::<W>();
+        }
         self
     }
 
-    pub fn register_cron_worker<T>(mut self, schedule: &str, queue: impl Queue) -> Self
+    /// Register a cron worker with a dynamic queue
+    pub fn register_cron_worker<W>(mut self, queue: impl Queue) -> Self
     where
-        T: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
+        W: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
     {
         self.queues.insert(queue.config());
-        self.registry.register_cron::<T>(schedule, queue.key());
+        let schedule = W::cron_schedule().expect("Cron Worker must have cron_schedule defined");
+        self.registry.register_cron::<W>(&schedule, queue.key());
         self
     }
 
