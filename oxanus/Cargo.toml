@@ -18,6 +18,7 @@ default = ["sentry", "tracing-instrument", "macros"]
 sentry = ["sentry-core"]
 tracing-instrument = []
 macros = ["oxanus-macros"]
+registry = ["inventory", "oxanus-macros?/registry"]
 
 [dependencies]
 async-trait = "0.1"
@@ -27,6 +28,7 @@ deadpool-redis = "^0.22"
 redis = { version = "^1.0", features = ["aio", "tokio-comp"] }
 futures = { version = "^0.3" }
 gethostname = "^1.0"
+inventory = { version = "0.3", optional = true }
 sentry-core = { version = "^0.46", optional = true }
 serde = { version = "^1.0.218", features = ["derive"] }
 serde_json = { version = "^1.0", features = ["preserve_order"] }
@@ -44,6 +46,8 @@ dotenvy = "^0.15"
 rand = "^0.9"
 testresult = "^0.4"
 tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
+
+oxanus = { path = ".", features = ["registry"] }
 
 [[bench]]
 name = "concurrency"

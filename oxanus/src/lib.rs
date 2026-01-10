@@ -96,6 +96,9 @@ mod worker;
 mod worker_event;
 mod worker_registry;
 
+#[cfg(feature = "registry")]
+mod registry;
+
 #[cfg(test)]
 mod test_helper;
 
@@ -109,6 +112,10 @@ pub use crate::queue::{Queue, QueueConfig, QueueKind, QueueThrottle};
 pub use crate::storage::Storage;
 pub use crate::storage_builder::{StorageBuilder, StorageBuilderTimeouts};
 pub use crate::worker::Worker;
+pub use crate::worker_registry::{WorkerConfig, WorkerConfigKind, job_factory};
+
+#[cfg(feature = "registry")]
+pub use registry::*;
 
 #[cfg(feature = "macros")]
-pub use oxanus_macros::{Queue, Worker};
+pub use oxanus_macros::{Queue, Registry, Worker};

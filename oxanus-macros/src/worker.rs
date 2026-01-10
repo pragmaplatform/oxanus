@@ -11,6 +11,7 @@ use syn::{
 struct OxanusArgs {
     context: Option<Path>,
     error: Option<Path>,
+    registry: Option<Path>,
     max_retries: Option<u32>,
     retry_delay: Option<RetryDelay>,
     unique_id: Option<UniqueIdSpec>,
@@ -183,6 +184,31 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
+    let component_registry = match args.registry {
+        Some(registry) => quote!(#registry),
+        None => quote!(ComponentRegistry),
+    };
+
+    let registry = if cfg!(feature = "registry") && component_registry.to_string() != "None" {
+        quote! {
+            oxanus::register_component! {
+                #component_registry(oxanus::ComponentRegistry {
+                    module_path: module_path!(),
+                    type_name: stringify!(#struct_ident),
+                    definition: || {
+                        oxanus::ComponentDefinition::Worker(oxanus::WorkerConfig {
+                            name: std::any::type_name::<#struct_ident>().to_owned(),
+                            factory: oxanus::job_factory::<#struct_ident, #type_context, #type_error>,
+                            kind: <#struct_ident as oxanus::Worker>::to_config(),
+                        })
+                    }
+                })
+            }
+        }
+    } else {
+        quote!()
+    };
+
     quote! {
         #[automatically_derived]
         #[async_trait::async_trait]
@@ -204,6 +230,8 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
 
             #cron
         }
+
+        #registry
     }
 }
 

@@ -1,18 +1,20 @@
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
+#[derive(oxanus::Registry)]
+struct ComponentRegistry(oxanus::ComponentRegistry<WorkerContext, WorkerError>);
+
 #[derive(Debug, thiserror::Error)]
 enum WorkerError {}
 
 #[derive(Debug, Clone)]
-struct WorkerState {}
+struct WorkerContext {}
 
 #[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
-#[oxanus(context = WorkerState)]
 struct Worker2Sec {}
 
 impl Worker2Sec {
-    async fn process(&self, _: &oxanus::Context<WorkerState>) -> Result<(), WorkerError> {
+    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         Ok(())
     }
@@ -36,12 +38,9 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::Context::value(WorkerState {});
+    let ctx = oxanus::Context::value(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
-    let config = oxanus::Config::new(&storage.clone())
-        .register_queue::<QueueDynamic>()
-        .register_worker::<Worker2Sec>()
-        .exit_when_processed(5);
+    let config = ComponentRegistry::build_config(&storage).exit_when_processed(5);
 
     storage
         .enqueue(QueueDynamic(Animal::Cat, 2), Worker2Sec {})

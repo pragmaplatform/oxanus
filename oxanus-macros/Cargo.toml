@@ -17,3 +17,4 @@ syn = { version = "2", features = ["parsing", "proc-macro", "derive"] }
 
 [features]
 default = []
+registry = []

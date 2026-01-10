@@ -12,6 +12,7 @@ enum WorkerError {
 struct WorkerContext {}
 
 #[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[oxanus(registry = None)]
 #[oxanus(max_retries = 3, retry_delay = 0)]
 #[oxanus(cron(schedule = "*/10 * * * * *"))]
 struct TestWorker {}
@@ -27,6 +28,7 @@ impl TestWorker {
 }
 
 #[derive(Serialize, oxanus::Queue)]
+#[oxanus(registry = None)]
 #[oxanus(prefix = "two")]
 struct QueueDynamic(i32);
 

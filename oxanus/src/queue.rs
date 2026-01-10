@@ -195,6 +195,10 @@ mod tests {
     fn test_define_queue_with_macro() {
         use crate as oxanus; // needed for unit test
 
+        #[derive(oxanus::Registry)]
+        #[allow(dead_code)]
+        struct ComponentRegistry(oxanus::ComponentRegistry<(), ()>);
+
         #[derive(Serialize, oxanus::Queue)]
         struct DefaultQueue;
 
