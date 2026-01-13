@@ -76,7 +76,7 @@ impl<DT, ET> Config<DT, ET> {
     {
         self.register_queue_with(queue.config());
         let schedule_string;
-        let schedule = if cron_schedule == "" {
+        let schedule = if cron_schedule.is_empty() {
             schedule_string =
                 W::cron_schedule().expect("Cron Worker must have cron_schedule defined");
             &schedule_string
