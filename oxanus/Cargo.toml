@@ -47,7 +47,7 @@ rand = "^0.9"
 testresult = "^0.4"
 tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
 
-oxanus = { path = ".", features = ["registry"] }
+oxanus = { path = ".", default-features = false, features = ["registry"] }
 
 [[bench]]
 name = "concurrency"

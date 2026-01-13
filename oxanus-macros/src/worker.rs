@@ -257,9 +257,14 @@ fn expand_retry_delay(retry_delay: RetryDelay) -> TokenStream {
 fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
     let formatter = match spec {
         UniqueIdSpec::Shorthand(fmt) => {
+            let fmt_str = fmt.value();
             let args = fields.iter().filter_map(|f| {
                 let name = f.ident.as_ref()?;
-                Some(quote!(#name = self.#name))
+                if fmt_str.contains(&format!("{{{name}}}")) {
+                    Some(quote!(#name = self.#name))
+                } else {
+                    None
+                }
             });
 
             quote! {

@@ -148,6 +148,7 @@ mod tests {
         #[oxanus(unique_id = "test_worker_{id}")]
         struct TestWorkerUniqueId {
             id: i32,
+            _1: i32,
         }
 
         impl TestWorkerUniqueId {
@@ -156,13 +157,13 @@ mod tests {
             }
         }
 
-        assert_eq!(TestWorkerUniqueId { id: 1 }.max_retries(), 2);
+        assert_eq!(TestWorkerUniqueId { id: 1, _1: 0 }.max_retries(), 2);
         assert_eq!(
-            TestWorkerUniqueId { id: 1 }.unique_id().unwrap(),
+            TestWorkerUniqueId { id: 1, _1: 0 }.unique_id().unwrap(),
             "test_worker_1"
         );
         assert_eq!(
-            TestWorkerUniqueId { id: 12 }.unique_id().unwrap(),
+            TestWorkerUniqueId { id: 12, _1: 0 }.unique_id().unwrap(),
             "test_worker_12"
         );
 
