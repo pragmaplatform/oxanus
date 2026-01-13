@@ -12,7 +12,7 @@ struct OxanusArgs {
     context: Option<Path>,
     error: Option<Path>,
     registry: Option<Path>,
-    max_retries: Option<u32>,
+    max_retries: Option<MaxRetries>,
     retry_delay: Option<RetryDelay>,
     unique_id: Option<UniqueIdSpec>,
     on_conflict: Option<Ident>,
@@ -35,6 +35,14 @@ enum UniqueIdSpec {
 }
 
 #[derive(Debug)]
+enum MaxRetries {
+    /// #[max_retries = 3]
+    Value(u32),
+    /// #[max_retries = mymod::func]
+    CustomFunc(Path),
+}
+
+#[derive(Debug)]
 enum RetryDelay {
     /// #[retry_delay = 3]
     Value(u64),
@@ -48,26 +56,37 @@ struct Cron {
     queue: Option<Path>,
 }
 
-impl FromMeta for RetryDelay {
-    fn from_meta(meta: &Meta) -> darling::Result<Self> {
-        match meta {
-            Meta::NameValue(nv) => match &nv.value {
-                Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Int(lit),
-                    ..
-                }) => {
-                    let value = lit.base10_parse::<u64>()?;
-                    Ok(RetryDelay::Value(value))
+macro_rules! impl_from_meta_for_num_or_path {
+    ($ty:ty, $int:ty, $name:literal) => {
+        impl FromMeta for $ty {
+            fn from_meta(meta: &Meta) -> darling::Result<Self> {
+                match meta {
+                    Meta::NameValue(nv) => match &nv.value {
+                        Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Int(lit),
+                            ..
+                        }) => {
+                            let value = lit.base10_parse::<$int>()?;
+                            Ok(Self::Value(value))
+                        }
+                        Expr::Path(expr_path) => Ok(Self::CustomFunc(expr_path.path.clone())),
+                        other => Err(Error::custom(format!(
+                            "Unsupported {} value: {other:?}",
+                            $name
+                        ))),
+                    },
+                    _ => Err(Error::custom(format!(
+                        "{} must be a name-value attribute",
+                        $name
+                    ))),
                 }
-                Expr::Path(expr_path) => Ok(RetryDelay::CustomFunc(expr_path.path.clone())),
-                other => Err(Error::custom(format!(
-                    "Unsupported retry_delay value: {other:?}",
-                ))),
-            },
-            _ => Err(Error::custom("retry_delay must be a name-value attribute")),
+            }
         }
-    }
+    };
 }
+
+impl_from_meta_for_num_or_path!(MaxRetries, u32, "max_retries");
+impl_from_meta_for_num_or_path!(RetryDelay, u64, "retry_delay");
 
 impl FromMeta for UniqueIdSpec {
     fn from_meta(meta: &Meta) -> darling::Result<Self> {
@@ -146,11 +165,7 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
     };
 
     let max_retries = match args.max_retries {
-        Some(max_retries) => quote! {
-            fn max_retries(&self) -> u32 {
-                #max_retries
-            }
-        },
+        Some(max_retries) => expand_max_retries(max_retries),
         None => quote!(),
     };
 
@@ -232,6 +247,25 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         }
 
         #registry
+    }
+}
+
+fn expand_max_retries(max_retries: MaxRetries) -> TokenStream {
+    match max_retries {
+        MaxRetries::Value(value) => {
+            quote! {
+                fn max_retries(&self) -> u32 {
+                    #value
+                }
+            }
+        }
+        MaxRetries::CustomFunc(func) => {
+            quote! {
+                fn max_retries(&self) -> u32 {
+                    #func(self)
+                }
+            }
+        }
     }
 }
 
