@@ -70,20 +70,13 @@ impl<DT, ET> Config<DT, ET> {
     }
 
     /// Register a cron worker with a dynamic queue
-    pub fn register_cron_worker<W>(mut self, cron_schedule: &str, queue: impl Queue) -> Self
+    pub fn register_cron_worker<W>(mut self, queue: impl Queue) -> Self
     where
         W: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
     {
         self.register_queue_with(queue.config());
-        let schedule_string;
-        let schedule = if cron_schedule.is_empty() {
-            schedule_string =
-                W::cron_schedule().expect("Cron Worker must have cron_schedule defined");
-            &schedule_string
-        } else {
-            cron_schedule
-        };
-        self.registry.register_cron::<W>(schedule, queue.key());
+        let schedule = W::cron_schedule().expect("Cron Worker must have cron_schedule defined");
+        self.registry.register_cron::<W>(&schedule, queue.key());
         self
     }
 
