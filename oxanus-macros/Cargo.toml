@@ -3,6 +3,8 @@ name = "oxanus-macros"
 version = "0.8.0"
 edition = "2024"
 license = "MIT"
+description = "Macros for Oxanus."
+repository = "https://github.com/pragmaplatform/oxanus"
 
 [lib]
 proc-macro = true
