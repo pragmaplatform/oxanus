@@ -115,6 +115,13 @@ impl<DT, ET> Config<DT, ET> {
     {
         self.registry.has_registered::<W>()
     }
+
+    pub fn has_registered_cron_worker<W>(&self) -> bool
+    where
+        W: Worker<Context = DT, Error = ET>,
+    {
+        self.registry.has_registered_cron::<W>()
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

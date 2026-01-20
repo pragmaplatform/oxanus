@@ -33,7 +33,9 @@ jobs:
           tool: nextest
 
       - name: Test
-        run: cargo nextest run --all-features --no-fail-fast
+        run: |
+          cargo test --lib --no-default-features
+          cargo nextest run --all-features --no-fail-fast
 
       - name: Lint
         run: cargo clippy --all-features --workspace --all-targets -- -D warnings

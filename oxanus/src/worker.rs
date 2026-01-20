@@ -148,6 +148,7 @@ mod tests {
         #[oxanus(unique_id = "test_worker_{id}")]
         struct TestWorkerUniqueId {
             id: i32,
+            _1: i32,
         }
 
         impl TestWorkerUniqueId {
@@ -156,13 +157,13 @@ mod tests {
             }
         }
 
-        assert_eq!(TestWorkerUniqueId { id: 1 }.max_retries(), 2);
+        assert_eq!(TestWorkerUniqueId { id: 1, _1: 0 }.max_retries(), 2);
         assert_eq!(
-            TestWorkerUniqueId { id: 1 }.unique_id().unwrap(),
+            TestWorkerUniqueId { id: 1, _1: 0 }.unique_id().unwrap(),
             "test_worker_1"
         );
         assert_eq!(
-            TestWorkerUniqueId { id: 12 }.unique_id().unwrap(),
+            TestWorkerUniqueId { id: 12, _1: 0 }.unique_id().unwrap(),
             "test_worker_12"
         );
 
@@ -218,6 +219,7 @@ mod tests {
         #[derive(Serialize, Deserialize, oxanus::Worker)]
         #[oxanus(unique_id = Self::unique_id)]
         #[oxanus(retry_delay = Self::retry_delay)]
+        #[oxanus(max_retries = Self::max_retries)]
         struct TestWorkerCustomUniqueId {
             id: i32,
             task: TestWorkerNestedTask,
@@ -234,6 +236,10 @@ mod tests {
 
             fn retry_delay(&self, retries: u32) -> u64 {
                 retries as u64 * 2
+            }
+
+            fn max_retries(&self) -> u32 {
+                9
             }
         }
 
@@ -256,6 +262,7 @@ mod tests {
         assert_eq!(Worker::unique_id(&worker2).unwrap(), "worker_id_2_task_22");
         assert_eq!(worker2.retry_delay(1), 2);
         assert_eq!(worker2.retry_delay(2), 4);
+        assert_eq!(worker2.max_retries(), 9);
     }
 
     #[tokio::test]

@@ -115,6 +115,13 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
         self.jobs.contains_key(type_name::<T>())
     }
 
+    pub fn has_registered_cron<T>(&self) -> bool
+    where
+        T: Worker<Context = DT, Error = ET>,
+    {
+        self.schedules.contains_key(type_name::<T>())
+    }
+
     pub fn build(
         &self,
         name: &str,

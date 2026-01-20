@@ -8,4 +8,4 @@ rust-version = "1.75"
 
 [workspace.dependencies]
 oxanus = { path = "oxanus" }
-oxanus-macros = { path = "oxanus-macros" }
+oxanus-macros = { version = "0.8.0", path = "oxanus-macros" }

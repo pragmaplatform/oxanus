@@ -54,13 +54,16 @@ pub async fn test_registry() -> TestResult {
     // no need to manually register, here we verify they were registered
     assert!(config.has_registered_queue::<QueueTwo>());
     assert!(config.has_registered_worker::<WorkerCounter>());
-    assert!(config.has_registered_worker::<CronWorkerCounter>());
+    assert!(config.has_registered_cron_worker::<CronWorkerCounter>());
 
-    let worker = WorkerCounter {
-        key: "test_worker:counter".to_owned(),
-    };
-
-    storage.enqueue(QueueTwo, worker).await?;
+    storage
+        .enqueue(
+            QueueTwo,
+            WorkerCounter {
+                key: "test_worker:counter".to_owned(),
+            },
+        )
+        .await?;
 
     oxanus::run(config, ctx).await?;
 

@@ -3,6 +3,7 @@ mod dead;
 mod drain;
 mod dynamic;
 mod panic;
+#[cfg(feature = "macros")]
 mod registry;
 mod retry;
 mod shared;
