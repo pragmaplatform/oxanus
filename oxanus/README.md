@@ -12,7 +12,7 @@
 
 Oxanus is job processing library written in Rust doesn't suck (or at least sucks in a completely different way than other options).
 
-Oxanus goes for simplity and depth over breadth. It only aims support single backend with simple flow.
+Oxanus goes for simplicity and depth over breadth. It only aims to support a single backend with a simple flow.
 
 ## Key Features
 
@@ -30,46 +30,47 @@ Oxanus goes for simplity and depth over breadth. It only aims support single bac
 ## Quick Start
 
 ```rust
-use oxanus::{Worker, Queue, Context, Config, Storage};
+use oxanus::{Context, Storage};
 use serde::{Serialize, Deserialize};
 
-// Define your worker
-#[derive(Debug, Serialize, Deserialize)]
+// Define your component registry
+#[derive(oxanus::Registry)]
+struct ComponentRegistry(oxanus::ComponentRegistry<MyContext, MyError>);
+
+// Define your error type
+#[derive(Debug, thiserror::Error)]
+enum MyError {}
+
+// Define your context
+#[derive(Debug, Clone)]
+struct MyContext {}
+
+// Define your worker using the derive macro
+#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
 struct MyWorker {
     data: String,
 }
 
-#[async_trait::async_trait]
-impl Worker for MyWorker {
-    type Context = MyContext;
-    type Error = MyError;
-
-    async fn process(&self, ctx: &Context<MyContext>) -> Result<(), MyError> {
+impl MyWorker {
+    async fn process(&self, _ctx: &Context<MyContext>) -> Result<(), MyError> {
         // Process your job here
+        println!("Processing: {}", self.data);
         Ok(())
     }
 }
 
-// Define your queue
-#[derive(Serialize)]
+// Define your queue using the derive macro
+#[derive(Serialize, oxanus::Queue)]
+#[oxanus(key = "my_queue", concurrency = 2)]
 struct MyQueue;
 
-impl Queue for MyQueue {
-    fn to_config() -> QueueConfig {
-        QueueConfig::as_static("my_queue")
-    }
-}
-
-// Define your context
-struct MyContext {}
-
 // Run your worker
-async fn run_worker() -> Result<(), OxanusError> {
+#[tokio::main]
+async fn main() -> Result<(), oxanus::OxanusError> {
     let ctx = Context::value(MyContext {});
-    let storage = Storage::builder().from_env()?.build()?;
-    let config = Config::new(&storage)
-        .register_queue::<MyQueue>()
-        .register_worker::<MyWorker>();
+    let storage = Storage::builder().build_from_env()?;
+    let config = ComponentRegistry::build_config(&storage)
+        .with_graceful_shutdown(tokio::signal::ctrl_c());
 
     // Enqueue some jobs
     storage.enqueue(MyQueue, MyWorker { data: "hello".into() }).await?;
@@ -80,27 +81,40 @@ async fn run_worker() -> Result<(), OxanusError> {
 }
 ```
 
-For more detailed usage examples, check out the [examples directory](https://github.com/pragmaplatform/oxanus/tree/main/examples).
+For more detailed usage examples, check out the [examples directory](https://github.com/pragmaplatform/oxanus/tree/main/oxanus/examples).
 
 
 ## Core Concepts
 
 ### Workers
 
-Workers are the units of work in Oxanus. They implement the [`Worker`] trait and define the processing logic.
+Workers are the units of work in Oxanus. They can be defined using the `#[derive(oxanus::Worker)]` macro or by implementing the [`Worker`] trait manually. Workers define the processing logic for jobs.
+
+Worker attributes:
+- `#[oxanus(max_retries = 3)]` - Set maximum retry attempts
+- `#[oxanus(retry_delay = 5)]` - Set retry delay in seconds
+- `#[oxanus(unique_id = "worker_{id}")]` - Define unique job identifiers
+- `#[oxanus(on_conflict = Skip)]` - Handle job conflicts (Skip or Replace)
+- `#[oxanus(cron(schedule = "*/5 * * * * *", queue = MyQueue))]` - Schedule periodic jobs
 
 ### Queues
 
-Queues are the channels through which jobs flow. They can be:
+Queues are the channels through which jobs flow. They can be defined using the `#[derive(oxanus::Queue)]` macro or by implementing the [`Queue`] trait manually.
 
-- Static: Defined at compile time
-- Dynamic: Created at runtime with each instance being a separate queue
+Queues can be:
 
-Each queue can have its own:
+- **Static**: Defined at compile time with a fixed key
+- **Dynamic**: Created at runtime with each instance being a separate queue (requires struct fields)
 
-- Concurrency limits
-- Throttling rules
-- Retry policies
+Queue attributes:
+- `#[oxanus(key = "my_queue")]` - Set static queue key
+- `#[oxanus(prefix = "dynamic")]` - Set prefix for dynamic queues
+- `#[oxanus(concurrency = 2)]` - Set concurrency limit
+- `#[oxanus(throttle(window_ms = 2000, limit = 5))]` - Configure throttling
+
+### Component Registry
+
+The component registry automatically discovers and registers all workers and queues in your application. Use `#[derive(oxanus::Registry)]` to create a registry and `ComponentRegistry::build_config()` to build the configuration.
 
 ### Storage
 
@@ -111,6 +125,8 @@ The [`Storage`] trait provides the interface for job persistence. It handles:
 - Job state management
 - Queue monitoring
 
+Storage is built using `Storage::builder().build_from_env()` which reads the `REDIS_URL` environment variable.
+
 ### Context
 
 The context provides shared state and utilities to workers. It can include:
@@ -118,13 +134,15 @@ The context provides shared state and utilities to workers. It can include:
 - Database connections
 - Configuration
 - Shared resources
+- Job state (for resumable jobs)
 
 ### Configuration
 
 Configuration is done through the [`Config`] builder, which allows you to:
 
-- Register queues and workers
+- Automatically register queues and workers via the component registry
 - Set up graceful shutdown
+- Configure exit conditions
 
 ### Error Handling
 
