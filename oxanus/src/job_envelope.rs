@@ -47,14 +47,18 @@ impl JobEnvelope {
         DT: Send + Sync + Clone + 'static,
         ET: std::error::Error + Send + Sync + 'static,
     {
+        let job_name = type_name::<T>().to_string();
         let unique_id = job.unique_id();
         let unique = unique_id.is_some();
-        let id = unique_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let id = match unique_id {
+            Some(id) => format!("{}/{}", job_name, id),
+            None => Uuid::new_v4().to_string(),
+        };
         Ok(Self {
             id: id.clone(),
             queue,
             job: Job {
-                name: type_name::<T>().to_string(),
+                name: job_name,
                 args: serde_json::to_value(&job)?,
             },
             meta: JobMeta {
