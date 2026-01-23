@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use deadpool_redis::redis::{self, AsyncCommands};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     num::NonZero,
@@ -11,6 +10,7 @@ use crate::{
     OxanusError,
     job_envelope::{JobConflictStrategy, JobEnvelope, JobId},
     result_collector::{JobResult, JobResultKind},
+    stats::{DynamicQueueStats, Process, QueueStats, Stats, StatsGlobal, StatsProcessing},
     storage_keys::StorageKeys,
     worker_registry::CronJob,
 };
@@ -23,72 +23,6 @@ pub(crate) struct StorageInternal {
     pool: deadpool_redis::Pool,
     keys: StorageKeys,
     started_at: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Stats {
-    pub global: StatsGlobal,
-    pub processes: Vec<Process>,
-    pub processing: Vec<StatsProcessing>,
-    pub queues: Vec<QueueStats>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct StatsGlobal {
-    pub jobs: usize,
-    pub enqueued: usize,
-    pub processed: i64,
-    pub dead: usize,
-    pub scheduled: usize,
-    pub retries: usize,
-    pub latency_s_max: f64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct StatsProcessing {
-    pub process_id: String,
-    pub job_envelope: JobEnvelope,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct QueueStats {
-    pub key: String,
-
-    pub enqueued: usize,
-    pub processed: i64,
-    pub succeeded: i64,
-    pub panicked: i64,
-    pub failed: i64,
-    pub latency_s: f64,
-
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub queues: Vec<DynamicQueueStats>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct DynamicQueueStats {
-    pub suffix: String,
-
-    pub enqueued: usize,
-    pub processed: i64,
-    pub succeeded: i64,
-    pub panicked: i64,
-    pub failed: i64,
-    pub latency_s: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Process {
-    pub hostname: String,
-    pub pid: u32,
-    pub heartbeat_at: i64,
-    pub started_at: i64,
-}
-
-impl Process {
-    pub fn id(&self) -> String {
-        format!("{}-{}", self.hostname, self.pid)
-    }
 }
 
 enum JobEnqueueAction {

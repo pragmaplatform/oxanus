@@ -4,10 +4,14 @@ use crate::{
     error::OxanusError,
     job_envelope::{JobEnvelope, JobId},
     queue::Queue,
+    stats::{Process, Stats},
     storage_builder::StorageBuilder,
-    storage_internal::{Process, Stats, StorageInternal},
+    storage_internal::StorageInternal,
     worker::Worker,
 };
+
+#[cfg(feature = "prometheus")]
+use crate::prometheus::PrometheusMetrics;
 
 /// Storage provides the main interface for job management in Oxanus.
 ///
@@ -255,5 +259,30 @@ impl Storage {
     /// The namespace string.
     pub fn namespace(&self) -> &str {
         self.internal.namespace()
+    }
+
+    /// Returns Prometheus metrics based on the current stats.
+    ///
+    /// # Returns
+    ///
+    /// A [`PrometheusMetrics`] instance containing all current metrics,
+    /// or an [`OxanusError`] if fetching stats fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use oxanus::Storage;
+    ///
+    /// async fn example(storage: &Storage) -> Result<(), oxanus::OxanusError> {
+    ///     let metrics = storage.metrics().await?;
+    ///     let output = metrics.encode_to_string()?;
+    ///     println!("{}", output);
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(feature = "prometheus")]
+    pub async fn metrics(&self) -> Result<PrometheusMetrics, OxanusError> {
+        let stats = self.stats().await?;
+        Ok(PrometheusMetrics::from_stats(&stats))
     }
 }

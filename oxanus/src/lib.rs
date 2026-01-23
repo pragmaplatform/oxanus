@@ -87,6 +87,7 @@ mod launcher;
 mod queue;
 mod result_collector;
 mod semaphores_map;
+mod stats;
 mod storage;
 mod storage_builder;
 mod storage_internal;
@@ -98,6 +99,9 @@ mod worker_registry;
 
 #[cfg(feature = "registry")]
 mod registry;
+
+#[cfg(feature = "prometheus")]
+pub mod prometheus;
 
 #[cfg(test)]
 mod test_helper;
