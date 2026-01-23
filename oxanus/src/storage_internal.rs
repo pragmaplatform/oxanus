@@ -1146,6 +1146,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_latency_multiple_jobs() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        let latency_ms = storage.latency_ms(&queue).await?;
+        assert_eq!(latency_ms, 0.0);
+
+        let latency_micros = storage.latency_micros(&queue).await?;
+        assert_eq!(latency_micros, 0.0);
+
+        let mut envelope = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let now = chrono::Utc::now();
+        let actual_latency_ms = 7777;
+        let actual_latency_micros = actual_latency_ms * 1_000;
+        let actual_latency_s = actual_latency_ms as f64 / 1_000.0;
+        envelope.meta.created_at = now.timestamp_micros() - actual_latency_micros;
+        storage.enqueue(envelope).await?;
+
+        let latency_ms = storage.latency_ms(&queue).await?;
+        assert!((latency_ms - actual_latency_ms as f64).abs() < 50.0);
+
+        let latency_micros = storage.latency_micros(&queue).await?;
+        assert!((latency_micros - actual_latency_micros as f64).abs() < 50_000.0);
+
+        let latency_s = latency_micros / 1_000_000.0;
+        assert!((latency_s - actual_latency_s).abs() < 0.05);
+
+        let mut envelope2 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let actual_latency_ms2 = 5000;
+        let actual_latency_micros2 = actual_latency_ms2 * 1_000;
+        envelope2.meta.created_at = now.timestamp_micros() - actual_latency_micros2;
+        storage.enqueue(envelope2).await?;
+
+        let latency_ms = storage.latency_ms(&queue).await?;
+        assert!((latency_ms - actual_latency_ms as f64).abs() < 50.0);
+
+        let latency_micros = storage.latency_micros(&queue).await?;
+        assert!((latency_micros - actual_latency_micros as f64).abs() < 50_000.0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_cleanup() -> TestResult {
         let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
         let queue = random_string();
