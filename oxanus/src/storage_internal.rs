@@ -498,7 +498,7 @@ impl StorageInternal {
         redis: &mut deadpool_redis::Connection,
         queue: &str,
     ) -> Result<f64, OxanusError> {
-        let result: Vec<String> = (*redis).lrange(self.namespace_queue(queue), 0, 0).await?;
+        let result: Vec<String> = (*redis).lrange(self.namespace_queue(queue), -1, -1).await?;
         match result.first() {
             Some(job_id) => {
                 let envelope = self.get_job_w_conn(redis, job_id).await?;
