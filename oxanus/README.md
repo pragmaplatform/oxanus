@@ -149,3 +149,13 @@ Configuration is done through the [`Config`] builder, which allows you to:
 Oxanus uses a custom error type [`OxanusError`] that covers all possible error cases in the library.
 Workers can define their own error type that implements `std::error::Error`.
 
+### Prometheus Metrics
+
+Enable the `prometheus` feature to expose metrics:
+
+```rust
+let metrics = storage.metrics().await?;
+let output = metrics.encode_to_string()?;
+// Serve `output` on your metrics endpoint
+```
+
