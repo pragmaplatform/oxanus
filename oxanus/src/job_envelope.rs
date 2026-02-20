@@ -151,10 +151,10 @@ impl JobMeta {
     }
 
     pub fn scheduled_at(&self) -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp_micros(self.scheduled_at).unwrap_or_else(|| Utc::now())
+        DateTime::<Utc>::from_timestamp_micros(self.scheduled_at).unwrap_or_else(Utc::now)
     }
 
     pub fn created_at(&self) -> DateTime<Utc> {
-        DateTime::<Utc>::from_timestamp_micros(self.created_at).unwrap_or_else(|| Utc::now())
+        DateTime::<Utc>::from_timestamp_micros(self.created_at).unwrap_or_else(Utc::now)
     }
 }
