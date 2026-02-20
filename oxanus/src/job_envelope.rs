@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::any::type_name;
 use uuid::Uuid;
@@ -137,7 +138,7 @@ impl JobMeta {
         self.scheduled_at / 1000000
     }
 
-    fn latency_micros(&self) -> i64 {
+    pub fn latency_micros(&self) -> i64 {
         (chrono::Utc::now().timestamp_micros() - self.scheduled_at).max(0)
     }
 
@@ -147,5 +148,13 @@ impl JobMeta {
 
     pub fn latency_millis(&self) -> i64 {
         self.latency_micros() / 1000
+    }
+
+    pub fn scheduled_at(&self) -> DateTime<Utc> {
+        DateTime::<Utc>::from_timestamp_micros(self.scheduled_at).unwrap_or_else(|| Utc::now())
+    }
+
+    pub fn created_at(&self) -> DateTime<Utc> {
+        DateTime::<Utc>::from_timestamp_micros(self.created_at).unwrap_or_else(|| Utc::now())
     }
 }
