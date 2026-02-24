@@ -7,6 +7,7 @@ use crate::{
     stats::{Process, Stats},
     storage_builder::StorageBuilder,
     storage_internal::StorageInternal,
+    storage_types::QueueListOpts,
     worker::Worker,
 };
 
@@ -259,6 +260,37 @@ impl Storage {
     /// The namespace string.
     pub fn namespace(&self) -> &str {
         self.internal.namespace()
+    }
+
+    /// Returns a list of jobs currently enqueued in the specified queue.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The queue to list jobs from
+    /// * `opts` - Pagination options controlling count and offset
+    ///
+    /// # Returns
+    ///
+    /// A vector of [`JobEnvelope`]s, or an [`OxanusError`] if the operation fails.
+    pub async fn list_queue_jobs(
+        &self,
+        queue: impl Queue,
+        opts: &QueueListOpts,
+    ) -> Result<Vec<JobEnvelope>, OxanusError> {
+        self.internal.list_queue_jobs(&queue.key(), opts).await
+    }
+
+    /// Removes all jobs from the specified queue.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The queue to wipe
+    ///
+    /// # Returns
+    ///
+    /// An [`OxanusError`] if the operation fails.
+    pub async fn wipe_queue(&self, queue: impl Queue) -> Result<(), OxanusError> {
+        self.internal.wipe_queue(&queue.key()).await
     }
 
     /// Returns Prometheus metrics based on the current stats.

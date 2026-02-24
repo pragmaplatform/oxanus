@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::job_envelope::JobEnvelope;
 
 /// Overall statistics for the Oxanus job queue system.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Stats {
     /// Global aggregate statistics.
     pub global: StatsGlobal,
@@ -18,7 +18,7 @@ pub struct Stats {
 }
 
 /// Global aggregate statistics.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsGlobal {
     /// Total number of jobs (enqueued + scheduled).
     pub jobs: usize,
@@ -37,7 +37,7 @@ pub struct StatsGlobal {
 }
 
 /// Information about a job currently being processed.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsProcessing {
     /// The process ID handling the job.
     pub process_id: String,
@@ -46,7 +46,7 @@ pub struct StatsProcessing {
 }
 
 /// Statistics for a specific queue.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueStats {
     /// The queue key/name.
     pub key: String,
@@ -70,7 +70,7 @@ pub struct QueueStats {
 }
 
 /// Statistics for a dynamic sub-queue.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DynamicQueueStats {
     /// The dynamic queue suffix.
     pub suffix: String,

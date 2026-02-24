@@ -11,6 +11,7 @@ use crate::{
     job_envelope::{JobConflictStrategy, JobEnvelope, JobId},
     result_collector::{JobResult, JobResultKind},
     stats::{DynamicQueueStats, Process, QueueStats, Stats, StatsGlobal, StatsProcessing},
+    storage_types::QueueListOpts,
     storage_keys::StorageKeys,
     worker_registry::CronJob,
 };
@@ -390,6 +391,43 @@ impl StorageInternal {
         let _: () = pipe.query_async(&mut redis).await?;
 
         Ok(envelopes_count)
+    }
+
+    pub async fn list_queue_jobs(
+        &self,
+        queue: &str,
+        opts: &QueueListOpts,
+    ) -> Result<Vec<JobEnvelope>, OxanusError> {
+        let mut redis = self.connection().await?;
+        let start = opts.offset as isize;
+        let stop = (opts.offset + opts.count).saturating_sub(1) as isize;
+        let job_ids: Vec<JobId> = (*redis)
+            .lrange(self.namespace_queue(queue), start, stop)
+            .await?;
+
+        if job_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        self.get_many(&job_ids).await
+    }
+
+    pub async fn wipe_queue(&self, queue: &str) -> Result<(), OxanusError> {
+        let mut redis = self.connection().await?;
+        let queue_key = self.namespace_queue(queue);
+
+        let job_ids: Vec<JobId> = (*redis).lrange(&queue_key, 0, -1).await?;
+
+        if !job_ids.is_empty() {
+            let mut pipe = redis::pipe();
+            pipe.hdel(&self.keys.jobs, &job_ids);
+            pipe.del(&queue_key);
+            let _: () = pipe.query_async(&mut redis).await?;
+        } else {
+            let _: () = (*redis).del(&queue_key).await?;
+        }
+
+        Ok(())
     }
 
     pub async fn enqueued_count(&self, queue: &str) -> Result<usize, OxanusError> {
@@ -1258,6 +1296,62 @@ mod tests {
         assert!(returned_ids.contains(&envelope1.id));
         assert!(!returned_ids.contains(&envelope2.id));
         assert!(returned_ids.contains(&envelope3.id));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_list_queue_jobs() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        let envelope1 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let envelope2 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let envelope3 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+
+        storage.enqueue(envelope1.clone()).await?;
+        storage.enqueue(envelope2.clone()).await?;
+        storage.enqueue(envelope3.clone()).await?;
+
+        let opts = QueueListOpts { count: 10, offset: 0 };
+        let jobs = storage.list_queue_jobs(&queue, &opts).await?;
+        assert_eq!(jobs.len(), 3);
+
+        let opts = QueueListOpts { count: 2, offset: 0 };
+        let jobs = storage.list_queue_jobs(&queue, &opts).await?;
+        assert_eq!(jobs.len(), 2);
+
+        let opts = QueueListOpts { count: 10, offset: 1 };
+        let jobs = storage.list_queue_jobs(&queue, &opts).await?;
+        assert_eq!(jobs.len(), 2);
+
+        let opts = QueueListOpts { count: 10, offset: 5 };
+        let jobs = storage.list_queue_jobs(&queue, &opts).await?;
+        assert!(jobs.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_wipe_queue() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        let envelope1 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let envelope2 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+
+        storage.enqueue(envelope1.clone()).await?;
+        storage.enqueue(envelope2.clone()).await?;
+
+        assert_eq!(storage.enqueued_count(&queue).await?, 2);
+        assert!(storage.get_job(&envelope1.id).await?.is_some());
+        assert!(storage.get_job(&envelope2.id).await?.is_some());
+
+        storage.wipe_queue(&queue).await?;
+
+        assert_eq!(storage.enqueued_count(&queue).await?, 0);
+        assert!(storage.get_job(&envelope1.id).await?.is_none());
+        assert!(storage.get_job(&envelope2.id).await?.is_none());
 
         Ok(())
     }

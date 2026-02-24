@@ -92,6 +92,7 @@ mod storage;
 mod storage_builder;
 mod storage_internal;
 mod storage_keys;
+mod storage_types;
 mod throttler;
 mod worker;
 mod worker_event;
@@ -116,6 +117,7 @@ pub use crate::queue::{Queue, QueueConfig, QueueKind, QueueThrottle};
 pub use crate::stats::*;
 pub use crate::storage::Storage;
 pub use crate::storage_builder::{StorageBuilder, StorageBuilderTimeouts};
+pub use crate::storage_types::*;
 pub use crate::worker::Worker;
 pub use crate::worker_registry::{WorkerConfig, WorkerConfigKind, job_factory};
 
