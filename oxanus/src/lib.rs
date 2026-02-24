@@ -113,6 +113,7 @@ pub use crate::error::OxanusError;
 pub use crate::job_envelope::{JobConflictStrategy, JobId, JobMeta};
 pub use crate::launcher::run;
 pub use crate::queue::{Queue, QueueConfig, QueueKind, QueueThrottle};
+pub use crate::stats::*;
 pub use crate::storage::Storage;
 pub use crate::storage_builder::{StorageBuilder, StorageBuilderTimeouts};
 pub use crate::worker::Worker;
