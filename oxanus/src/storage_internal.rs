@@ -959,6 +959,7 @@ impl StorageInternal {
                 job_id,
                 job_name.clone(),
                 scheduled_at,
+                cron_job.resurrect,
             )?;
 
             self.enqueue_at(envelope, next).await?;
@@ -991,13 +992,24 @@ impl StorageInternal {
                 for job_id in job_ids {
                     match self.get_job_w_conn(&mut redis, &job_id).await? {
                         Some(envelope) => {
-                            tracing::info!(
-                                job_id = job_id,
-                                queue = envelope.queue,
-                                worker = envelope.job.name,
-                                "Resurrecting job"
-                            );
-                            self.enqueue_w_conn(&mut redis, envelope).await?;
+                            if envelope.meta.resurrect {
+                                tracing::info!(
+                                    job_id = job_id,
+                                    queue = envelope.queue,
+                                    worker = envelope.job.name,
+                                    "Resurrecting job"
+                                );
+                                self.enqueue_w_conn(&mut redis, envelope).await?;
+                            } else {
+                                tracing::info!(
+                                    job_id = job_id,
+                                    queue = envelope.queue,
+                                    worker = envelope.job.name,
+                                    "Skipping resurrection (resurrect=false), deleting job"
+                                );
+                                let _: () =
+                                    (*redis).hdel(&self.keys.jobs, &envelope.id).await?;
+                            }
                             let _: () = (*redis).lrem(&processing_queue, 1, &job_id).await?;
                         }
                         None => tracing::warn!("Job {} not found", job_id),

@@ -17,6 +17,7 @@ struct OxanusArgs {
     unique_id: Option<UniqueIdSpec>,
     on_conflict: Option<Ident>,
     cron: Option<Cron>,
+    resurrect: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -199,6 +200,18 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
+    let resurrect = match args.resurrect {
+        Some(value) => quote! {
+            fn should_resurrect() -> bool
+            where
+                Self: Sized,
+            {
+                #value
+            }
+        },
+        None => quote!(),
+    };
+
     let component_registry = match args.registry {
         Some(registry) => quote!(#registry),
         None => quote!(ComponentRegistry),
@@ -244,6 +257,8 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
             #on_conflict
 
             #cron
+
+            #resurrect
         }
 
         #registry

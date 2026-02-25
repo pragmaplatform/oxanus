@@ -12,6 +12,7 @@ struct WorkerContext {}
 
 #[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
 #[oxanus(context = WorkerContext)]
+#[oxanus(resurrect = false)]
 #[oxanus(cron(schedule = "*/5 * * * * *", queue = QueueOne))]
 struct TestWorker {}
 

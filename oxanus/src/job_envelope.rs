@@ -21,6 +21,10 @@ pub struct Job {
     pub args: serde_json::Value,
 }
 
+fn default_resurrect() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct JobMeta {
     pub id: JobId,
@@ -31,6 +35,8 @@ pub struct JobMeta {
     #[serde(default)]
     pub scheduled_at: i64,
     pub state: Option<serde_json::Value>,
+    #[serde(default = "default_resurrect")]
+    pub resurrect: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -42,7 +48,7 @@ pub enum JobConflictStrategy {
 }
 
 impl JobEnvelope {
-    pub fn new<T, DT, ET>(queue: String, job: T) -> Result<Self, OxanusError>
+    pub(crate) fn new<T, DT, ET>(queue: String, job: T) -> Result<Self, OxanusError>
     where
         T: Worker<Context = DT, Error = ET> + serde::Serialize,
         DT: Send + Sync + Clone + 'static,
@@ -51,6 +57,7 @@ impl JobEnvelope {
         let job_name = type_name::<T>().to_string();
         let unique_id = job.unique_id();
         let unique = unique_id.is_some();
+        let resurrect = T::should_resurrect();
         let id = match unique_id {
             Some(id) => format!("{}/{}", job_name, id),
             None => Uuid::new_v4().to_string(),
@@ -74,15 +81,17 @@ impl JobEnvelope {
                 created_at: chrono::Utc::now().timestamp_micros(),
                 scheduled_at: chrono::Utc::now().timestamp_micros(),
                 state: None,
+                resurrect,
             },
         })
     }
 
-    pub fn new_cron(
+    pub(crate) fn new_cron(
         queue: String,
         id: String,
         name: String,
         scheduled_at: i64,
+        resurrect: bool,
     ) -> Result<Self, OxanusError> {
         Ok(Self {
             id: id.clone(),
@@ -99,11 +108,12 @@ impl JobEnvelope {
                 created_at: chrono::Utc::now().timestamp_micros(),
                 scheduled_at,
                 state: None,
+                resurrect,
             },
         })
     }
 
-    pub fn with_retries_incremented(self) -> Self {
+    pub(crate) fn with_retries_incremented(self) -> Self {
         Self {
             id: self.id.clone(),
             queue: self.queue,
@@ -116,6 +126,7 @@ impl JobEnvelope {
                 created_at: self.meta.created_at,
                 scheduled_at: self.meta.scheduled_at,
                 state: self.meta.state,
+                resurrect: self.meta.resurrect,
             },
         }
     }

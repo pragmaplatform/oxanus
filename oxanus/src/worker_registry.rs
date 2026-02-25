@@ -20,13 +20,18 @@ pub struct WorkerConfig<DT, ET> {
 
 pub enum WorkerConfigKind {
     Normal,
-    Cron { schedule: String, queue_key: String },
+    Cron {
+        schedule: String,
+        queue_key: String,
+        resurrect: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct CronJob {
     pub schedule: cron::Schedule,
     pub queue_key: String,
+    pub resurrect: bool,
 }
 
 pub fn job_factory<
@@ -74,6 +79,7 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
             CronJob {
                 schedule,
                 queue_key,
+                resurrect: T::should_resurrect(),
             },
         );
 
@@ -88,6 +94,7 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
             WorkerConfigKind::Cron {
                 schedule,
                 queue_key,
+                resurrect,
             } => {
                 // we can enforce cron worker being `struct Worker {}` in macro
 
@@ -102,6 +109,7 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
                     CronJob {
                         schedule,
                         queue_key,
+                        resurrect,
                     },
                 );
             }

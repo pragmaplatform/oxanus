@@ -49,6 +49,13 @@ pub trait Worker: Send + Sync + UnwindSafe {
         None
     }
 
+    fn should_resurrect() -> bool
+    where
+        Self: Sized,
+    {
+        true
+    }
+
     fn to_config() -> WorkerConfigKind
     where
         Self: Sized,
@@ -61,6 +68,7 @@ pub trait Worker: Send + Sync + UnwindSafe {
                 return WorkerConfigKind::Cron {
                     schedule,
                     queue_key,
+                    resurrect: Self::should_resurrect(),
                 };
             }
         }
@@ -290,5 +298,35 @@ mod tests {
             TestCronWorker::cron_queue_config().unwrap(),
             DefaultQueue::to_config(),
         );
+        assert!(TestCronWorker::should_resurrect());
+    }
+
+    #[tokio::test]
+    async fn test_define_worker_with_resurrect_false() {
+        use crate as oxanus;
+        use std::io::Error as WorkerError;
+
+        #[derive(Serialize, Deserialize, oxanus::Worker)]
+        #[oxanus(resurrect = false)]
+        struct NoResurrectWorker {}
+
+        impl NoResurrectWorker {
+            async fn process(&self, _: &Context<WorkerContext>) -> Result<(), WorkerError> {
+                Ok(())
+            }
+        }
+
+        assert!(!NoResurrectWorker::should_resurrect());
+
+        #[derive(Serialize, Deserialize, oxanus::Worker)]
+        struct DefaultResurrectWorker {}
+
+        impl DefaultResurrectWorker {
+            async fn process(&self, _: &Context<WorkerContext>) -> Result<(), WorkerError> {
+                Ok(())
+            }
+        }
+
+        assert!(DefaultResurrectWorker::should_resurrect());
     }
 }
