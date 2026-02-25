@@ -125,21 +125,15 @@ impl<DT, ET> Config<DT, ET> {
     }
 
     /// Returns a catalog of all registered workers.
-    pub fn workers_catalog(&self) -> Catalog {
-        let now = chrono::Utc::now();
-
+    pub fn catalog(&self) -> Catalog {
         let mut cron_workers: Vec<CronWorkerInfo> = self
             .registry
             .schedules
             .iter()
-            .map(|(name, cron_job)| {
-                let next_run = cron_job.schedule.after(&now).next();
-                CronWorkerInfo {
-                    name: name.clone(),
-                    schedule: cron_job.schedule.clone(),
-                    queue_key: cron_job.queue_key.clone(),
-                    next_run,
-                }
+            .map(|(name, cron_job)| CronWorkerInfo {
+                name: name.clone(),
+                schedule: cron_job.schedule.clone(),
+                queue_key: cron_job.queue_key.clone(),
             })
             .collect();
         cron_workers.sort_by(|a, b| a.name.cmp(&b.name));

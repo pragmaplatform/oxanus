@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Options for listing jobs in a queue.
@@ -59,6 +58,4 @@ pub struct CronWorkerInfo {
     pub schedule: cron::Schedule,
     /// The queue key this worker runs on.
     pub queue_key: String,
-    /// The next scheduled run time, if any.
-    pub next_run: Option<DateTime<Utc>>,
 }
