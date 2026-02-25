@@ -11,8 +11,8 @@ use crate::{
     job_envelope::{JobConflictStrategy, JobEnvelope, JobId},
     result_collector::{JobResult, JobResultKind},
     stats::{DynamicQueueStats, Process, QueueStats, Stats, StatsGlobal, StatsProcessing},
-    storage_types::QueueListOpts,
     storage_keys::StorageKeys,
+    storage_types::QueueListOpts,
     worker_registry::CronJob,
 };
 
@@ -430,20 +430,15 @@ impl StorageInternal {
         Ok(())
     }
 
-    pub async fn list_dead(
-        &self,
-        queue: &str,
-        opts: &QueueListOpts,
-    ) -> Result<Vec<JobEnvelope>, OxanusError> {
+    pub async fn list_dead(&self, opts: &QueueListOpts) -> Result<Vec<JobEnvelope>, OxanusError> {
         let mut redis = self.connection().await?;
-        let entries: Vec<String> = (*redis).lrange(&self.keys.dead, 0, -1).await?;
+        let start = opts.offset as isize;
+        let stop = (opts.offset + opts.count).saturating_sub(1) as isize;
+        let entries: Vec<String> = (*redis).lrange(&self.keys.dead, start, stop).await?;
 
         let jobs: Vec<JobEnvelope> = entries
             .into_iter()
             .filter_map(|s| serde_json::from_str::<JobEnvelope>(&s).ok())
-            .filter(|e| e.queue == queue)
-            .skip(opts.offset)
-            .take(opts.count)
             .collect();
 
         Ok(jobs)
@@ -451,26 +446,18 @@ impl StorageInternal {
 
     pub async fn list_retries(
         &self,
-        queue: &str,
         opts: &QueueListOpts,
     ) -> Result<Vec<JobEnvelope>, OxanusError> {
         let mut redis = self.connection().await?;
-        let job_ids: Vec<JobId> = (*redis).zrange(&self.keys.retry, 0, -1).await?;
+        let start = opts.offset as isize;
+        let stop = (opts.offset + opts.count).saturating_sub(1) as isize;
+        let job_ids: Vec<JobId> = (*redis).zrange(&self.keys.retry, start, stop).await?;
 
         if job_ids.is_empty() {
             return Ok(vec![]);
         }
 
-        let jobs = self
-            .get_many(&job_ids)
-            .await?
-            .into_iter()
-            .filter(|e| e.queue == queue)
-            .skip(opts.offset)
-            .take(opts.count)
-            .collect();
-
-        Ok(jobs)
+        self.get_many(&job_ids).await
     }
 
     pub async fn enqueued_count(&self, queue: &str) -> Result<usize, OxanusError> {
@@ -1356,19 +1343,31 @@ mod tests {
         storage.enqueue(envelope2.clone()).await?;
         storage.enqueue(envelope3.clone()).await?;
 
-        let opts = QueueListOpts { count: 10, offset: 0 };
+        let opts = QueueListOpts {
+            count: 10,
+            offset: 0,
+        };
         let jobs = storage.list_queue_jobs(&queue, &opts).await?;
         assert_eq!(jobs.len(), 3);
 
-        let opts = QueueListOpts { count: 2, offset: 0 };
+        let opts = QueueListOpts {
+            count: 2,
+            offset: 0,
+        };
         let jobs = storage.list_queue_jobs(&queue, &opts).await?;
         assert_eq!(jobs.len(), 2);
 
-        let opts = QueueListOpts { count: 10, offset: 1 };
+        let opts = QueueListOpts {
+            count: 10,
+            offset: 1,
+        };
         let jobs = storage.list_queue_jobs(&queue, &opts).await?;
         assert_eq!(jobs.len(), 2);
 
-        let opts = QueueListOpts { count: 10, offset: 5 };
+        let opts = QueueListOpts {
+            count: 10,
+            offset: 5,
+        };
         let jobs = storage.list_queue_jobs(&queue, &opts).await?;
         assert!(jobs.is_empty());
 

@@ -280,29 +280,23 @@ impl Storage {
         self.internal.list_queue_jobs(&queue.key(), opts).await
     }
 
-    /// Returns a list of dead jobs for the specified queue.
+    /// Returns a list of dead jobs.
     ///
     /// # Arguments
     ///
-    /// * `queue` - The queue to list dead jobs for
     /// * `opts` - Pagination options controlling count and offset
     ///
     /// # Returns
     ///
     /// A vector of [`JobEnvelope`]s, or an [`OxanusError`] if the operation fails.
-    pub async fn list_dead(
-        &self,
-        queue: impl Queue,
-        opts: &QueueListOpts,
-    ) -> Result<Vec<JobEnvelope>, OxanusError> {
-        self.internal.list_dead(&queue.key(), opts).await
+    pub async fn list_dead(&self, opts: &QueueListOpts) -> Result<Vec<JobEnvelope>, OxanusError> {
+        self.internal.list_dead(opts).await
     }
 
-    /// Returns a list of jobs pending retry for the specified queue.
+    /// Returns a list of jobs pending retry.
     ///
     /// # Arguments
     ///
-    /// * `queue` - The queue to list retries for
     /// * `opts` - Pagination options controlling count and offset
     ///
     /// # Returns
@@ -310,10 +304,9 @@ impl Storage {
     /// A vector of [`JobEnvelope`]s, or an [`OxanusError`] if the operation fails.
     pub async fn list_retries(
         &self,
-        queue: impl Queue,
         opts: &QueueListOpts,
     ) -> Result<Vec<JobEnvelope>, OxanusError> {
-        self.internal.list_retries(&queue.key(), opts).await
+        self.internal.list_retries(opts).await
     }
 
     /// Removes all jobs from the specified queue.
