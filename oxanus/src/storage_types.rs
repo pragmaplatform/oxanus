@@ -10,13 +10,37 @@ pub struct QueueListOpts {
     pub offset: usize,
 }
 
-/// Catalog of all registered workers.
+/// Catalog of all registered workers and queues.
 #[derive(Debug, Clone)]
-pub struct WorkersCatalog {
+pub struct Catalog {
     /// Regular (non-cron) workers.
     pub workers: Vec<WorkerInfo>,
     /// Cron workers with schedule information.
     pub cron_workers: Vec<CronWorkerInfo>,
+    /// Registered queues.
+    pub queues: Vec<QueueInfo>,
+}
+
+/// Information about a registered queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueInfo {
+    /// The queue key or prefix.
+    pub key: String,
+    /// Whether this is a dynamic queue.
+    pub dynamic: bool,
+    /// The concurrency limit for this queue.
+    pub concurrency: usize,
+    /// Throttle configuration, if any.
+    pub throttle: Option<QueueThrottleInfo>,
+}
+
+/// Throttle configuration for a queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueThrottleInfo {
+    /// Throttle window in milliseconds.
+    pub window_ms: i64,
+    /// Maximum number of jobs allowed within the window.
+    pub limit: u64,
 }
 
 /// Information about a registered worker.

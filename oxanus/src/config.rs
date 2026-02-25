@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Storage;
 use crate::queue::{Queue, QueueConfig};
-use crate::storage_types::{CronWorkerInfo, WorkerInfo, WorkersCatalog};
+use crate::storage_types::{Catalog, CronWorkerInfo, QueueInfo, QueueThrottleInfo, WorkerInfo};
 use crate::worker::Worker;
 use crate::worker_registry::{WorkerConfig, WorkerRegistry};
 
@@ -125,7 +125,7 @@ impl<DT, ET> Config<DT, ET> {
     }
 
     /// Returns a catalog of all registered workers.
-    pub fn workers_catalog(&self) -> WorkersCatalog {
+    pub fn workers_catalog(&self) -> Catalog {
         let now = chrono::Utc::now();
 
         let mut cron_workers: Vec<CronWorkerInfo> = self
@@ -158,9 +158,31 @@ impl<DT, ET> Config<DT, ET> {
             .collect();
         workers.sort_by(|a, b| a.name.cmp(&b.name));
 
-        WorkersCatalog {
+        let mut queues: Vec<QueueInfo> = self
+            .queues
+            .iter()
+            .map(|q| {
+                let (key, dynamic) = match &q.kind {
+                    crate::queue::QueueKind::Static { key } => (key.clone(), false),
+                    crate::queue::QueueKind::Dynamic { prefix, .. } => (prefix.clone(), true),
+                };
+                QueueInfo {
+                    key,
+                    dynamic,
+                    concurrency: q.concurrency,
+                    throttle: q.throttle.as_ref().map(|t| QueueThrottleInfo {
+                        window_ms: t.window_ms,
+                        limit: t.limit,
+                    }),
+                }
+            })
+            .collect();
+        queues.sort_by(|a, b| a.key.cmp(&b.key));
+
+        Catalog {
             workers,
             cron_workers,
+            queues,
         }
     }
 }
