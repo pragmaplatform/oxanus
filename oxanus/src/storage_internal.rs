@@ -430,6 +430,49 @@ impl StorageInternal {
         Ok(())
     }
 
+    pub async fn list_dead(
+        &self,
+        queue: &str,
+        opts: &QueueListOpts,
+    ) -> Result<Vec<JobEnvelope>, OxanusError> {
+        let mut redis = self.connection().await?;
+        let entries: Vec<String> = (*redis).lrange(&self.keys.dead, 0, -1).await?;
+
+        let jobs: Vec<JobEnvelope> = entries
+            .into_iter()
+            .filter_map(|s| serde_json::from_str::<JobEnvelope>(&s).ok())
+            .filter(|e| e.queue == queue)
+            .skip(opts.offset)
+            .take(opts.count)
+            .collect();
+
+        Ok(jobs)
+    }
+
+    pub async fn list_retries(
+        &self,
+        queue: &str,
+        opts: &QueueListOpts,
+    ) -> Result<Vec<JobEnvelope>, OxanusError> {
+        let mut redis = self.connection().await?;
+        let job_ids: Vec<JobId> = (*redis).zrange(&self.keys.retry, 0, -1).await?;
+
+        if job_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let jobs = self
+            .get_many(&job_ids)
+            .await?
+            .into_iter()
+            .filter(|e| e.queue == queue)
+            .skip(opts.offset)
+            .take(opts.count)
+            .collect();
+
+        Ok(jobs)
+    }
+
     pub async fn enqueued_count(&self, queue: &str) -> Result<usize, OxanusError> {
         let mut redis = self.connection().await?;
         self.enqueued_count_w_conn(&mut redis, queue).await
