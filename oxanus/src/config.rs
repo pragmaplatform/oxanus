@@ -4,6 +4,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Storage;
 use crate::queue::{Queue, QueueConfig};
+use crate::storage_types::{CronWorkerInfo, WorkerInfo, WorkersCatalog};
 use crate::worker::Worker;
 use crate::worker_registry::{WorkerConfig, WorkerRegistry};
 
@@ -121,6 +122,46 @@ impl<DT, ET> Config<DT, ET> {
         W: Worker<Context = DT, Error = ET>,
     {
         self.registry.has_registered_cron::<W>()
+    }
+
+    /// Returns a catalog of all registered workers.
+    pub fn workers_catalog(&self) -> WorkersCatalog {
+        let now = chrono::Utc::now();
+
+        let mut cron_workers: Vec<CronWorkerInfo> = self
+            .registry
+            .schedules
+            .iter()
+            .map(|(name, cron_job)| {
+                let next_run = cron_job.schedule.after(&now).next();
+                CronWorkerInfo {
+                    name: name.clone(),
+                    schedule: cron_job.schedule.clone(),
+                    queue_key: cron_job.queue_key.clone(),
+                    next_run,
+                }
+            })
+            .collect();
+        cron_workers.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let cron_names: std::collections::HashSet<&str> =
+            cron_workers.iter().map(|c| c.name.as_str()).collect();
+
+        let mut workers: Vec<WorkerInfo> = self
+            .registry
+            .worker_names()
+            .into_iter()
+            .filter(|name| !cron_names.contains(name))
+            .map(|name| WorkerInfo {
+                name: name.to_string(),
+            })
+            .collect();
+        workers.sort_by(|a, b| a.name.cmp(&b.name));
+
+        WorkersCatalog {
+            workers,
+            cron_workers,
+        }
     }
 }
 

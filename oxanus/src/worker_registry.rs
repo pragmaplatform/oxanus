@@ -108,6 +108,10 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
         }
     }
 
+    pub fn worker_names(&self) -> Vec<&str> {
+        self.jobs.keys().map(|s| s.as_str()).collect()
+    }
+
     pub fn has_registered<T>(&self) -> bool
     where
         T: Worker<Context = DT, Error = ET>,
