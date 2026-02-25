@@ -235,6 +235,21 @@ impl Storage {
         self.internal.jobs_count().await
     }
 
+    /// Deletes a job by its ID.
+    ///
+    /// Removes the job from both the job store and the processing queue.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the job to delete
+    ///
+    /// # Returns
+    ///
+    /// An [`OxanusError`] if the operation fails.
+    pub async fn delete_job(&self, id: &JobId) -> Result<(), OxanusError> {
+        self.internal.delete_job(id).await
+    }
+
     /// Returns the stats for all queues.
     ///
     /// # Returns

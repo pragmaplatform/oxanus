@@ -294,14 +294,14 @@ impl StorageInternal {
         &self,
         id: &JobId,
         state: serde_json::Value,
-    ) -> Result<Option<JobEnvelope>, OxanusError> {
+    ) -> Result<JobEnvelope, OxanusError> {
         let mut envelope = match self.get_job(id).await? {
             Some(envelope) => envelope,
-            None => return Ok(None),
+            None => return Err(OxanusError::JobNotFound),
         };
         envelope.meta.state = Some(state);
         self.update_job(&envelope).await?;
-        Ok(Some(envelope))
+        Ok(envelope)
     }
 
     pub async fn delete_job(&self, id: &JobId) -> Result<(), OxanusError> {
@@ -467,9 +467,7 @@ impl StorageInternal {
         let mut redis = self.connection().await?;
         let start = opts.offset as isize;
         let stop = (opts.offset + opts.count).saturating_sub(1) as isize;
-        let job_ids: Vec<JobId> = (*redis)
-            .zrange(&self.keys.schedule, start, stop)
-            .await?;
+        let job_ids: Vec<JobId> = (*redis).zrange(&self.keys.schedule, start, stop).await?;
 
         if job_ids.is_empty() {
             return Ok(vec![]);
@@ -1007,8 +1005,7 @@ impl StorageInternal {
                                     worker = envelope.job.name,
                                     "Skipping resurrection (resurrect=false), deleting job"
                                 );
-                                let _: () =
-                                    (*redis).hdel(&self.keys.jobs, &envelope.id).await?;
+                                let _: () = (*redis).hdel(&self.keys.jobs, &envelope.id).await?;
                             }
                             let _: () = (*redis).lrem(&processing_queue, 1, &job_id).await?;
                         }
