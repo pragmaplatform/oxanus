@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "oxanus-macros"
-version = "0.8.0"
+version = "0.8.15"
 dependencies = [
  "darling",
  "heck",
