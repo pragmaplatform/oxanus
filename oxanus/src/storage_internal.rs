@@ -460,6 +460,24 @@ impl StorageInternal {
         self.get_many(&job_ids).await
     }
 
+    pub async fn list_scheduled(
+        &self,
+        opts: &QueueListOpts,
+    ) -> Result<Vec<JobEnvelope>, OxanusError> {
+        let mut redis = self.connection().await?;
+        let start = opts.offset as isize;
+        let stop = (opts.offset + opts.count).saturating_sub(1) as isize;
+        let job_ids: Vec<JobId> = (*redis)
+            .zrange(&self.keys.schedule, start, stop)
+            .await?;
+
+        if job_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        self.get_many(&job_ids).await
+    }
+
     pub async fn enqueued_count(&self, queue: &str) -> Result<usize, OxanusError> {
         let mut redis = self.connection().await?;
         self.enqueued_count_w_conn(&mut redis, queue).await

@@ -309,6 +309,22 @@ impl Storage {
         self.internal.list_retries(opts).await
     }
 
+    /// Returns a list of jobs scheduled for future execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `opts` - Pagination options controlling count and offset
+    ///
+    /// # Returns
+    ///
+    /// A vector of [`JobEnvelope`]s, or an [`OxanusError`] if the operation fails.
+    pub async fn list_scheduled(
+        &self,
+        opts: &QueueListOpts,
+    ) -> Result<Vec<JobEnvelope>, OxanusError> {
+        self.internal.list_scheduled(opts).await
+    }
+
     /// Removes all jobs from the specified queue.
     ///
     /// # Arguments
