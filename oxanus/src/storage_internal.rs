@@ -304,6 +304,16 @@ impl StorageInternal {
         Ok(envelope)
     }
 
+    pub async fn set_started_at(&self, id: &JobId) -> Result<JobEnvelope, OxanusError> {
+        let mut envelope = match self.get_job(id).await? {
+            Some(envelope) => envelope,
+            None => return Err(OxanusError::JobNotFound),
+        };
+        envelope.meta.started_at = Some(chrono::Utc::now().timestamp_micros());
+        self.update_job(&envelope).await?;
+        Ok(envelope)
+    }
+
     pub async fn delete_job(&self, id: &JobId) -> Result<(), OxanusError> {
         let mut redis = self.connection().await?;
         let _: () = redis::pipe()
@@ -1421,6 +1431,43 @@ mod tests {
         assert_eq!(storage.enqueued_count(&queue).await?, 0);
         assert!(storage.get_job(&envelope1.id).await?.is_none());
         assert!(storage.get_job(&envelope2.id).await?.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_started_at() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        let envelope = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        assert!(envelope.meta.started_at.is_none());
+
+        storage.enqueue(envelope.clone()).await?;
+
+        let before = chrono::Utc::now().timestamp_micros();
+        let updated = storage.set_started_at(&envelope.id).await?;
+        let after = chrono::Utc::now().timestamp_micros();
+
+        let started_at = updated.meta.started_at.expect("started_at should be set");
+        assert!(started_at >= before);
+        assert!(started_at <= after);
+
+        let persisted = storage
+            .get_job(&envelope.id)
+            .await?
+            .expect("job should exist");
+        assert_eq!(persisted.meta.started_at, Some(started_at));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_started_at_job_not_found() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+
+        let result = storage.set_started_at(&"nonexistent".to_string()).await;
+        assert!(result.is_err());
 
         Ok(())
     }
