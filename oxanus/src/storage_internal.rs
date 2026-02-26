@@ -1007,7 +1007,12 @@ impl StorageInternal {
                                     worker = envelope.job.name,
                                     "Resurrecting job"
                                 );
-                                self.enqueue_w_conn(&mut redis, envelope).await?;
+                                let _: () = (*redis)
+                                    .lpush(
+                                        self.namespace_queue(&envelope.queue),
+                                        &envelope.id,
+                                    )
+                                    .await?;
                             } else {
                                 tracing::info!(
                                     job_id = job_id,
@@ -1017,7 +1022,6 @@ impl StorageInternal {
                                 );
                                 let _: () = (*redis).hdel(&self.keys.jobs, &envelope.id).await?;
                             }
-                            let _: () = (*redis).lrem(&processing_queue, 1, &job_id).await?;
                         }
                         None => tracing::warn!("Job {} not found", job_id),
                     }
@@ -1302,6 +1306,62 @@ mod tests {
 
         assert_eq!(storage.enqueued_count(&queue).await?, 1);
         assert!(storage.currently_processing_job_ids().await?.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resurrect_unique_job() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+        let envelope = JobEnvelope::new_cron(
+            queue.clone(),
+            "CronWorker-1234567890".to_string(),
+            "CronWorker".to_string(),
+            1234567890,
+            true,
+        )?;
+
+        assert!(envelope.meta.unique);
+        assert_eq!(
+            envelope.meta.on_conflict,
+            Some(JobConflictStrategy::Skip)
+        );
+
+        storage.enqueue(envelope.clone()).await?;
+
+        assert_eq!(storage.enqueued_count(&queue).await?, 1);
+        assert!(storage.currently_processing_job_ids().await?.is_empty());
+        assert!(storage.get_job(&envelope.id).await?.is_some());
+
+        let job_id = storage.dequeue(&queue).await?;
+
+        assert_eq!(job_id, Some(envelope.id.clone()));
+
+        assert_eq!(storage.enqueued_count(&queue).await?, 0);
+        assert_eq!(
+            storage.currently_processing_job_ids().await?,
+            vec![job_id.expect("job_id should be Some")]
+        );
+
+        let mut redis = storage.connection().await?;
+
+        let _: () = redis
+            .zadd(
+                &storage.keys.processes,
+                storage.current_process().id(),
+                chrono::Utc::now().timestamp() - RESURRECT_THRESHOLD_SECS - 1,
+            )
+            .await?;
+
+        storage.resurrect().await?;
+
+        assert_eq!(storage.enqueued_count(&queue).await?, 1);
+        assert!(storage.currently_processing_job_ids().await?.is_empty());
+        assert!(
+            storage.get_job(&envelope.id).await?.is_some(),
+            "unique job should still exist in jobs hash after resurrection"
+        );
 
         Ok(())
     }
