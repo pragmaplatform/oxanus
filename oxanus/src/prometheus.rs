@@ -96,6 +96,10 @@ impl PrometheusMetrics {
             processed_total,
         );
 
+        let failed_total = Gauge::<i64, AtomicI64>::default();
+        failed_total.set(stats.global.failed);
+        registry.register("failed_total", "Total number of jobs failed", failed_total);
+
         let dead_total = Gauge::<i64, AtomicI64>::default();
         dead_total.set(stats.global.dead as i64);
         registry.register("dead_total", "Total number of dead jobs", dead_total);
@@ -338,6 +342,7 @@ mod tests {
                 jobs: 100,
                 enqueued: 50,
                 processed: 200,
+                failed: 10,
                 dead: 5,
                 scheduled: 30,
                 retries: 10,
@@ -412,6 +417,7 @@ mod tests {
         assert!(output.contains("oxanus_jobs_total"));
         assert!(output.contains("oxanus_enqueued_total"));
         assert!(output.contains("oxanus_processed_total"));
+        assert!(output.contains("oxanus_failed_total"));
         assert!(output.contains("oxanus_dead_total"));
         assert!(output.contains("oxanus_scheduled_total"));
         assert!(output.contains("oxanus_retries_total"));
