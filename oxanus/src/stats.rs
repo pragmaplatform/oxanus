@@ -26,6 +26,8 @@ pub struct StatsGlobal {
     pub enqueued: usize,
     /// Total number of jobs processed.
     pub processed: i64,
+    /// Total number of jobs failed.
+    pub failed: i64,
     /// Number of dead jobs.
     pub dead: usize,
     /// Number of scheduled jobs.

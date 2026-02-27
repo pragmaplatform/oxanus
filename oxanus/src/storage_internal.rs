@@ -658,6 +658,7 @@ impl StorageInternal {
 
         let mut processed_count_total = 0;
         let mut enqueued_count_total = 0;
+        let mut failed_count_total = 0;
         let mut latency_s_max = 0.0;
 
         for value in values.iter_mut() {
@@ -692,6 +693,7 @@ impl StorageInternal {
 
             processed_count_total += value.processed;
             enqueued_count_total += value.enqueued;
+            failed_count_total += value.failed;
 
             value.queues.sort_by(|a, b| a.suffix.cmp(&b.suffix));
         }
@@ -721,6 +723,7 @@ impl StorageInternal {
                 jobs: self.jobs_count().await?,
                 enqueued: enqueued_count_total,
                 processed: processed_count_total,
+                failed: failed_count_total,
                 dead: self.dead_count().await?,
                 scheduled: self.scheduled_count().await?,
                 retries: self.retries_count().await?,
@@ -1008,10 +1011,7 @@ impl StorageInternal {
                                     "Resurrecting job"
                                 );
                                 let _: () = (*redis)
-                                    .lpush(
-                                        self.namespace_queue(&envelope.queue),
-                                        &envelope.id,
-                                    )
+                                    .lpush(self.namespace_queue(&envelope.queue), &envelope.id)
                                     .await?;
                             } else {
                                 tracing::info!(
@@ -1323,10 +1323,7 @@ mod tests {
         )?;
 
         assert!(envelope.meta.unique);
-        assert_eq!(
-            envelope.meta.on_conflict,
-            Some(JobConflictStrategy::Skip)
-        );
+        assert_eq!(envelope.meta.on_conflict, Some(JobConflictStrategy::Skip));
 
         storage.enqueue(envelope.clone()).await?;
 

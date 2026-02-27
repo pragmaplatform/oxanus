@@ -104,6 +104,7 @@ pub async fn test_stats() -> TestResult {
     let stats = storage.stats().await?;
 
     assert_eq!(stats.global.processed, 8);
+    assert_eq!(stats.global.failed, 0);
 
     assert_eq!(stats.queues.len(), 2);
     assert_eq!(stats.queues[0].key, "dynamic");
