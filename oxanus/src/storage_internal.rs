@@ -343,7 +343,7 @@ impl StorageInternal {
             .lrem(self.current_processing_queue(), 1, &envelope.id)
             .hdel(&self.keys.jobs, &envelope.id)
             .lpush(&self.keys.dead, &serde_json::to_string(envelope)?)
-            .ltrim(&self.keys.dead, 0, 1000)
+            .ltrim(&self.keys.dead, 0, 999)
             .query_async(&mut redis)
             .await?;
         Ok(())
