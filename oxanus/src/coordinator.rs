@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::context::ContextValue;
 use crate::error::OxanusError;
 use crate::executor::ExecutionError;
-use crate::job_envelope::JobEnvelope;
+use crate::job_envelope::{JobEnvelope, JobMeta};
 use crate::queue::{QueueConfig, QueueKind};
 use crate::result_collector::{JobResult, JobResultKind};
 use crate::semaphores_map::SemaphoresMap;
@@ -30,6 +30,14 @@ struct BatchBuffer {
 
 type BatchBuffers = Arc<Mutex<HashMap<String, BatchBuffer>>>;
 
+struct BatchState {
+    buffers: BatchBuffers,
+    semaphores: Arc<SemaphoresMap>,
+    inflated_queues: Arc<Mutex<HashSet<String>>>,
+    concurrency: usize,
+    max_batch_size: usize,
+}
+
 pub async fn run<DT, ET>(
     config: Arc<Config<DT, ET>>,
     stats: Arc<Mutex<Stats>>,
@@ -50,13 +58,18 @@ where
         .map(|c| c.batch_size)
         .max()
         .unwrap_or(1);
-    let effective_concurrency = concurrency * max_batch_size;
 
-    let (result_tx, result_rx) = mpsc::channel::<JobResult>(effective_concurrency);
-    let (job_tx, mut job_rx) = mpsc::channel::<WorkerJob>(effective_concurrency);
-    let semaphores = Arc::new(SemaphoresMap::new(effective_concurrency));
+    let (result_tx, result_rx) = mpsc::channel::<JobResult>(concurrency);
+    let (job_tx, mut job_rx) = mpsc::channel::<WorkerJob>(concurrency);
+    let semaphores = Arc::new(SemaphoresMap::new(concurrency));
     let mut joinset = JoinSet::new();
-    let batch_buffers: BatchBuffers = Arc::new(Mutex::new(HashMap::new()));
+    let batch_state = Arc::new(BatchState {
+        buffers: Arc::new(Mutex::new(HashMap::new())),
+        semaphores: Arc::clone(&semaphores),
+        inflated_queues: Arc::new(Mutex::new(HashSet::new())),
+        concurrency,
+        max_batch_size,
+    });
 
     let batch_check_interval = if has_batch_configs {
         Duration::from_millis(50)
@@ -87,14 +100,14 @@ where
                         ctx.clone(),
                         result_tx.clone(),
                         job,
-                        Arc::clone(&batch_buffers),
+                        Arc::clone(&batch_state),
                     ));
                 }
             }
             _ = batch_tick.tick(), if has_batch_configs => {
                 spawn_ready_batches(
                     &config, &ctx, &result_tx,
-                    &batch_buffers, &mut joinset, false,
+                    &batch_state.buffers, &mut joinset, false,
                 ).await;
             }
             Some(task_result) = joinset.join_next() => {
@@ -111,7 +124,7 @@ where
             &config,
             &ctx,
             &result_tx,
-            &batch_buffers,
+            &batch_state.buffers,
             &mut joinset,
             true,
         )
@@ -149,7 +162,7 @@ async fn route_job<DT, ET>(
     ctx: ContextValue<DT>,
     result_tx: mpsc::Sender<JobResult>,
     job_event: WorkerJob,
-    batch_buffers: BatchBuffers,
+    batch_state: Arc<BatchState>,
 ) -> Result<(), OxanusError>
 where
     DT: Send + Sync + Clone + 'static,
@@ -161,11 +174,23 @@ where
     };
 
     if let Some(batch_config) = config.registry.get_batch_config(&envelope.job.name) {
+        let queue_key = envelope.queue.clone();
+        {
+            let mut inflated = batch_state.inflated_queues.lock().await;
+            if inflated.insert(queue_key.clone()) {
+                let additional = batch_state.concurrency * (batch_state.max_batch_size - 1);
+                batch_state
+                    .semaphores
+                    .add_permits(&queue_key, additional)
+                    .await;
+            }
+        }
+
         let worker_name = envelope.job.name.clone();
         let batch_size = batch_config.batch_size;
 
         let ready_items = {
-            let mut buffers = batch_buffers.lock().await;
+            let mut buffers = batch_state.buffers.lock().await;
             let buffer = buffers
                 .entry(worker_name.clone())
                 .or_insert_with(|| BatchBuffer {
@@ -308,14 +333,23 @@ where
         }
     };
 
+    let batch_meta = JobMeta {
+        id: String::new(),
+        retries: 0,
+        unique: false,
+        on_conflict: None,
+        created_at: first_envelope.meta.created_at,
+        scheduled_at: first_envelope.meta.scheduled_at,
+        started_at: first_envelope.meta.started_at,
+        state: None,
+        resurrect: false,
+        error: None,
+    };
+
     let full_ctx = crate::Context {
         ctx: ctx.0,
-        meta: first_envelope.meta.clone(),
-        state: crate::context::JobState::new(
-            config.storage.clone(),
-            first_envelope.id.clone(),
-            first_envelope.meta.state.clone(),
-        ),
+        meta: batch_meta,
+        state: crate::context::JobState::new(config.storage.clone(), String::new(), None),
     };
 
     let start = std::time::Instant::now();
