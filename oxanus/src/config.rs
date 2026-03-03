@@ -3,6 +3,7 @@ use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 
 use crate::Storage;
+use crate::batch_processor::BatchProcessorConfig;
 use crate::queue::{Queue, QueueConfig};
 use crate::storage_types::{Catalog, CronWorkerInfo, QueueInfo, QueueThrottleInfo, WorkerInfo};
 use crate::worker::Worker;
@@ -83,6 +84,10 @@ impl<DT, ET> Config<DT, ET> {
 
     pub fn register_worker_with(&mut self, config: WorkerConfig<DT, ET>) {
         self.registry.register_worker_with(config);
+    }
+
+    pub fn register_batch_processor_with(&mut self, config: BatchProcessorConfig<DT, ET>) {
+        self.registry.register_batch_processor_with(config);
     }
 
     pub fn exit_when_processed(mut self, processed: u64) -> Self {

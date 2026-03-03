@@ -93,13 +93,14 @@ where
             Ok(ProcessJobResult::Success)
         }
         Err(e) => {
-            tracing::error!("Job failed: {}", e);
+            let err_msg = e.to_string();
+            tracing::error!("Job failed: {}", err_msg);
             config
                 .storage
                 .internal
                 .finish_with_failure(&envelope)
                 .await?;
-            config.storage.internal.kill(&envelope).await?;
+            config.storage.internal.kill(&envelope, err_msg).await?;
             Ok(ProcessJobResult::Failed)
         }
     }

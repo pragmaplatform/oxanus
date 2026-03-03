@@ -1,4 +1,7 @@
-use crate::{Config, QueueConfig, Storage, worker_registry::WorkerConfig};
+use crate::{
+    Config, QueueConfig, Storage, batch_processor::BatchProcessorConfig,
+    worker_registry::WorkerConfig,
+};
 
 pub struct ComponentRegistry<DT, ET> {
     /// `module_path!()`
@@ -11,6 +14,7 @@ pub struct ComponentRegistry<DT, ET> {
 pub enum ComponentDefinition<DT, ET> {
     Queue(QueueConfig),
     Worker(WorkerConfig<DT, ET>),
+    BatchProcessor(BatchProcessorConfig<DT, ET>),
 }
 
 /// Macro to create a component registry
@@ -41,6 +45,9 @@ where
             match (component.definition)() {
                 ComponentDefinition::Queue(q) => config.register_queue_with(q),
                 ComponentDefinition::Worker(w) => config.register_worker_with(w),
+                ComponentDefinition::BatchProcessor(b) => {
+                    config.register_batch_processor_with(b);
+                }
             }
         }
         config
