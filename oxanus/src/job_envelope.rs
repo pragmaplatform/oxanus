@@ -30,15 +30,19 @@ pub struct JobMeta {
     pub id: JobId,
     pub retries: u32,
     pub unique: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_conflict: Option<JobConflictStrategy>,
     pub created_at: i64,
     #[serde(default)]
     pub scheduled_at: i64,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<serde_json::Value>,
     #[serde(default = "default_resurrect")]
     pub resurrect: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -85,6 +89,7 @@ impl JobEnvelope {
                 started_at: None,
                 state: None,
                 resurrect,
+                error: None,
             },
         })
     }
@@ -113,11 +118,12 @@ impl JobEnvelope {
                 started_at: None,
                 state: None,
                 resurrect,
+                error: None,
             },
         })
     }
 
-    pub(crate) fn with_retries_incremented(self) -> Self {
+    pub(crate) fn with_retries_incremented(self, error: String) -> Self {
         Self {
             id: self.id.clone(),
             queue: self.queue,
@@ -132,8 +138,14 @@ impl JobEnvelope {
                 started_at: None,
                 state: self.meta.state,
                 resurrect: self.meta.resurrect,
+                error: Some(error),
             },
         }
+    }
+
+    pub(crate) fn with_error(mut self, error: String) -> Self {
+        self.meta.error = Some(error);
+        self
     }
 }
 
@@ -206,6 +218,7 @@ mod tests {
             started_at,
             state: None,
             resurrect: true,
+            error: None,
         }
     }
 
@@ -277,12 +290,14 @@ mod tests {
                 started_at: Some(2_000_000),
                 state: None,
                 resurrect: true,
+                error: None,
             },
         };
 
-        let retried = envelope.with_retries_incremented();
+        let retried = envelope.with_retries_incremented("something went wrong".to_string());
         assert_eq!(retried.meta.retries, 1);
         assert!(retried.meta.started_at.is_none());
+        assert_eq!(retried.meta.error.as_deref(), Some("something went wrong"));
     }
 
     #[test]
@@ -301,5 +316,6 @@ mod tests {
         let meta: JobMeta =
             serde_json::from_str(json).expect("should deserialize without started_at");
         assert!(meta.started_at.is_none());
+        assert!(meta.error.is_none());
     }
 }

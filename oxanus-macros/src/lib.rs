@@ -1,7 +1,9 @@
+mod batch_processor;
 mod queue;
 mod registry;
 mod worker;
 
+use batch_processor::*;
 use queue::*;
 use registry::*;
 use worker::*;
@@ -54,4 +56,22 @@ pub fn derive_registry(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
     expand_derive_registry(input).into()
+}
+
+/// Generates impl for `oxanus::BatchProcessor` and `oxanus::Worker`.
+///
+/// Example usage:
+/// ```ignore
+/// #[derive(Debug, Serialize, Deserialize, oxanus::BatchProcessor)]
+/// #[oxanus(batch_size = 3, batch_linger_ms = 1000)]
+/// struct TestBatchProcessor {
+///     workers: Vec<TestWorker>,
+/// }
+/// ```
+#[proc_macro_error]
+#[proc_macro_derive(BatchProcessor, attributes(oxanus))]
+pub fn derive_batch_processor(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    expand_derive_batch_processor(input).into()
 }

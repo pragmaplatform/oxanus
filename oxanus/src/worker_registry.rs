@@ -1,6 +1,7 @@
 use std::str::FromStr;
 use std::{any::type_name, collections::HashMap};
 
+use crate::batch_processor::BatchProcessorConfig;
 use crate::error::OxanusError;
 use crate::worker::Worker;
 
@@ -10,6 +11,7 @@ type JobFactory<DT, ET> = fn(serde_json::Value) -> Result<BoxedJob<DT, ET>, Oxan
 pub struct WorkerRegistry<DT, ET> {
     jobs: HashMap<String, JobFactory<DT, ET>>,
     pub schedules: HashMap<String, CronJob>,
+    pub batch_configs: HashMap<String, BatchProcessorConfig<DT, ET>>,
 }
 
 pub struct WorkerConfig<DT, ET> {
@@ -50,6 +52,7 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
         Self {
             jobs: HashMap::new(),
             schedules: HashMap::new(),
+            batch_configs: HashMap::new(),
         }
     }
 
@@ -114,6 +117,15 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
                 );
             }
         }
+    }
+
+    pub fn register_batch_processor_with(&mut self, config: BatchProcessorConfig<DT, ET>) {
+        self.batch_configs
+            .insert(config.worker_name.clone(), config);
+    }
+
+    pub fn get_batch_config(&self, worker_name: &str) -> Option<&BatchProcessorConfig<DT, ET>> {
+        self.batch_configs.get(worker_name)
     }
 
     pub fn worker_names(&self) -> Vec<&str> {
