@@ -30,15 +30,23 @@ pub fn derive_queue(input: TokenStream) -> TokenStream {
     expand_derive_queue(input).into()
 }
 
-/// Generates impl for `oxanus::Worker`.
+/// Generates impls for `oxanus::Worker<Args>`, `oxanus::Job`, and `oxanus::FromContext`.
 ///
 /// Example usage:
 /// ```ignore
-/// #[derive(Serialize, oxanus::Worker)]
+/// #[derive(Debug, Serialize, Deserialize)]
+/// struct MyJob { id: i32 }
+///
+/// #[derive(oxanus::Worker)]
+/// #[oxanus(args = MyJob)]
 /// #[oxanus(max_retries = 3, on_conflict = Replace)]
-/// #[oxanus(unique_id = "test_worker_{id}")]
-/// struct TestWorkerUniqueId {
-///     id: i32,
+/// #[oxanus(unique_id = "my_job_{id}")]
+/// struct MyWorker;
+///
+/// impl MyWorker {
+///     async fn process(&self, job: &MyJob, ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+///         Ok(())
+///     }
 /// }
 /// ```
 #[proc_macro_error]
@@ -58,14 +66,14 @@ pub fn derive_registry(input: TokenStream) -> TokenStream {
     expand_derive_registry(input).into()
 }
 
-/// Generates impl for `oxanus::BatchProcessor` and `oxanus::Worker`.
+/// Generates impl for `oxanus::BatchProcessor` and `oxanus::Processable`.
 ///
 /// Example usage:
 /// ```ignore
-/// #[derive(Debug, Serialize, Deserialize, oxanus::BatchProcessor)]
+/// #[derive(oxanus::BatchProcessor)]
 /// #[oxanus(batch_size = 3, batch_linger_ms = 1000)]
 /// struct TestBatchProcessor {
-///     workers: Vec<TestWorker>,
+///     jobs: Vec<TestJob>,
 /// }
 /// ```
 #[proc_macro_error]

@@ -76,7 +76,7 @@ pub fn expand_derive_batch_processor(input: DeriveInput) -> TokenStream {
                     type_name: stringify!(#struct_ident),
                     definition: || {
                         oxanus::ComponentDefinition::BatchProcessor(oxanus::BatchProcessorConfig {
-                            worker_name: std::any::type_name::<#item_type>().to_owned(),
+                            worker_name: <#item_type as oxanus::Job>::worker_name().to_owned(),
                             batch_size: #batch_size,
                             batch_linger_ms: #batch_linger_ms,
                             factory: oxanus::batch_factory::<#struct_ident, #type_context, #type_error>,
@@ -92,12 +92,19 @@ pub fn expand_derive_batch_processor(input: DeriveInput) -> TokenStream {
     quote! {
         #[automatically_derived]
         #[async_trait::async_trait]
-        impl oxanus::Worker for #struct_ident {
-            type Context = #type_context;
+        impl oxanus::Processable for #struct_ident {
             type Error = #type_error;
 
-            async fn process(&self, data: &oxanus::Context<Self::Context>) -> Result<(), Self::Error> {
-                self.process_batch(data).await
+            async fn process(&self, ctx: &oxanus::JobContext) -> Result<(), Self::Error> {
+                self.process_batch(ctx).await
+            }
+
+            fn max_retries(&self) -> u32 {
+                2
+            }
+
+            fn retry_delay(&self, retries: u32) -> u64 {
+                u64::pow(5, retries + 2)
             }
         }
 
@@ -119,12 +126,6 @@ pub fn expand_derive_batch_processor(input: DeriveInput) -> TokenStream {
 
             fn batch_linger_ms() -> u64 {
                 #batch_linger_ms
-            }
-        }
-
-        impl #item_type {
-            async fn process(&self, data: &oxanus::Context<#type_context>) -> Result<(), #type_error> {
-                #struct_ident { #field_name: vec![self.clone()] }.process_batch(data).await
             }
         }
 

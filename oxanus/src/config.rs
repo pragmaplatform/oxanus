@@ -6,8 +6,8 @@ use crate::Storage;
 use crate::batch_processor::BatchProcessorConfig;
 use crate::queue::{Queue, QueueConfig};
 use crate::storage_types::{Catalog, CronWorkerInfo, QueueInfo, QueueThrottleInfo, WorkerInfo};
-use crate::worker::Worker;
-use crate::worker_registry::{WorkerConfig, WorkerRegistry};
+use crate::worker::{FromContext, Job, Worker};
+use crate::worker_registry::{self, WorkerConfig, WorkerConfigKind, WorkerRegistry};
 
 pub struct Config<DT, ET> {
     pub(crate) registry: WorkerRegistry<DT, ET>,
@@ -55,30 +55,28 @@ impl<DT, ET> Config<DT, ET> {
         self
     }
 
-    pub fn register_worker<W>(mut self) -> Self
+    pub fn register_worker<W, A>(mut self) -> Self
     where
-        W: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
+        W: Worker<A, Error = ET> + FromContext<DT> + 'static,
+        A: Job + serde::de::DeserializeOwned + Send + Sync + 'static,
+        DT: Clone + Send + Sync + 'static,
+        ET: std::error::Error + Send + Sync + 'static,
     {
-        if let (Some(schedule), Some(queue_config)) = (W::cron_schedule(), W::cron_queue_config()) {
-            let key = queue_config
-                .static_key()
-                .expect("Statically defined cron workers can only use static queues");
-            self.register_queue_with(queue_config);
-            self.registry.register_cron::<W>(&schedule, key);
-        } else {
-            self.registry.register::<W>();
-        }
-        self
-    }
+        let name = std::any::type_name::<W>().to_string();
+        let factory = worker_registry::job_factory::<W, A, DT, ET>;
+        let kind = <W as Worker<A>>::to_config();
 
-    /// Register a cron worker with a dynamic queue
-    pub fn register_cron_worker<W>(mut self, queue: impl Queue) -> Self
-    where
-        W: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
-    {
-        self.register_queue_with(queue.config());
-        let schedule = W::cron_schedule().expect("Cron Worker must have cron_schedule defined");
-        self.registry.register_cron::<W>(&schedule, queue.key());
+        if let WorkerConfigKind::Cron { .. } = &kind
+            && let Some(queue_config) = <W as Worker<A>>::cron_queue_config()
+        {
+            self.register_queue_with(queue_config);
+        }
+
+        self.registry.register_worker_with(WorkerConfig {
+            name,
+            factory,
+            kind,
+        });
         self
     }
 
@@ -115,18 +113,21 @@ impl<DT, ET> Config<DT, ET> {
         self.queues.contains(&Q::to_config())
     }
 
-    pub fn has_registered_worker<W>(&self) -> bool
-    where
-        W: Worker<Context = DT, Error = ET>,
-    {
-        self.registry.has_registered::<W>()
+    pub fn has_registered_worker(&self, name: &str) -> bool {
+        self.registry.has_registered(name)
     }
 
-    pub fn has_registered_cron_worker<W>(&self) -> bool
-    where
-        W: Worker<Context = DT, Error = ET>,
-    {
-        self.registry.has_registered_cron::<W>()
+    pub fn has_registered_worker_type<W: 'static>(&self) -> bool {
+        self.registry.has_registered(std::any::type_name::<W>())
+    }
+
+    pub fn has_registered_cron_worker(&self, name: &str) -> bool {
+        self.registry.has_registered_cron(name)
+    }
+
+    pub fn has_registered_cron_worker_type<W: 'static>(&self) -> bool {
+        self.registry
+            .has_registered_cron(std::any::type_name::<W>())
     }
 
     /// Returns a catalog of all registered workers.

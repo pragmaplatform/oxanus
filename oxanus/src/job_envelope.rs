@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::any::type_name;
 use uuid::Uuid;
 
-use crate::{OxanusError, Worker};
+use crate::OxanusError;
+use crate::worker::Job as JobTrait;
 
 pub type JobId = String;
 
@@ -54,13 +54,8 @@ pub enum JobConflictStrategy {
 }
 
 impl JobEnvelope {
-    pub(crate) fn new<T, DT, ET>(queue: String, job: T) -> Result<Self, OxanusError>
-    where
-        T: Worker<Context = DT, Error = ET> + serde::Serialize,
-        DT: Send + Sync + Clone + 'static,
-        ET: std::error::Error + Send + Sync + 'static,
-    {
-        let job_name = type_name::<T>().to_string();
+    pub(crate) fn new<T: JobTrait>(queue: String, job: T) -> Result<Self, OxanusError> {
+        let job_name = T::worker_name().to_string();
         let unique_id = job.unique_id();
         let unique = unique_id.is_some();
         let resurrect = T::should_resurrect();

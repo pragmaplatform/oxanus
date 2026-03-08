@@ -18,39 +18,74 @@ pub struct WorkerState {
     pub redis: deadpool_redis::Pool,
 }
 
+// --- NoopJob + NoopWorker ---
+
 #[derive(Serialize, Deserialize)]
-pub struct WorkerNoop {}
+pub struct NoopJob {}
+
+pub struct NoopWorker;
+
+impl oxanus::Job for NoopJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<NoopWorker>()
+    }
+}
 
 #[async_trait::async_trait]
-impl oxanus::Worker for WorkerNoop {
-    type Context = ();
+impl oxanus::Worker<NoopJob> for NoopWorker {
     type Error = WorkerError;
 
-    async fn process(&self, _: &oxanus::Context<()>) -> Result<(), WorkerError> {
+    async fn process(&self, _: &NoopJob, _: &oxanus::JobContext) -> Result<(), WorkerError> {
         Ok(())
     }
 }
 
+impl oxanus::FromContext<()> for NoopWorker {
+    fn from_context(_: &()) -> Self {
+        Self
+    }
+}
+
+// --- RedisSetJob + RedisSetWorker ---
+
 #[derive(Debug, Serialize, Deserialize)]
-pub struct WorkerRedisSet {
+pub struct RedisSetJob {
     pub key: String,
     pub value: String,
 }
 
+pub struct RedisSetWorker {
+    pub state: WorkerState,
+}
+
+impl oxanus::Job for RedisSetJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<RedisSetWorker>()
+    }
+}
+
 #[async_trait::async_trait]
-impl oxanus::Worker for WorkerRedisSet {
-    type Context = WorkerState;
+impl oxanus::Worker<RedisSetJob> for RedisSetWorker {
     type Error = WorkerError;
 
     async fn process(
         &self,
-        oxanus::Context { ctx, .. }: &oxanus::Context<WorkerState>,
+        job: &RedisSetJob,
+        _ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
-        let mut redis = ctx.redis.get().await?;
-        let _: () = redis.set_ex(&self.key, self.value.clone(), 3).await?;
+        let mut redis = self.state.redis.get().await?;
+        let _: () = redis.set_ex(&job.key, job.value.clone(), 3).await?;
         Ok(())
     }
 }
+
+impl oxanus::FromContext<WorkerState> for RedisSetWorker {
+    fn from_context(ctx: &WorkerState) -> Self {
+        Self { state: ctx.clone() }
+    }
+}
+
+// --- Queue ---
 
 #[derive(Serialize)]
 pub struct QueueOne;
@@ -60,6 +95,8 @@ impl oxanus::Queue for QueueOne {
         oxanus::QueueConfig::as_static("one")
     }
 }
+
+// --- Setup ---
 
 pub fn setup() -> deadpool_redis::Pool {
     dotenvy::from_filename(".env.test").ok();

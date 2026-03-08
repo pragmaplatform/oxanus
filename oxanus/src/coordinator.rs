@@ -5,7 +5,7 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit, mpsc};
 use tokio::task::JoinSet;
 
 use crate::config::Config;
-use crate::context::ContextValue;
+use crate::context::{ContextValue, JobState};
 use crate::error::OxanusError;
 use crate::executor::ExecutionError;
 use crate::job_envelope::JobEnvelope;
@@ -14,7 +14,7 @@ use crate::result_collector::{JobResult, JobResultKind};
 use crate::semaphores_map::SemaphoresMap;
 use crate::worker_event::WorkerJob;
 use crate::{
-    dispatcher, executor,
+    JobContext, dispatcher, executor,
     result_collector::{self, Stats},
 };
 
@@ -282,7 +282,7 @@ where
         "Batch started"
     );
 
-    let batch_worker = match (batch_config.factory)(args) {
+    let batch_worker = match (batch_config.factory)(args, &ctx.0) {
         Ok(w) => w,
         Err(e) => {
             let err_msg = format!("Failed to build batch processor: {e}");
@@ -308,10 +308,9 @@ where
         }
     };
 
-    let full_ctx = crate::Context {
-        ctx: ctx.0,
+    let job_ctx = JobContext {
         meta: first_envelope.meta.clone(),
-        state: crate::context::JobState::new(
+        state: JobState::new(
             config.storage.clone(),
             first_envelope.id.clone(),
             first_envelope.meta.state.clone(),
@@ -319,7 +318,7 @@ where
     };
 
     let start = std::time::Instant::now();
-    let result = batch_worker.process(&full_ctx).await;
+    let result = batch_worker.process(&job_ctx).await;
     let duration = start.elapsed();
 
     tracing::info!(
@@ -404,7 +403,7 @@ where
     );
     let job = match config
         .registry
-        .build(&envelope.job.name, envelope.job.args.clone())
+        .build(&envelope.job.name, envelope.job.args.clone(), &ctx.0)
     {
         Ok(job) => job,
         Err(e) => {
@@ -419,7 +418,7 @@ where
         }
     };
 
-    let result = executor::run(config, job, &envelope, ctx.clone()).await?;
+    let result = executor::run(config, job, &envelope).await?;
     drop(permit);
 
     let kind = match result {

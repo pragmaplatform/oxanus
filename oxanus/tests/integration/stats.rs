@@ -23,24 +23,24 @@ impl oxanus::Queue for QueueStatic {
 #[tokio::test]
 pub async fn test_stats() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxanus::Context::value(());
+    let ctx = oxanus::ContextValue::new(());
     let storage = oxanus::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool)?;
     let config = oxanus::Config::new(&storage)
         .register_queue::<QueueDynamic>()
         .register_queue::<QueueStatic>()
-        .register_worker::<WorkerNoop>()
+        .register_worker::<NoopWorker, NoopJob>()
         .exit_when_processed(8);
 
-    storage.enqueue(QueueDynamic(1), WorkerNoop {}).await?;
-    storage.enqueue(QueueDynamic(2), WorkerNoop {}).await?;
-    storage.enqueue(QueueStatic, WorkerNoop {}).await?;
-    storage.enqueue(QueueStatic, WorkerNoop {}).await?;
-    storage.enqueue(QueueDynamic(1), WorkerNoop {}).await?;
-    storage.enqueue(QueueDynamic(2), WorkerNoop {}).await?;
-    storage.enqueue(QueueDynamic(3), WorkerNoop {}).await?;
-    storage.enqueue(QueueDynamic(4), WorkerNoop {}).await?;
+    storage.enqueue(QueueDynamic(1), NoopJob {}).await?;
+    storage.enqueue(QueueDynamic(2), NoopJob {}).await?;
+    storage.enqueue(QueueStatic, NoopJob {}).await?;
+    storage.enqueue(QueueStatic, NoopJob {}).await?;
+    storage.enqueue(QueueDynamic(1), NoopJob {}).await?;
+    storage.enqueue(QueueDynamic(2), NoopJob {}).await?;
+    storage.enqueue(QueueDynamic(3), NoopJob {}).await?;
+    storage.enqueue(QueueDynamic(4), NoopJob {}).await?;
 
     let stats = storage.stats().await?;
 

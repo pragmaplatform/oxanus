@@ -14,17 +14,17 @@ impl oxanus::Queue for QueueDynamic {
 #[tokio::test]
 pub async fn test_dynamic() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxanus::Context::value(());
+    let ctx = oxanus::ContextValue::new(());
     let storage = oxanus::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool)?;
     let config = oxanus::Config::new(&storage)
         .register_queue::<QueueDynamic>()
-        .register_worker::<WorkerNoop>()
+        .register_worker::<NoopWorker, NoopJob>()
         .exit_when_processed(2);
 
-    storage.enqueue(QueueDynamic(1), WorkerNoop {}).await?;
-    storage.enqueue(QueueDynamic(2), WorkerNoop {}).await?;
+    storage.enqueue(QueueDynamic(1), NoopJob {}).await?;
+    storage.enqueue(QueueDynamic(2), NoopJob {}).await?;
 
     assert_eq!(storage.enqueued_count(QueueDynamic(1)).await?, 1);
     assert_eq!(storage.enqueued_count(QueueDynamic(2)).await?, 1);
