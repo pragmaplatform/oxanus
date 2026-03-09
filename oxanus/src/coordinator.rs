@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::context::{ContextValue, JobState};
 use crate::error::OxanusError;
 use crate::executor::ExecutionError;
-use crate::job_envelope::JobEnvelope;
+use crate::job_envelope::{Job, JobEnvelope, JobMeta};
 use crate::queue::{QueueConfig, QueueKind};
 use crate::result_collector::{JobResult, JobResultKind};
 use crate::semaphores_map::SemaphoresMap;
@@ -157,7 +157,30 @@ where
 {
     let envelope = match fetch_envelope(&config, &job_event.job_id).await {
         Some(e) => e,
-        None => return Ok(()),
+        None => {
+            let envelope = JobEnvelope {
+                id: job_event.job_id.clone(),
+                queue: job_event.queue,
+                job: Job {
+                    name: "unknown".to_string(),
+                    args: serde_json::Value::Null,
+                },
+                meta: JobMeta {
+                    id: job_event.job_id,
+                    retries: 0,
+                    unique: false,
+                    on_conflict: None,
+                    created_at: 0,
+                    scheduled_at: 0,
+                    started_at: None,
+                    state: None,
+                    resurrect: false,
+                    error: Some("Job not found in storage".to_string()),
+                },
+            };
+            report_result(&result_tx, envelope, JobResultKind::Failed).await;
+            return Ok(());
+        }
     };
 
     if let Some(batch_config) = config.registry.get_batch_config(&envelope.job.name) {
@@ -257,7 +280,19 @@ where
     let batch_config = match config.registry.get_batch_config(&worker_name) {
         Some(cfg) => cfg,
         None => {
-            tracing::error!("Batch config not found for {}", worker_name);
+            let err_msg = format!("Batch config not found for {}", worker_name);
+            tracing::error!("{}", err_msg);
+            for item in items {
+                if let Err(e) = config
+                    .storage
+                    .internal
+                    .kill(&item.envelope, err_msg.clone())
+                    .await
+                {
+                    tracing::error!("Failed to kill batch item: {}", e);
+                }
+                report_result(&result_tx, item.envelope, JobResultKind::Failed).await;
+            }
             return Ok(());
         }
     };
@@ -414,6 +449,7 @@ where
                 sentry_core::capture_error(&e);
                 tracing::error!("Failed to kill job: {}", e);
             }
+            report_result(&result_tx, envelope, JobResultKind::Failed).await;
             return Ok(());
         }
     };

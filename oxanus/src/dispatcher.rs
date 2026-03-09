@@ -28,7 +28,7 @@ pub async fn run<DT, ET>(
         tokio::select! {
             result = pop_queue_message(&config.storage.internal, &queue_config, &queue_key) => {
                 let job_id = result.expect("Failed to pop queue message");
-                let job = WorkerJob { job_id, permit };
+                let job = WorkerJob { job_id, queue: queue_key.clone(), permit };
                 job_tx
                     .send(job)
                     .await
