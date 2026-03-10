@@ -23,6 +23,7 @@ struct FooWorker {
 
 impl FooWorker {
     async fn process(&self, job: &FooJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+        dbg!(&self.ctx);
         dbg!(&job);
         Ok(())
     }

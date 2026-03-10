@@ -22,6 +22,16 @@ pub struct DrainStats {
 /// This function will drain a queue of jobs, processing them one by one.
 ///
 /// It is useful in development or testing to process a queue of jobs without running the full worker.
+///
+/// # Arguments
+///
+/// * `config` - The worker configuration, including queue and worker registrations
+/// * `ctx` - The context value that will be shared across all worker instances
+/// * `queue` - The queue to drain
+///
+/// # Returns
+///
+/// Returns statistics about the drain operation, or an [`OxanusError`] if the operation fails.
 pub async fn drain<DT, ET>(
     config: &Config<DT, ET>,
     ctx: ContextValue<DT>,

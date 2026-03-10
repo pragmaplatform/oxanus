@@ -2,30 +2,17 @@ use darling::FromDeriveInput;
 use proc_macro_error2::abort;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, GenericArgument, Path, PathArguments, Type};
+use syn::{Data, DeriveInput, Fields, Path};
 
 #[derive(Debug, FromDeriveInput)]
-#[darling(attributes(oxanus), supports(struct_named))]
+#[darling(attributes(oxanus), supports(struct_any))]
 struct BatchProcessorArgs {
+    args: Option<Path>,
     context: Option<Path>,
     error: Option<Path>,
     registry: Option<Path>,
     batch_size: usize,
     batch_linger_ms: u64,
-}
-
-fn extract_vec_field(fields: &Fields) -> Option<(syn::Ident, syn::Type)> {
-    for field in fields.iter() {
-        if let Type::Path(type_path) = &field.ty
-            && let Some(segment) = type_path.path.segments.last()
-            && segment.ident == "Vec"
-            && let PathArguments::AngleBracketed(args) = &segment.arguments
-            && let Some(GenericArgument::Type(inner_ty)) = args.args.first()
-        {
-            return Some((field.ident.clone()?, inner_ty.clone()));
-        }
-    }
-    None
 }
 
 pub fn expand_derive_batch_processor(input: DeriveInput) -> TokenStream {
@@ -40,35 +27,128 @@ pub fn expand_derive_batch_processor(input: DeriveInput) -> TokenStream {
     let batch_size = args.batch_size;
     let batch_linger_ms = args.batch_linger_ms;
 
-    let type_context = match args.context {
+    let item_type = match &args.args {
+        Some(path) => quote!(#path),
+        None => abort!(
+            input.ident,
+            "BatchProcessor must have #[oxanus(args = MyJob)] attribute specifying the item type"
+        ),
+    };
+
+    let type_context = match &args.context {
         Some(context) => quote!(#context),
         None => quote!(WorkerContext),
     };
 
-    let type_error = match args.error {
+    let type_error = match &args.error {
         Some(error) => quote!(#error),
         None => quote!(WorkerError),
     };
 
+    let batch_impl = expand_batch_impl(struct_ident, &item_type, &type_error, batch_size, batch_linger_ms);
+    let from_context_impl = expand_from_context_impl(struct_ident, &type_context, &input);
+    let registry_impl = expand_registry(struct_ident, &item_type, &type_context, &type_error, &args, batch_size, batch_linger_ms);
+
+    quote! {
+        #batch_impl
+        #from_context_impl
+        #registry_impl
+    }
+}
+
+fn expand_batch_impl(
+    struct_ident: &syn::Ident,
+    item_type: &TokenStream,
+    type_error: &TokenStream,
+    batch_size: usize,
+    batch_linger_ms: u64,
+) -> TokenStream {
+    quote! {
+        #[automatically_derived]
+        #[async_trait::async_trait]
+        impl oxanus::BatchProcessor for #struct_ident {
+            type Item = #item_type;
+            type Error = #type_error;
+
+            async fn process_batch(
+                &self,
+                items: &[Self::Item],
+                ctx: &oxanus::JobContext,
+            ) -> Result<(), Self::Error> {
+                self.process_batch(items, ctx).await
+            }
+
+            fn batch_size() -> usize {
+                #batch_size
+            }
+
+            fn batch_linger_ms() -> u64 {
+                #batch_linger_ms
+            }
+        }
+    }
+}
+
+fn expand_from_context_impl(
+    struct_ident: &syn::Ident,
+    type_context: &TokenStream,
+    input: &DeriveInput,
+) -> TokenStream {
     let fields = match &input.data {
         Data::Struct(data_struct) => &data_struct.fields,
         _ => abort!(input.ident, "BatchProcessor must be a struct."),
     };
 
-    let (field_name, item_type) = match extract_vec_field(fields) {
-        Some(v) => v,
-        None => abort!(
-            input.ident,
-            "BatchProcessor must have a Vec<T> field for batch items."
-        ),
+    let constructor = match fields {
+        Fields::Unit => quote!(Self),
+        Fields::Named(named) if named.named.is_empty() => quote!(Self {}),
+        Fields::Named(named) if named.named.len() == 1 => {
+            let field = named.named.first().expect("checked len == 1");
+            let field_name = field.ident.as_ref().expect("named field has ident");
+            quote!(Self { #field_name: ctx.clone() })
+        }
+        Fields::Named(named) => {
+            abort!(
+                input.ident,
+                "BatchProcessor structs with {} fields cannot auto-derive FromContext. \
+                 Implement oxanus::FromContext<{}> manually.",
+                named.named.len(),
+                type_context
+            );
+        }
+        Fields::Unnamed(_) => {
+            abort!(
+                input.ident,
+                "Tuple batch processor structs are not supported. Use named fields or a unit struct."
+            );
+        }
     };
 
-    let component_registry = match args.registry {
+    quote! {
+        #[automatically_derived]
+        impl oxanus::FromContext<#type_context> for #struct_ident {
+            fn from_context(ctx: &#type_context) -> Self {
+                #constructor
+            }
+        }
+    }
+}
+
+fn expand_registry(
+    struct_ident: &syn::Ident,
+    item_type: &TokenStream,
+    type_context: &TokenStream,
+    type_error: &TokenStream,
+    args: &BatchProcessorArgs,
+    batch_size: usize,
+    batch_linger_ms: u64,
+) -> TokenStream {
+    let component_registry = match &args.registry {
         Some(registry) => quote!(#registry),
         None => quote!(ComponentRegistry),
     };
 
-    let registry = if cfg!(feature = "registry") && component_registry.to_string() != "None" {
+    if cfg!(feature = "registry") && component_registry.to_string() != "None" {
         quote! {
             oxanus::register_component! {
                 #component_registry(oxanus::ComponentRegistry {
@@ -87,48 +167,5 @@ pub fn expand_derive_batch_processor(input: DeriveInput) -> TokenStream {
         }
     } else {
         quote!()
-    };
-
-    quote! {
-        #[automatically_derived]
-        #[async_trait::async_trait]
-        impl oxanus::Processable for #struct_ident {
-            type Error = #type_error;
-
-            async fn process(&self, ctx: &oxanus::JobContext) -> Result<(), Self::Error> {
-                self.process_batch(ctx).await
-            }
-
-            fn max_retries(&self) -> u32 {
-                2
-            }
-
-            fn retry_delay(&self, retries: u32) -> u64 {
-                u64::pow(5, retries + 2)
-            }
-        }
-
-        #[automatically_derived]
-        impl oxanus::BatchProcessor for #struct_ident {
-            type Item = #item_type;
-
-            fn from_args(args: Vec<serde_json::Value>) -> Result<Self, oxanus::OxanusError> {
-                let items: Vec<#item_type> = args
-                    .into_iter()
-                    .map(|a| serde_json::from_value(a))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(Self { #field_name: items })
-            }
-
-            fn batch_size() -> usize {
-                #batch_size
-            }
-
-            fn batch_linger_ms() -> u64 {
-                #batch_linger_ms
-            }
-        }
-
-        #registry
     }
 }

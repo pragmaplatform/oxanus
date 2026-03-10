@@ -43,18 +43,9 @@ where
     let concurrency = queue_config.concurrency;
     let has_batch_configs = !config.registry.batch_configs.is_empty();
 
-    let max_batch_size = config
-        .registry
-        .batch_configs
-        .values()
-        .map(|c| c.batch_size)
-        .max()
-        .unwrap_or(1);
-    let effective_concurrency = concurrency * max_batch_size;
-
-    let (result_tx, result_rx) = mpsc::channel::<JobResult>(effective_concurrency);
-    let (job_tx, mut job_rx) = mpsc::channel::<WorkerJob>(effective_concurrency);
-    let semaphores = Arc::new(SemaphoresMap::new(effective_concurrency));
+    let (result_tx, result_rx) = mpsc::channel::<JobResult>(concurrency);
+    let (job_tx, mut job_rx) = mpsc::channel::<WorkerJob>(concurrency);
+    let semaphores = Arc::new(SemaphoresMap::new(concurrency));
     let mut joinset = JoinSet::new();
     let batch_buffers: BatchBuffers = Arc::new(Mutex::new(HashMap::new()));
 

@@ -66,14 +66,18 @@ pub fn derive_registry(input: TokenStream) -> TokenStream {
     expand_derive_registry(input).into()
 }
 
-/// Generates impl for `oxanus::BatchProcessor` and `oxanus::Processable`.
+/// Generates impl for `oxanus::BatchProcessor` and `oxanus::FromContext`.
 ///
 /// Example usage:
 /// ```ignore
 /// #[derive(oxanus::BatchProcessor)]
-/// #[oxanus(batch_size = 3, batch_linger_ms = 1000)]
-/// struct TestBatchProcessor {
-///     jobs: Vec<TestJob>,
+/// #[oxanus(args = TestJob, batch_size = 3, batch_linger_ms = 1000)]
+/// struct TestBatchProcessor;
+///
+/// impl TestBatchProcessor {
+///     async fn process_batch(&self, jobs: &[TestJob], ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+///         Ok(())
+///     }
 /// }
 /// ```
 #[proc_macro_error]

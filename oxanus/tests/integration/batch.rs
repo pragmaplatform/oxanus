@@ -7,7 +7,7 @@ use testresult::TestResult;
 struct BatchComponentRegistry(oxanus::ComponentRegistry<WorkerState, WorkerError>);
 
 #[derive(Serialize, oxanus::Queue)]
-#[oxanus(key = "batch_test", concurrency = 1, registry = BatchComponentRegistry)]
+#[oxanus(key = "batch_test", concurrency = 3, registry = BatchComponentRegistry)]
 struct BatchQueue;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +36,7 @@ impl BatchItemWorker {
 
 #[derive(oxanus::BatchProcessor)]
 #[oxanus(
+    args = BatchItemJob,
     batch_size = 3,
     batch_linger_ms = 500,
     context = WorkerState,
@@ -43,23 +44,22 @@ impl BatchItemWorker {
     registry = BatchComponentRegistry
 )]
 struct TestBatchProcessor {
-    items: Vec<BatchItemJob>,
+    state: WorkerState,
 }
 
 impl TestBatchProcessor {
-    async fn process_batch(&self, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
-        let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL is not set");
-        let cfg = deadpool_redis::Config::from_url(redis_url);
-        let pool = cfg
-            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-            .expect("Failed to create pool");
-        let mut redis = pool.get().await.expect("Failed to get redis conn");
-        let batch_size = self.items.len() as i64;
+    async fn process_batch(
+        &self,
+        items: &[BatchItemJob],
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), WorkerError> {
+        let mut redis = self.state.redis.get().await.expect("Failed to get redis conn");
+        let batch_size = items.len() as i64;
         let _: () = redis
             .rpush("batch_test:sizes", batch_size)
             .await
             .expect("rpush failed");
-        for item in &self.items {
+        for item in items {
             let _: () = redis
                 .rpush("batch_test:values", item.value)
                 .await

@@ -40,16 +40,66 @@ pub struct Storage {
 
 impl Storage {
     /// Creates a new [`StorageBuilder`] for configuring and building a Storage instance.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use oxanus::Storage;
+    ///
+    /// let storage = Storage::builder().build_from_env()?;
+    /// ```
     pub fn builder() -> StorageBuilder {
         StorageBuilder::new()
     }
 
     /// Enqueues a job to be processed immediately.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The queue to enqueue the job to
+    /// * `job` - The job to enqueue
+    ///
+    /// # Returns
+    ///
+    /// A [`JobId`] that can be used to track the job, or an [`OxanusError`] if the operation fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use oxanus::Storage;
+    ///
+    /// async fn example(storage: &Storage) -> Result<(), oxanus::OxanusError> {
+    ///     let job_id = storage.enqueue(MyQueue, MyJob { data: "hello".into() }).await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn enqueue(&self, queue: impl Queue, job: impl Job) -> Result<JobId, OxanusError> {
         self.enqueue_in(queue, job, 0).await
     }
 
-    /// Enqueues a job to be processed after a specified delay in seconds.
+    /// Enqueues a job to be processed after a specified delay.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The queue to enqueue the job to
+    /// * `job` - The job to enqueue
+    /// * `delay` - The delay in seconds before the job should be processed
+    ///
+    /// # Returns
+    ///
+    /// A [`JobId`] that can be used to track the job, or an [`OxanusError`] if the operation fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use oxanus::Storage;
+    ///
+    /// async fn example(storage: &Storage) -> Result<(), oxanus::OxanusError> {
+    ///     // Schedule a job to run in 5 minutes
+    ///     let job_id = storage.enqueue_in(MyQueue, MyJob { data: "delayed".into() }, 300).await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn enqueue_in(
         &self,
         queue: impl Queue,
@@ -68,6 +118,29 @@ impl Storage {
     }
 
     /// Schedules a job to run at a specific time.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The queue to enqueue the job to
+    /// * `job` - The job to enqueue
+    /// * `time` - The UTC timestamp when the job should become available
+    ///
+    /// # Returns
+    ///
+    /// A [`JobId`] that can be used to track the job, or an [`OxanusError`] if the operation fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use chrono::{Duration, Utc};
+    /// use oxanus::Storage;
+    ///
+    /// async fn example(storage: &Storage) -> Result<(), oxanus::OxanusError> {
+    ///     let time = Utc::now() + Duration::minutes(5);
+    ///     let job_id = storage.enqueue_at(MyQueue, MyJob { data: "scheduled".into() }, time).await?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub async fn enqueue_at(
         &self,
         queue: impl Queue,
@@ -82,11 +155,23 @@ impl Storage {
     }
 
     /// Returns the number of jobs currently enqueued in the specified queue.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The queue to count jobs for
     pub async fn enqueued_count(&self, queue: impl Queue) -> Result<usize, OxanusError> {
         self.internal.enqueued_count(&queue.key()).await
     }
 
-    /// Returns the latency of the queue (The age of the oldest job in the queue).
+    /// Returns the latency of the queue (the age of the oldest job in the queue).
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The queue to get the latency for
+    ///
+    /// # Returns
+    ///
+    /// The latency of the queue in milliseconds, or an [`OxanusError`] if the operation fails.
     pub async fn latency_ms(&self, queue: impl Queue) -> Result<f64, OxanusError> {
         self.internal.latency_ms(&queue.key()).await
     }
@@ -112,6 +197,12 @@ impl Storage {
     }
 
     /// Deletes a job by its ID.
+    ///
+    /// Removes the job from both the job store and the processing queue.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the job to delete
     pub async fn delete_job(&self, id: &JobId) -> Result<(), OxanusError> {
         self.internal.delete_job(id).await
     }
@@ -132,6 +223,11 @@ impl Storage {
     }
 
     /// Returns a list of jobs currently enqueued in the specified queue.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The queue to list jobs from
+    /// * `opts` - Pagination options controlling count and offset
     pub async fn list_queue_jobs(
         &self,
         queue: impl Queue,
@@ -141,11 +237,19 @@ impl Storage {
     }
 
     /// Returns a list of dead jobs.
+    ///
+    /// # Arguments
+    ///
+    /// * `opts` - Pagination options controlling count and offset
     pub async fn list_dead(&self, opts: &QueueListOpts) -> Result<Vec<JobEnvelope>, OxanusError> {
         self.internal.list_dead(opts).await
     }
 
     /// Returns a list of jobs pending retry.
+    ///
+    /// # Arguments
+    ///
+    /// * `opts` - Pagination options controlling count and offset
     pub async fn list_retries(
         &self,
         opts: &QueueListOpts,
@@ -154,6 +258,10 @@ impl Storage {
     }
 
     /// Returns a list of jobs scheduled for future execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `opts` - Pagination options controlling count and offset
     pub async fn list_scheduled(
         &self,
         opts: &QueueListOpts,
@@ -162,11 +270,28 @@ impl Storage {
     }
 
     /// Removes all jobs from the specified queue.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue` - The queue to wipe
     pub async fn wipe_queue(&self, queue: impl Queue) -> Result<(), OxanusError> {
         self.internal.wipe_queue(&queue.key()).await
     }
 
     /// Returns Prometheus metrics based on the current stats.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use oxanus::Storage;
+    ///
+    /// async fn example(storage: &Storage) -> Result<(), oxanus::OxanusError> {
+    ///     let metrics = storage.metrics().await?;
+    ///     let output = metrics.encode_to_string()?;
+    ///     println!("{}", output);
+    ///     Ok(())
+    /// }
+    /// ```
     #[cfg(feature = "prometheus")]
     pub async fn metrics(&self) -> Result<PrometheusMetrics, OxanusError> {
         let stats = self.stats().await?;

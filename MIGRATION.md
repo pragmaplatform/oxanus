@@ -219,24 +219,23 @@ impl IndexWorker {
 }
 
 #[derive(oxanus::BatchProcessor)]
-#[oxanus(batch_size = 10, batch_linger_ms = 500)]
-struct IndexBatch {
-    jobs: Vec<IndexJob>,   // Vec of job types, not workers
-}
+#[oxanus(args = IndexJob, batch_size = 10, batch_linger_ms = 500)]
+struct IndexBatchProcessor;
 
-impl IndexBatch {
-    async fn process_batch(&self, _ctx: &oxanus::JobContext) -> Result<(), MyError> {
-        let ids: Vec<u64> = self.jobs.iter().map(|j| j.document_id).collect();
+impl IndexBatchProcessor {
+    async fn process_batch(&self, jobs: &[IndexJob], _ctx: &oxanus::JobContext) -> Result<(), MyError> {
+        let ids: Vec<u64> = jobs.iter().map(|j| j.document_id).collect();
         Ok(())
     }
 }
 ```
 
 Key changes:
-- The `Vec` field holds **job** types, not worker types
-- The batch processor no longer derives `Serialize, Deserialize`
-- `process_batch` takes `&oxanus::JobContext` instead of `&oxanus::Context<T>`
-- A corresponding `Worker` derive is needed for the job's worker
+- The batch processor uses `#[oxanus(args = JobType)]` to specify the item type (like Worker)
+- `process_batch` now takes `jobs: &[JobType]` as its first argument and `&oxanus::JobContext` as the second
+- The batch processor no longer holds a `Vec` of items as a field -- items are passed to `process_batch`
+- Context injection works the same as Worker: add a field for the context if needed
+- A corresponding `Worker` derive is still needed for the job's worker
 
 ### 8. Update resumable jobs
 
@@ -306,8 +305,8 @@ struct WorkerContext { db: DatabasePool }
 - [ ] Move application context access from `ctx.value` to a field on the worker struct
 - [ ] Update `oxanus::Context::value(...)` to `oxanus::ContextValue::new(...)`
 - [ ] Update enqueue calls to pass job instances instead of worker instances
-- [ ] Update batch processor `Vec` fields from worker types to job types
-- [ ] Update `process_batch` signature to take `&oxanus::JobContext`
+- [ ] Add `#[oxanus(args = JobType)]` to batch processors and remove `Vec` field
+- [ ] Update `process_batch` signature to `(&self, jobs: &[JobType], ctx: &oxanus::JobContext)`
 - [ ] Remove unnecessary `Serialize, Deserialize` from `WorkerContext`
 
 ## Unchanged

@@ -17,30 +17,38 @@ struct TestJob {
 
 #[derive(oxanus::Worker)]
 #[oxanus(args = TestJob)]
-struct TestWorker;
+struct TestWorker {
+    ctx: WorkerContext,
+}
 
 impl TestWorker {
     async fn process(&self, _job: &TestJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+        dbg!(&self.ctx);
         Ok(())
     }
 }
 
 #[derive(oxanus::BatchProcessor)]
-#[oxanus(batch_size = 3, batch_linger_ms = 1000)]
+#[oxanus(args = TestJob, batch_size = 3, batch_linger_ms = 1000)]
 struct TestBatchProcessor {
-    jobs: Vec<TestJob>,
+    ctx: WorkerContext,
 }
 
 impl TestBatchProcessor {
-    async fn process_batch(&self, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
-        let ids = self.jobs.iter().map(|job| job.id).collect::<Vec<_>>();
+    async fn process_batch(
+        &self,
+        jobs: &[TestJob],
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), WorkerError> {
+        dbg!(&self.ctx);
+        let ids = jobs.iter().map(|job| job.id).collect::<Vec<_>>();
         dbg!(&ids);
         Ok(())
     }
 }
 
 #[derive(Serialize, oxanus::Queue)]
-#[oxanus(key = "one", concurrency = 1)]
+#[oxanus(key = "one", concurrency = 3)]
 struct QueueOne;
 
 #[tokio::main]

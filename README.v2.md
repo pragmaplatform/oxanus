@@ -371,22 +371,36 @@ struct IndexJob {
     document_id: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[derive(oxanus::Worker)]
 #[oxanus(args = IndexJob)]
 struct IndexWorker;
 
-#[derive(Debug, Serialize, Deserialize, oxanus::BatchProcessor)]
-#[oxanus(batch_size = 10, batch_linger_ms = 500)]
-struct IndexBatchProcessor {
-    jobs: Vec<IndexJob>,
+impl IndexWorker {
+    async fn process(&self, _job: &IndexJob, _ctx: &oxanus::JobContext) -> Result<(), MyError> {
+        Ok(())
+    }
 }
 
+#[derive(oxanus::BatchProcessor)]
+#[oxanus(args = IndexJob, batch_size = 10, batch_linger_ms = 500)]
+struct IndexBatchProcessor;
+
 impl IndexBatchProcessor {
-    async fn process_batch(&self, ctx: &oxanus::JobContext) -> Result<(), MyError> {
-        let ids: Vec<u64> = self.jobs.iter().map(|j| j.document_id).collect();
+    async fn process_batch(&self, jobs: &[IndexJob], ctx: &oxanus::JobContext) -> Result<(), MyError> {
+        let ids: Vec<u64> = jobs.iter().map(|j| j.document_id).collect();
         // Bulk index all documents at once
         Ok(())
     }
+}
+```
+
+Batch processors support context injection just like workers:
+
+```rust
+#[derive(oxanus::BatchProcessor)]
+#[oxanus(args = IndexJob, batch_size = 10, batch_linger_ms = 500)]
+struct IndexBatchProcessor {
+    ctx: MyContext, // auto-populated from ContextValue
 }
 ```
 
