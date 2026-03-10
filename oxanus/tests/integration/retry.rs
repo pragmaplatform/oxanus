@@ -5,30 +5,34 @@ use testresult::TestResult;
 use crate::shared::*;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct WorkerRedisSetWithRetry {
+pub struct RetryJob {
     pub key: String,
     pub value_first: String,
     pub value_second: String,
 }
 
+pub struct RetryWorker {
+    pub state: WorkerState,
+}
+
+impl oxanus::Job for RetryJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<RetryWorker>()
+    }
+}
+
 #[async_trait::async_trait]
-impl oxanus::Worker for WorkerRedisSetWithRetry {
-    type Context = WorkerState;
+impl oxanus::Worker<RetryJob> for RetryWorker {
     type Error = WorkerError;
 
-    async fn process(
-        &self,
-        oxanus::Context { ctx, .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
-        let mut redis = ctx.redis.get().await?;
-        let value: Option<String> = redis.get(&self.key).await?;
+    async fn process(&self, job: &RetryJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+        let mut redis = self.state.redis.get().await?;
+        let value: Option<String> = redis.get(&job.key).await?;
         if value.is_some() {
-            let _: () = redis
-                .set_ex(&self.key, self.value_second.clone(), 3)
-                .await?;
+            let _: () = redis.set_ex(&job.key, job.value_second.clone(), 3).await?;
             return Ok(());
         }
-        let _: () = redis.set_ex(&self.key, self.value_first.clone(), 3).await?;
+        let _: () = redis.set_ex(&job.key, job.value_first.clone(), 3).await?;
         Err(WorkerError::Generic("Key not set".to_string()))
     }
 
@@ -41,12 +45,18 @@ impl oxanus::Worker for WorkerRedisSetWithRetry {
     }
 }
 
+impl oxanus::FromContext<WorkerState> for RetryWorker {
+    fn from_context(ctx: &WorkerState) -> Self {
+        Self { state: ctx.clone() }
+    }
+}
+
 #[tokio::test]
 pub async fn test_retry() -> TestResult {
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxanus::Context::value(WorkerState {
+    let ctx = oxanus::ContextValue::new(WorkerState {
         redis: redis_pool.clone(),
     });
 
@@ -55,7 +65,7 @@ pub async fn test_retry() -> TestResult {
         .build_from_pool(redis_pool.clone())?;
     let config = oxanus::Config::new(&storage)
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerRedisSetWithRetry>()
+        .register_worker::<RetryWorker, RetryJob>()
         .exit_when_processed(2);
 
     let random_key = uuid::Uuid::new_v4().to_string();
@@ -65,7 +75,7 @@ pub async fn test_retry() -> TestResult {
     storage
         .enqueue(
             QueueOne,
-            WorkerRedisSetWithRetry {
+            RetryJob {
                 key: random_key.clone(),
                 value_first: random_value_first.clone(),
                 value_second: random_value_second.clone(),

@@ -27,16 +27,14 @@ use crate::worker_registry::CronJob;
 ///
 /// # Examples
 ///
-/// ```rust
-/// use oxanus::{Config, Context, Storage, Queue, Worker};
+/// ```rust,ignore
+/// use oxanus::{ContextValue, Config, Storage};
 ///
 /// async fn run_worker() -> Result<(), oxanus::OxanusError> {
-///     let ctx = Context::value(MyContext {});
-///     let storage = Storage::builder().from_env()?.build()?;
+///     let ctx = ContextValue::new(MyContext {});
+///     let storage = Storage::builder().build_from_env()?;
 ///
 ///     let config = Config::new(&storage)
-///         .register_queue::<MyQueue>()
-///         .register_worker::<MyWorker>()
 ///         .with_graceful_shutdown(tokio::signal::ctrl_c());
 ///
 ///     let stats = oxanus::run(config, ctx).await?;

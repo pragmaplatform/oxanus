@@ -7,52 +7,46 @@ struct ComponentRegistry(oxanus::ComponentRegistry<WorkerContext, WorkerError>);
 #[derive(Debug, thiserror::Error)]
 enum WorkerError {}
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct WorkerContext {
-    foo: String,
-}
+#[derive(Debug, Clone)]
+struct WorkerContext {}
 
 #[derive(Debug, Serialize, Deserialize)]
-struct TestJob {
-    sleep_s: u64,
+struct FooJob {
+    id: u64,
 }
 
 #[derive(oxanus::Worker)]
-#[oxanus(args = TestJob)]
-#[oxanus(context = WorkerContext)]
-struct TestWorker {
+#[oxanus(args = FooJob)]
+struct FooWorker {
     ctx: WorkerContext,
 }
 
-impl TestWorker {
-    async fn process(&self, job: &TestJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+impl FooWorker {
+    async fn process(&self, job: &FooJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
         dbg!(&self.ctx);
-        tokio::time::sleep(std::time::Duration::from_secs(job.sleep_s)).await;
+        dbg!(&job);
         Ok(())
     }
 }
 
 #[derive(Serialize, oxanus::Queue)]
-#[oxanus(key = "one", concurrency = 2)]
+#[oxanus(key = "one")]
 struct QueueOne;
 
 #[tokio::main]
-pub async fn main() -> Result<(), oxanus::OxanusError> {
+async fn main() -> Result<(), oxanus::OxanusError> {
     tracing_subscriber::registry()
         .with(fmt::layer())
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::ContextValue::new(WorkerContext {
-        foo: "bar".to_string(),
-    });
+    let ctx = oxanus::ContextValue::new(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = ComponentRegistry::build_config(&storage)
         .with_graceful_shutdown(tokio::signal::ctrl_c())
         .exit_when_processed(1);
 
-    storage.enqueue(QueueOne, TestJob { sleep_s: 10 }).await?;
-    storage.enqueue(QueueOne, TestJob { sleep_s: 5 }).await?;
+    storage.enqueue(QueueOne, FooJob { id: 1 }).await?;
 
     oxanus::run(config, ctx).await?;
 

@@ -3,20 +3,19 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::{JobId, OxanusError, Storage, job_envelope::JobMeta};
 
 #[derive(Clone)]
-pub struct Context<T: Clone + Send + Sync> {
-    pub ctx: T,
+pub struct JobContext {
     pub meta: JobMeta,
     pub state: JobState,
 }
 
-impl<T: Clone + Send + Sync> Context<T> {
-    pub fn value(v: T) -> ContextValue<T> {
-        ContextValue(v)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ContextValue<T: Clone + Send + Sync>(pub(crate) T);
+
+impl<T: Clone + Send + Sync> ContextValue<T> {
+    pub fn new(v: T) -> Self {
+        Self(v)
+    }
+}
 
 #[derive(Clone)]
 pub struct JobState {

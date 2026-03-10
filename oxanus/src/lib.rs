@@ -75,6 +75,7 @@
 )]
 #![allow(clippy::unused_self, clippy::single_match_else, clippy::todo)]
 
+mod batch_processor;
 mod config;
 mod context;
 mod coordinator;
@@ -107,8 +108,9 @@ pub mod prometheus;
 #[cfg(test)]
 mod test_helper;
 
+pub use crate::batch_processor::{BatchProcessor, BatchProcessorConfig, batch_factory};
 pub use crate::config::Config;
-pub use crate::context::{Context, JobState};
+pub use crate::context::{ContextValue, JobContext, JobState};
 pub use crate::drainer::drain;
 pub use crate::error::OxanusError;
 pub use crate::job_envelope::{JobConflictStrategy, JobEnvelope, JobId, JobMeta};
@@ -118,11 +120,11 @@ pub use crate::stats::*;
 pub use crate::storage::Storage;
 pub use crate::storage_builder::{StorageBuilder, StorageBuilderTimeouts};
 pub use crate::storage_types::*;
-pub use crate::worker::Worker;
+pub use crate::worker::{BoxedProcessable, FromContext, Job, Processable, Worker};
 pub use crate::worker_registry::{WorkerConfig, WorkerConfigKind, job_factory};
 
 #[cfg(feature = "registry")]
 pub use registry::*;
 
 #[cfg(feature = "macros")]
-pub use oxanus_macros::{Queue, Registry, Worker};
+pub use oxanus_macros::{BatchProcessor, Queue, Registry, Worker};

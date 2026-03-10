@@ -10,14 +10,18 @@ enum WorkerError {}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
-#[oxanus(unique_id = "worker2sec:{id}", on_conflict = Skip)]
-struct Worker2Sec {
+#[derive(Debug, Serialize, Deserialize)]
+struct Job2Sec {
     id: usize,
 }
 
+#[derive(oxanus::Worker)]
+#[oxanus(args = Job2Sec)]
+#[oxanus(unique_id = "worker2sec:{id}", on_conflict = Skip)]
+struct Worker2Sec;
+
 impl Worker2Sec {
-    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
+    async fn process(&self, _job: &Job2Sec, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
         Ok(())
     }
@@ -34,13 +38,13 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::Context::value(WorkerContext {});
+    let ctx = oxanus::ContextValue::new(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = ComponentRegistry::build_config(&storage);
 
-    storage.enqueue(QueueOne, Worker2Sec { id: 1 }).await?;
-    storage.enqueue(QueueOne, Worker2Sec { id: 1 }).await?;
-    storage.enqueue(QueueOne, Worker2Sec { id: 2 }).await?;
+    storage.enqueue(QueueOne, Job2Sec { id: 1 }).await?;
+    storage.enqueue(QueueOne, Job2Sec { id: 1 }).await?;
+    storage.enqueue(QueueOne, Job2Sec { id: 2 }).await?;
 
     oxanus::run(config, ctx).await?;
 
