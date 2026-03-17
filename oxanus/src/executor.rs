@@ -2,10 +2,10 @@ use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
-use crate::context::{ContextValue, JobState};
+use crate::context::JobState;
 use crate::job_envelope::JobEnvelope;
-use crate::worker::BoxedWorker;
-use crate::{Config, Context, OxanusError};
+use crate::worker::BoxedProcessable;
+use crate::{Config, JobContext, OxanusError};
 
 #[derive(Debug)]
 enum ExecutionResult<ET> {
@@ -20,9 +20,8 @@ pub(crate) enum ExecutionError<ET> {
 
 pub async fn run<DT, ET>(
     config: Arc<Config<DT, ET>>,
-    worker: BoxedWorker<DT, ET>,
+    worker: BoxedProcessable<ET>,
     envelope: &JobEnvelope,
-    ctx: ContextValue<DT>,
 ) -> Result<Result<(), ExecutionError<ET>>, OxanusError>
 where
     DT: Send + Sync + Clone + 'static,
@@ -38,8 +37,7 @@ where
         "Job started"
     );
     let start = std::time::Instant::now();
-    let full_ctx = Context {
-        ctx: ctx.0,
+    let job_ctx = JobContext {
         meta: envelope.meta.clone(),
         state: JobState::new(
             config.storage.clone(),
@@ -48,8 +46,7 @@ where
         ),
     };
 
-    // Process the job and handle panics
-    let result = match AssertUnwindSafe(process(&worker, full_ctx, &envelope))
+    let result = match AssertUnwindSafe(process(&worker, job_ctx, &envelope))
         .catch_unwind()
         .await
     {
@@ -126,20 +123,19 @@ where
     latency_ms = envelope.meta.latency_millis(),
     success,
 )))]
-async fn process<DT, ET>(
-    worker: &BoxedWorker<DT, ET>,
-    full_ctx: Context<DT>,
+async fn process<ET>(
+    worker: &BoxedProcessable<ET>,
+    job_ctx: JobContext,
     #[cfg_attr(not(feature = "tracing-instrument"), allow(unused_variables))]
     envelope: &JobEnvelope,
 ) -> Result<(), ET>
 where
-    DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
     #[cfg(feature = "tracing-instrument")]
     let span = tracing::Span::current();
 
-    let result = worker.process(&full_ctx).await;
+    let result = worker.process(&job_ctx).await;
 
     #[cfg(feature = "tracing-instrument")]
     span.record("success", result.is_ok());
@@ -164,7 +160,7 @@ async fn handle_err<DT, ET>(
         if let Err(e) = config
             .storage
             .internal
-            .retry_in(envelope.id.clone(), retry_delay)
+            .retry_in(envelope.id.clone(), retry_delay, err_msg.to_string())
             .await
         {
             tracing::error!("Failed to retry job: {}", e);
@@ -176,7 +172,12 @@ async fn handle_err<DT, ET>(
             max_retries,
             err_msg
         );
-        if let Err(e) = config.storage.internal.kill(envelope).await {
+        if let Err(e) = config
+            .storage
+            .internal
+            .kill(envelope, err_msg.to_string())
+            .await
+        {
             tracing::error!("Failed to kill job: {}", e);
         }
     }

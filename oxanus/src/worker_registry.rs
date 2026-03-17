@@ -1,15 +1,17 @@
+use std::collections::HashMap;
 use std::str::FromStr;
-use std::{any::type_name, collections::HashMap};
 
+use crate::batch_processor::BatchProcessorConfig;
 use crate::error::OxanusError;
-use crate::worker::Worker;
+use crate::worker::{BoundJob, BoxedProcessable, FromContext, Worker};
 
-type BoxedJob<DT, ET> = Box<dyn Worker<Context = DT, Error = ET>>;
-type JobFactory<DT, ET> = fn(serde_json::Value) -> Result<BoxedJob<DT, ET>, OxanusError>;
+pub(crate) type JobFactory<DT, ET> =
+    fn(serde_json::Value, &DT) -> Result<BoxedProcessable<ET>, OxanusError>;
 
 pub struct WorkerRegistry<DT, ET> {
     jobs: HashMap<String, JobFactory<DT, ET>>,
     pub schedules: HashMap<String, CronJob>,
+    pub batch_configs: HashMap<String, BatchProcessorConfig<DT, ET>>,
 }
 
 pub struct WorkerConfig<DT, ET> {
@@ -34,15 +36,19 @@ pub struct CronJob {
     pub resurrect: bool,
 }
 
-pub fn job_factory<
-    T: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
-    DT,
-    ET,
->(
+pub fn job_factory<W, A, DT, ET>(
     value: serde_json::Value,
-) -> Result<BoxedJob<DT, ET>, OxanusError> {
-    let job: T = serde_json::from_value(value)?;
-    Ok(Box::new(job))
+    ctx: &DT,
+) -> Result<BoxedProcessable<ET>, OxanusError>
+where
+    W: Worker<A, Error = ET> + FromContext<DT> + 'static,
+    A: serde::de::DeserializeOwned + Send + Sync + 'static,
+    DT: Send + Sync + Clone + 'static,
+    ET: std::error::Error + Send + Sync + 'static,
+{
+    let args: A = serde_json::from_value(value)?;
+    let worker = W::from_context(ctx);
+    Ok(Box::new(BoundJob { worker, args }))
 }
 
 impl<DT, ET> WorkerRegistry<DT, ET> {
@@ -50,40 +56,8 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
         Self {
             jobs: HashMap::new(),
             schedules: HashMap::new(),
+            batch_configs: HashMap::new(),
         }
-    }
-
-    pub fn register<T>(&mut self) -> &mut Self
-    where
-        T: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
-    {
-        let name = type_name::<T>();
-
-        self.jobs.insert(name.to_string(), job_factory::<T, DT, ET>);
-        self
-    }
-
-    pub fn register_cron<T>(&mut self, schedule: &str, queue_key: String) -> &mut Self
-    where
-        T: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
-    {
-        self.validate_cron_worker::<T>();
-
-        let name = type_name::<T>();
-        let schedule = cron::Schedule::from_str(schedule)
-            .unwrap_or_else(|_| panic!("{name}: Invalid cron schedule: {schedule}"));
-
-        self.register::<T>();
-        self.schedules.insert(
-            name.to_string(),
-            CronJob {
-                schedule,
-                queue_key,
-                resurrect: T::should_resurrect(),
-            },
-        );
-
-        self
     }
 
     pub fn register_worker_with(&mut self, config: WorkerConfig<DT, ET>) {
@@ -96,8 +70,6 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
                 queue_key,
                 resurrect,
             } => {
-                // we can enforce cron worker being `struct Worker {}` in macro
-
                 self.jobs.insert(config.name.clone(), config.factory);
 
                 let schedule = cron::Schedule::from_str(&schedule).unwrap_or_else(|_| {
@@ -116,50 +88,42 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
         }
     }
 
+    pub fn register_batch_processor_with(&mut self, config: BatchProcessorConfig<DT, ET>) {
+        self.batch_configs
+            .insert(config.worker_name.clone(), config);
+    }
+
+    pub fn get_batch_config(&self, worker_name: &str) -> Option<&BatchProcessorConfig<DT, ET>> {
+        self.batch_configs.get(worker_name)
+    }
+
     pub fn worker_names(&self) -> Vec<&str> {
         self.jobs.keys().map(|s| s.as_str()).collect()
     }
 
-    pub fn has_registered<T>(&self) -> bool
-    where
-        T: Worker<Context = DT, Error = ET>,
-    {
-        self.jobs.contains_key(type_name::<T>())
+    pub fn has_registered(&self, name: &str) -> bool {
+        self.jobs.contains_key(name)
     }
 
-    pub fn has_registered_cron<T>(&self) -> bool
-    where
-        T: Worker<Context = DT, Error = ET>,
-    {
-        self.schedules.contains_key(type_name::<T>())
+    pub fn has_registered_cron(&self, name: &str) -> bool {
+        self.schedules.contains_key(name)
     }
 
     pub fn build(
         &self,
         name: &str,
         json: serde_json::Value,
-    ) -> Result<BoxedJob<DT, ET>, OxanusError> {
+        ctx: &DT,
+    ) -> Result<BoxedProcessable<ET>, OxanusError> {
         let factory = self
             .jobs
             .get(name)
             .ok_or_else(|| OxanusError::GenericError(format!("Job type {name} not registered")))?;
-        match factory(json) {
+        match factory(json, ctx) {
             Ok(job) => Ok(job),
             Err(e) => Err(OxanusError::JobFactoryError(format!(
                 "Failed to build job {name}: {e}"
             ))),
-        }
-    }
-
-    fn validate_cron_worker<T>(&self)
-    where
-        T: Worker<Context = DT, Error = ET> + serde::de::DeserializeOwned + 'static,
-    {
-        let name = type_name::<T>();
-        if serde_json::from_value::<T>(serde_json::json!({})).is_err() {
-            panic!(
-                "{name}: Cron worker must be deserializable from empty JSON (Don't define worker as `struct {name};`, use `struct {name} {{}}` instead)"
-            );
         }
     }
 }

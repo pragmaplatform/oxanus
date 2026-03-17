@@ -15,12 +15,20 @@ enum WorkerError {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[derive(Debug, Serialize, Deserialize)]
+struct ResumableTestJob {}
+
+#[derive(oxanus::Worker)]
+#[oxanus(args = ResumableTestJob)]
 #[oxanus(max_retries = 10, retry_delay = 3)]
-struct ResumableTestWorker {}
+struct ResumableTestWorker;
 
 impl ResumableTestWorker {
-    async fn process(&self, ctx: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
+    async fn process(
+        &self,
+        _job: &ResumableTestJob,
+        ctx: &oxanus::JobContext,
+    ) -> Result<(), WorkerError> {
         let progress = ctx.state.get::<i32>().await?;
 
         dbg!(&progress);
@@ -46,13 +54,13 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::Context::value(WorkerContext {});
+    let ctx = oxanus::ContextValue::new(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = ComponentRegistry::build_config(&storage)
         .with_graceful_shutdown(tokio::signal::ctrl_c())
         .exit_when_processed(11);
 
-    storage.enqueue(QueueOne, ResumableTestWorker {}).await?;
+    storage.enqueue(QueueOne, ResumableTestJob {}).await?;
 
     oxanus::run(config, ctx).await?;
 
