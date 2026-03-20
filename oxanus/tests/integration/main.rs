@@ -1,3 +1,5 @@
+#[cfg(feature = "macros")]
+mod batch;
 mod cron;
 mod dead;
 mod drain;
