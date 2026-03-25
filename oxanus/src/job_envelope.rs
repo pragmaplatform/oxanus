@@ -30,12 +30,14 @@ pub struct JobMeta {
     pub id: JobId,
     pub retries: u32,
     pub unique: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_conflict: Option<JobConflictStrategy>,
     pub created_at: i64,
     #[serde(default)]
     pub scheduled_at: i64,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<serde_json::Value>,
     #[serde(default = "default_resurrect")]
     pub resurrect: bool,
