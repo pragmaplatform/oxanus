@@ -33,6 +33,11 @@ impl Throttler {
 
         if state.is_allowed {
             let effective_cost = cost.unwrap_or(1);
+
+            if effective_cost == 0 {
+                return Ok(state);
+            }
+
             let members: Vec<(u64, String)> = (0..effective_cost)
                 .map(|_| (current_time, Uuid::new_v4().to_string()))
                 .collect();
