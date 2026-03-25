@@ -1,0 +1,6 @@
+{
+    "scripts": {
+        "setup": "./scripts/workspace-setup.sh",
+        "archive": "./scripts/workspace-archive.sh"
+    }
+}
