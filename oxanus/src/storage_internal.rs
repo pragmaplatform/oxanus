@@ -538,7 +538,7 @@ impl StorageInternal {
                 let envelope = self.get_job_w_conn(redis, job_id).await?;
                 Ok(envelope.map_or(0.0, |envelope| {
                     let now = chrono::Utc::now().timestamp_micros();
-                    (now - envelope.meta.scheduled_at) as f64
+                    (now - envelope.meta.effective_scheduled_at_micros()) as f64
                 }))
             }
             None => Ok(0.0),
