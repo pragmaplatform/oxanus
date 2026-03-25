@@ -114,8 +114,9 @@ where
     {
         Ok(job) => job,
         Err(e) => {
-            tracing::error!("Invalid job: {} - {}", &envelope.job.name, e);
-            if let Err(e) = config.storage.internal.kill(&envelope).await {
+            let err_msg = format!("Invalid job: {} - {}", &envelope.job.name, e);
+            tracing::error!("{}", err_msg);
+            if let Err(e) = config.storage.internal.kill(&envelope, err_msg).await {
                 #[cfg(feature = "sentry")]
                 sentry_core::capture_error(&e);
                 tracing::error!("Failed to kill job: {}", e);

@@ -197,12 +197,17 @@ impl StorageInternal {
         Ok(envelope.id)
     }
 
-    pub async fn retry_in(&self, job_id: JobId, delay_s: u64) -> Result<(), OxanusError> {
+    pub async fn retry_in(
+        &self,
+        job_id: JobId,
+        delay_s: u64,
+        error: String,
+    ) -> Result<(), OxanusError> {
         let updated_envelope = self
             .get_job(&job_id)
             .await?
             .ok_or(OxanusError::JobNotFound)?
-            .with_retries_incremented();
+            .with_retries_incremented(error);
 
         let now = chrono::Utc::now().timestamp_micros() as u64;
 
@@ -337,12 +342,13 @@ impl StorageInternal {
         Ok(envelopes)
     }
 
-    pub async fn kill(&self, envelope: &JobEnvelope) -> Result<(), OxanusError> {
+    pub async fn kill(&self, envelope: &JobEnvelope, error: String) -> Result<(), OxanusError> {
+        let envelope = envelope.clone().with_error(error);
         let mut redis = self.connection().await?;
         let _: () = redis::pipe()
             .lrem(self.current_processing_queue(), 1, &envelope.id)
             .hdel(&self.keys.jobs, &envelope.id)
-            .lpush(&self.keys.dead, &serde_json::to_string(envelope)?)
+            .lpush(&self.keys.dead, &serde_json::to_string(&envelope)?)
             .ltrim(&self.keys.dead, 0, 999)
             .query_async(&mut redis)
             .await?;
