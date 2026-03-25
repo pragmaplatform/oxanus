@@ -538,7 +538,7 @@ impl StorageInternal {
                 let envelope = self.get_job_w_conn(redis, job_id).await?;
                 Ok(envelope.map_or(0.0, |envelope| {
                     let now = chrono::Utc::now().timestamp_micros();
-                    (now - envelope.meta.created_at) as f64
+                    (now - envelope.meta.effective_scheduled_at_micros()) as f64
                 }))
             }
             None => Ok(0.0),
@@ -1184,7 +1184,9 @@ mod tests {
         let mut envelope = JobEnvelope::new(queue.clone(), TestWorker {})?;
         let now = chrono::Utc::now();
         let actual_latency = 7777;
-        envelope.meta.created_at = now.timestamp_micros() - actual_latency * 1_000;
+        let past = now.timestamp_micros() - actual_latency * 1_000;
+        envelope.meta.created_at = past;
+        envelope.meta.scheduled_at = past;
         storage.enqueue(envelope).await?;
 
         let latency = storage.latency_ms(&queue).await?;
@@ -1210,7 +1212,9 @@ mod tests {
         let actual_latency_ms = 7777;
         let actual_latency_micros = actual_latency_ms * 1_000;
         let actual_latency_s = actual_latency_ms as f64 / 1_000.0;
-        envelope.meta.created_at = now.timestamp_micros() - actual_latency_micros;
+        let past = now.timestamp_micros() - actual_latency_micros;
+        envelope.meta.created_at = past;
+        envelope.meta.scheduled_at = past;
         storage.enqueue(envelope).await?;
 
         let latency_ms = storage.latency_ms(&queue).await?;
@@ -1225,7 +1229,9 @@ mod tests {
         let mut envelope2 = JobEnvelope::new(queue.clone(), TestWorker {})?;
         let actual_latency_ms2 = 5000;
         let actual_latency_micros2 = actual_latency_ms2 * 1_000;
-        envelope2.meta.created_at = now.timestamp_micros() - actual_latency_micros2;
+        let past2 = now.timestamp_micros() - actual_latency_micros2;
+        envelope2.meta.created_at = past2;
+        envelope2.meta.scheduled_at = past2;
         storage.enqueue(envelope2).await?;
 
         let latency_ms = storage.latency_ms(&queue).await?;
