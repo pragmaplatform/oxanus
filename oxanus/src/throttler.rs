@@ -1,5 +1,6 @@
 use crate::OxanusError;
 use deadpool_redis::redis;
+use uuid::Uuid;
 
 pub struct Throttler {
     redis_pool: deadpool_redis::Pool,
@@ -25,17 +26,21 @@ impl Throttler {
         }
     }
 
-    pub async fn consume(&self) -> Result<ThrottlerState, OxanusError> {
+    pub async fn consume(&self, cost: Option<u64>) -> Result<ThrottlerState, OxanusError> {
         let mut redis = self.redis_pool.get().await?;
         let current_time = u64::try_from(chrono::Utc::now().timestamp_micros())?;
         let state = self.state_w_conn(&mut redis).await?;
 
         if state.is_allowed {
-            let (updated, _): (u64, ()) = redis::pipe()
-                .zadd(&self.key, current_time, current_time)
-                .expire(&self.key, self.window_s())
-                .query_async(&mut redis)
-                .await?;
+            let effective_cost = cost.unwrap_or(1);
+            let members: Vec<(u64, String)> = (0..effective_cost)
+                .map(|_| (current_time, Uuid::new_v4().to_string()))
+                .collect();
+
+            let mut pipe = redis::pipe();
+            pipe.zadd_multiple(&self.key, &members)
+                .expire(&self.key, self.window_s());
+            let (updated, _): (u64, ()) = pipe.query_async(&mut redis).await?;
 
             Ok(ThrottlerState {
                 requests: state.requests + updated,
@@ -112,16 +117,29 @@ mod tests {
         let pool = redis_pool().await?;
         let key = random_string();
         let rate_limiter = Throttler::new(pool, &key, 2, 60000);
-        assert!(rate_limiter.consume().await?.is_allowed);
-        assert!(rate_limiter.consume().await?.is_allowed);
-        let state = rate_limiter.consume().await?;
+        assert!(rate_limiter.consume(None).await?.is_allowed);
+        assert!(rate_limiter.consume(None).await?.is_allowed);
+        let state = rate_limiter.consume(None).await?;
         assert!(!state.is_allowed);
         assert!(state.throttled_for.is_some());
-        assert!(state.throttled_for.unwrap() >= 60000);
-        let state = rate_limiter.consume().await?;
+        assert!(state.throttled_for.unwrap_or(0) >= 60000);
+        let state = rate_limiter.consume(None).await?;
         assert!(!state.is_allowed);
         assert!(state.throttled_for.is_some());
-        assert!(state.throttled_for.unwrap() >= 60000);
+        assert!(state.throttled_for.unwrap_or(0) >= 60000);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_consume_with_cost() -> TestResult {
+        let pool = redis_pool().await?;
+        let key = random_string();
+        let rate_limiter = Throttler::new(pool, &key, 4, 60000);
+        assert!(rate_limiter.consume(Some(2)).await?.is_allowed);
+        assert!(rate_limiter.consume(Some(2)).await?.is_allowed);
+        let state = rate_limiter.consume(Some(1)).await?;
+        assert!(!state.is_allowed);
 
         Ok(())
     }
