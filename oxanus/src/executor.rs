@@ -164,7 +164,7 @@ async fn handle_err<DT, ET>(
         if let Err(e) = config
             .storage
             .internal
-            .retry_in(envelope.id.clone(), retry_delay)
+            .retry_in(envelope.id.clone(), retry_delay, err_msg.to_string())
             .await
         {
             tracing::error!("Failed to retry job: {}", e);
@@ -176,7 +176,12 @@ async fn handle_err<DT, ET>(
             max_retries,
             err_msg
         );
-        if let Err(e) = config.storage.internal.kill(envelope).await {
+        if let Err(e) = config
+            .storage
+            .internal
+            .kill(envelope, err_msg.to_string())
+            .await
+        {
             tracing::error!("Failed to kill job: {}", e);
         }
     }

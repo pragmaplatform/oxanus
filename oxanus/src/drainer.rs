@@ -99,7 +99,11 @@ where
                 .internal
                 .finish_with_failure(&envelope)
                 .await?;
-            config.storage.internal.kill(&envelope).await?;
+            config
+                .storage
+                .internal
+                .kill(&envelope, e.to_string())
+                .await?;
             Ok(ProcessJobResult::Failed)
         }
     }
