@@ -56,6 +56,10 @@ pub trait Worker: Send + Sync + UnwindSafe {
         true
     }
 
+    fn throttle_cost(&self) -> Option<u64> {
+        None
+    }
+
     fn to_config() -> WorkerConfigKind
     where
         Self: Sized,

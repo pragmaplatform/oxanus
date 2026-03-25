@@ -20,6 +20,7 @@ impl WorkerInstant {
 }
 
 #[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[oxanus(throttle_cost = 2)]
 struct WorkerInstant2 {}
 
 impl WorkerInstant2 {

@@ -18,6 +18,7 @@ struct OxanusArgs {
     on_conflict: Option<Ident>,
     cron: Option<Cron>,
     resurrect: Option<bool>,
+    throttle_cost: Option<ThrottleCost>,
 }
 
 #[derive(Debug)]
@@ -48,6 +49,14 @@ enum RetryDelay {
     /// #[retry_delay = 3]
     Value(u64),
     /// #[retry_delay = mymod::func]
+    CustomFunc(Path),
+}
+
+#[derive(Debug)]
+enum ThrottleCost {
+    /// #[throttle_cost = 2]
+    Value(u64),
+    /// #[throttle_cost = Self::throttle_cost]
     CustomFunc(Path),
 }
 
@@ -88,6 +97,7 @@ macro_rules! impl_from_meta_for_num_or_path {
 
 impl_from_meta_for_num_or_path!(MaxRetries, u32, "max_retries");
 impl_from_meta_for_num_or_path!(RetryDelay, u64, "retry_delay");
+impl_from_meta_for_num_or_path!(ThrottleCost, u64, "throttle_cost");
 
 impl FromMeta for UniqueIdSpec {
     fn from_meta(meta: &Meta) -> darling::Result<Self> {
@@ -200,6 +210,11 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
+    let throttle_cost = match args.throttle_cost {
+        Some(throttle_cost) => expand_throttle_cost(throttle_cost),
+        None => quote!(),
+    };
+
     let resurrect = match args.resurrect {
         Some(value) => quote! {
             fn should_resurrect() -> bool
@@ -259,6 +274,8 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
             #cron
 
             #resurrect
+
+            #throttle_cost
         }
 
         #registry
@@ -341,6 +358,25 @@ fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
     quote! {
         fn unique_id(&self) -> Option<String> {
             #formatter
+        }
+    }
+}
+
+fn expand_throttle_cost(throttle_cost: ThrottleCost) -> TokenStream {
+    match throttle_cost {
+        ThrottleCost::Value(value) => {
+            quote! {
+                fn throttle_cost(&self) -> Option<u64> {
+                    Some(#value)
+                }
+            }
+        }
+        ThrottleCost::CustomFunc(func) => {
+            quote! {
+                fn throttle_cost(&self) -> Option<u64> {
+                    #func(self)
+                }
+            }
         }
     }
 }

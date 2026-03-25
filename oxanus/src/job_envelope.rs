@@ -43,6 +43,8 @@ pub struct JobMeta {
     pub resurrect: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throttle_cost: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -90,6 +92,7 @@ impl JobEnvelope {
                 state: None,
                 resurrect,
                 error: None,
+                throttle_cost: job.throttle_cost(),
             },
         })
     }
@@ -119,6 +122,7 @@ impl JobEnvelope {
                 state: None,
                 resurrect,
                 error: None,
+                throttle_cost: None,
             },
         })
     }
@@ -144,6 +148,7 @@ impl JobEnvelope {
                 state: self.meta.state,
                 resurrect: self.meta.resurrect,
                 error: Some(error),
+                throttle_cost: self.meta.throttle_cost,
             },
         }
     }
@@ -219,6 +224,7 @@ mod tests {
             state: None,
             resurrect: true,
             error: None,
+            throttle_cost: None,
         }
     }
 
@@ -291,6 +297,7 @@ mod tests {
                 state: None,
                 resurrect: true,
                 error: None,
+                throttle_cost: None,
             },
         };
 

@@ -80,7 +80,11 @@ async fn pop_queue_message_w_throttle(
         if state.is_allowed
             && let Some(job_id) = storage.dequeue(queue_key).await?
         {
-            throttler.consume().await?;
+            let cost = storage
+                .get_job(&job_id)
+                .await?
+                .and_then(|envelope| envelope.meta.throttle_cost);
+            throttler.consume(cost).await?;
             return Ok(job_id);
         }
 
