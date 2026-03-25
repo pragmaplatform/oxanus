@@ -10,26 +10,46 @@ struct ComponentRegistry(oxanus::ComponentRegistry<WorkerContext, WorkerError>);
 #[oxanus(key = "two")]
 struct QueueTwo;
 
-#[derive(Debug, Clone, Serialize, Deserialize, oxanus::Worker)]
-pub struct WorkerCounter {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WorkerCounterJob {
     pub key: String,
 }
 
+#[derive(oxanus::Worker)]
+#[oxanus(args = WorkerCounterJob)]
+pub struct WorkerCounter {
+    ctx: WorkerContext,
+}
+
 impl WorkerCounter {
-    async fn process(&self, ctx: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
-        let mut redis = ctx.ctx.redis.get().await?;
-        let _: () = redis.incr(&self.key, 1).await?;
+    async fn process(
+        &self,
+        job: &WorkerCounterJob,
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), WorkerError> {
+        let mut redis = self.ctx.redis.get().await?;
+        let _: () = redis.incr(&job.key, 1).await?;
         Ok(())
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CronWorkerCounterJob {}
+
+#[derive(oxanus::Worker)]
+#[oxanus(args = CronWorkerCounterJob)]
 #[oxanus(cron(schedule = "* * * * * *", queue = QueueTwo))]
-pub struct CronWorkerCounter {}
+pub struct CronWorkerCounter {
+    ctx: WorkerContext,
+}
 
 impl CronWorkerCounter {
-    async fn process(&self, ctx: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
-        let mut redis = ctx.ctx.redis.get().await?;
+    async fn process(
+        &self,
+        _job: &CronWorkerCounterJob,
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), WorkerError> {
+        let mut redis = self.ctx.redis.get().await?;
         let _: () = redis.incr("test_worker:counter", 1).await?;
         Ok(())
     }
@@ -41,7 +61,7 @@ pub async fn test_registry() -> TestResult {
     let mut redis_conn = redis_pool.get().await?;
     let _: i64 = redis_conn.del("test_worker:counter").await?;
 
-    let ctx = oxanus::Context::value(WorkerContext {
+    let ctx = oxanus::ContextValue::new(WorkerContext {
         redis: redis_pool.clone(),
     });
 
@@ -53,13 +73,13 @@ pub async fn test_registry() -> TestResult {
 
     // no need to manually register, here we verify they were registered
     assert!(config.has_registered_queue::<QueueTwo>());
-    assert!(config.has_registered_worker::<WorkerCounter>());
-    assert!(config.has_registered_cron_worker::<CronWorkerCounter>());
+    assert!(config.has_registered_worker_type::<WorkerCounter>());
+    assert!(config.has_registered_cron_worker_type::<CronWorkerCounter>());
 
     storage
         .enqueue(
             QueueTwo,
-            WorkerCounter {
+            WorkerCounterJob {
                 key: "test_worker:counter".to_owned(),
             },
         )

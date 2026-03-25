@@ -2,15 +2,32 @@ use crate::shared::*;
 use serde::{Deserialize, Serialize};
 use testresult::TestResult;
 
-#[derive(Serialize, Deserialize)]
-struct WorkerPanic {}
+#[derive(Debug, Serialize, Deserialize)]
+struct WorkerPanicJob {}
+
+struct WorkerPanic;
+
+impl oxanus::Job for WorkerPanicJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<WorkerPanic>()
+    }
+}
+
+impl oxanus::FromContext<()> for WorkerPanic {
+    fn from_context(_ctx: &()) -> Self {
+        Self
+    }
+}
 
 #[async_trait::async_trait]
-impl oxanus::Worker for WorkerPanic {
-    type Context = ();
+impl oxanus::Worker<WorkerPanicJob> for WorkerPanic {
     type Error = std::io::Error;
 
-    async fn process(&self, _: &oxanus::Context<()>) -> Result<(), std::io::Error> {
+    async fn process(
+        &self,
+        _job: &WorkerPanicJob,
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), std::io::Error> {
         panic!("test panic");
     }
 
@@ -22,16 +39,16 @@ impl oxanus::Worker for WorkerPanic {
 #[tokio::test]
 pub async fn test_panic() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxanus::Context::value(());
+    let ctx = oxanus::ContextValue::new(());
     let storage = oxanus::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool)?;
     let config = oxanus::Config::new(&storage)
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerPanic>()
+        .register_worker::<WorkerPanic, WorkerPanicJob>()
         .exit_when_processed(1);
 
-    storage.enqueue(QueueOne, WorkerPanic {}).await?;
+    storage.enqueue(QueueOne, WorkerPanicJob {}).await?;
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 1);
 

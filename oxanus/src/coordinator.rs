@@ -110,7 +110,7 @@ where
     );
     let job = match config
         .registry
-        .build(&envelope.job.name, envelope.job.args.clone())
+        .build(&envelope.job.name, envelope.job.args.clone(), &ctx.0)
     {
         Ok(job) => job,
         Err(e) => {
@@ -125,7 +125,7 @@ where
         }
     };
 
-    let result = executor::run(config, job, &envelope, ctx.clone()).await?;
+    let result = executor::run(config, job, &envelope).await?;
     drop(job_event.permit);
 
     process_result(result_tx, result, envelope).await;

@@ -8,7 +8,7 @@ use crate::{
     storage_builder::StorageBuilder,
     storage_internal::StorageInternal,
     storage_types::QueueListOpts,
-    worker::Worker,
+    worker::Job,
 };
 
 #[cfg(feature = "prometheus")]
@@ -22,16 +22,16 @@ use crate::prometheus::PrometheusMetrics;
 /// # Examples
 ///
 /// ```rust
-/// use oxanus::{Storage, Queue, Worker};
+/// use oxanus::{Storage, Queue, Job};
 ///
 /// async fn example() -> Result<(), oxanus::OxanusError> {
 ///     let storage = Storage::builder().from_env()?.build()?;
 ///
 ///     // Enqueue a job
-///     storage.enqueue(MyQueue, MyWorker { data: "hello" }).await?;
+///     storage.enqueue(MyQueue, MyJob { data: "hello" }).await?;
 ///
 ///     // Schedule a job for later
-///     storage.enqueue_in(MyQueue, MyWorker { data: "delayed" }, 300).await?;
+///     storage.enqueue_in(MyQueue, MyJob { data: "delayed" }, 300).await?;
 ///
 ///     Ok(())
 /// }
@@ -61,7 +61,7 @@ impl Storage {
     /// # Arguments
     ///
     /// * `queue` - The queue to enqueue the job to
-    /// * `job` - The job to enqueue
+    /// * `job` - The job to enqueue (must implement [`Job`])
     ///
     /// # Returns
     ///
@@ -70,19 +70,14 @@ impl Storage {
     /// # Examples
     ///
     /// ```rust
-    /// use oxanus::{Storage, Queue, Worker};
+    /// use oxanus::{Storage, Queue, Job};
     ///
     /// async fn example(storage: &Storage) -> Result<(), oxanus::OxanusError> {
-    ///     let job_id = storage.enqueue(MyQueue, MyWorker { data: "hello" }).await?;
+    ///     let job_id = storage.enqueue(MyQueue, MyJob { data: "hello" }).await?;
     ///     Ok(())
     /// }
     /// ```
-    pub async fn enqueue<T, DT, ET>(&self, queue: impl Queue, job: T) -> Result<JobId, OxanusError>
-    where
-        T: Worker<Context = DT, Error = ET> + serde::Serialize,
-        DT: Send + Sync + Clone + 'static,
-        ET: std::error::Error + Send + Sync + 'static,
-    {
+    pub async fn enqueue<T: Job>(&self, queue: impl Queue, job: T) -> Result<JobId, OxanusError> {
         self.enqueue_in(queue, job, 0).await
     }
 
@@ -91,7 +86,7 @@ impl Storage {
     /// # Arguments
     ///
     /// * `queue` - The queue to enqueue the job to
-    /// * `job` - The job to enqueue
+    /// * `job` - The job to enqueue (must implement [`Job`])
     /// * `delay` - The delay in seconds before the job should be processed
     ///
     /// # Returns
@@ -101,25 +96,20 @@ impl Storage {
     /// # Examples
     ///
     /// ```rust
-    /// use oxanus::{Storage, Queue, Worker};
+    /// use oxanus::{Storage, Queue, Job};
     ///
     /// async fn example(storage: &Storage) -> Result<(), oxanus::OxanusError> {
     ///     // Schedule a job to run in 5 minutes
-    ///     let job_id = storage.enqueue_in(MyQueue, MyWorker { data: "delayed" }, 300).await?;
+    ///     let job_id = storage.enqueue_in(MyQueue, MyJob { data: "delayed" }, 300).await?;
     ///     Ok(())
     /// }
     /// ```
-    pub async fn enqueue_in<T, DT, ET>(
+    pub async fn enqueue_in<T: Job>(
         &self,
         queue: impl Queue,
         job: T,
         delay: u64,
-    ) -> Result<JobId, OxanusError>
-    where
-        T: Worker<Context = DT, Error = ET> + serde::Serialize,
-        DT: Send + Sync + Clone + 'static,
-        ET: std::error::Error + Send + Sync + 'static,
-    {
+    ) -> Result<JobId, OxanusError> {
         let envelope = JobEnvelope::new(queue.key().clone(), job)?;
 
         tracing::trace!("Enqueuing job: {:?}", envelope);
@@ -136,7 +126,7 @@ impl Storage {
     /// # Arguments
     ///
     /// * `queue` - The queue to enqueue the job to
-    /// * `job` - The job to enqueue
+    /// * `job` - The job to enqueue (must implement [`Job`])
     /// * `time` - The UTC timestamp when the job should become available
     ///
     /// # Returns
@@ -147,25 +137,20 @@ impl Storage {
     ///
     /// ```rust
     /// use chrono::{Duration, Utc};
-    /// use oxanus::{Storage, Queue, Worker};
+    /// use oxanus::{Storage, Queue, Job};
     ///
     /// async fn example(storage: &Storage) -> Result<(), oxanus::OxanusError> {
     ///     let time = Utc::now() + Duration::minutes(5);
-    ///     let job_id = storage.enqueue_at(MyQueue, MyWorker { data: "scheduled" }, time).await?;
+    ///     let job_id = storage.enqueue_at(MyQueue, MyJob { data: "scheduled" }, time).await?;
     ///     Ok(())
     /// }
     /// ```
-    pub async fn enqueue_at<T, DT, ET>(
+    pub async fn enqueue_at<T: Job>(
         &self,
         queue: impl Queue,
         job: T,
         time: DateTime<Utc>,
-    ) -> Result<JobId, OxanusError>
-    where
-        T: Worker<Context = DT, Error = ET> + serde::Serialize,
-        DT: Send + Sync + Clone + 'static,
-        ET: std::error::Error + Send + Sync + 'static,
-    {
+    ) -> Result<JobId, OxanusError> {
         let envelope = JobEnvelope::new(queue.key().clone(), job)?;
 
         tracing::trace!("Scheduling job {:?} at {}", envelope, time);

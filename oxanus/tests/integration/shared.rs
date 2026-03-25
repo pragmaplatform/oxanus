@@ -18,37 +18,70 @@ pub struct WorkerState {
     pub redis: deadpool_redis::Pool,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct WorkerNoop {}
-
-#[async_trait::async_trait]
-impl oxanus::Worker for WorkerNoop {
-    type Context = ();
-    type Error = WorkerError;
-
-    async fn process(&self, _: &oxanus::Context<()>) -> Result<(), WorkerError> {
-        Ok(())
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize)]
-pub struct WorkerRedisSet {
-    pub key: String,
-    pub value: String,
-}
+pub struct WorkerNoopJob {}
+
+pub struct WorkerNoop;
 
 #[async_trait::async_trait]
-impl oxanus::Worker for WorkerRedisSet {
-    type Context = WorkerState;
+impl oxanus::Worker<WorkerNoopJob> for WorkerNoop {
     type Error = WorkerError;
 
     async fn process(
         &self,
-        oxanus::Context { ctx, .. }: &oxanus::Context<WorkerState>,
+        _job: &WorkerNoopJob,
+        _ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
-        let mut redis = ctx.redis.get().await?;
-        let _: () = redis.set_ex(&self.key, self.value.clone(), 3).await?;
         Ok(())
+    }
+}
+
+impl oxanus::FromContext<()> for WorkerNoop {
+    fn from_context(_ctx: &()) -> Self {
+        Self
+    }
+}
+
+impl oxanus::Job for WorkerNoopJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<WorkerNoop>()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WorkerRedisSetJob {
+    pub key: String,
+    pub value: String,
+}
+
+pub struct WorkerRedisSet {
+    pub state: WorkerState,
+}
+
+#[async_trait::async_trait]
+impl oxanus::Worker<WorkerRedisSetJob> for WorkerRedisSet {
+    type Error = WorkerError;
+
+    async fn process(
+        &self,
+        job: &WorkerRedisSetJob,
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), WorkerError> {
+        let mut redis = self.state.redis.get().await?;
+        let _: () = redis.set_ex(&job.key, job.value.clone(), 3).await?;
+        Ok(())
+    }
+}
+
+impl oxanus::FromContext<WorkerState> for WorkerRedisSet {
+    fn from_context(ctx: &WorkerState) -> Self {
+        Self { state: ctx.clone() }
+    }
+}
+
+impl oxanus::Job for WorkerRedisSetJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<WorkerRedisSet>()
     }
 }
 

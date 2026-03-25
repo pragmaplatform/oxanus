@@ -6,7 +6,7 @@ fn main() {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct WorkerNoop {
+pub struct WorkerNoopJob {
     pub sleep_ms: u64,
 }
 
@@ -18,6 +18,34 @@ pub enum ServiceError {
 
 #[derive(Debug, Clone)]
 pub struct WorkerState {}
+
+pub struct WorkerNoop;
+
+impl oxanus::Job for WorkerNoopJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<WorkerNoop>()
+    }
+}
+
+impl oxanus::FromContext<WorkerState> for WorkerNoop {
+    fn from_context(_ctx: &WorkerState) -> Self {
+        Self
+    }
+}
+
+#[async_trait::async_trait]
+impl oxanus::Worker<WorkerNoopJob> for WorkerNoop {
+    type Error = ServiceError;
+
+    async fn process(
+        &self,
+        job: &WorkerNoopJob,
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), ServiceError> {
+        tokio::time::sleep(std::time::Duration::from_millis(job.sleep_ms)).await;
+        Ok(())
+    }
+}
 
 #[derive(Serialize)]
 pub struct QueueOne;
@@ -36,20 +64,6 @@ impl oxanus::Queue for QueueOne {
 
 const JOBS_COUNT: u64 = 1000;
 const CONCURRENCY: &[usize] = &[1, 2, 4, 8, 12, 16, 512];
-
-#[async_trait::async_trait]
-impl oxanus::Worker for WorkerNoop {
-    type Context = WorkerState;
-    type Error = ServiceError;
-
-    async fn process(
-        &self,
-        oxanus::Context { .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), ServiceError> {
-        tokio::time::sleep(std::time::Duration::from_millis(self.sleep_ms)).await;
-        Ok(())
-    }
-}
 
 #[divan::bench(args = CONCURRENCY, sample_size = 1, sample_count = 1)]
 fn run_1000_jobs_taking_0_ms(bencher: divan::Bencher, n: usize) {
@@ -115,7 +129,7 @@ async fn setup(
     for _ in 0..jobs_count {
         config
             .storage
-            .enqueue(QueueOne, WorkerNoop { sleep_ms })
+            .enqueue(QueueOne, WorkerNoopJob { sleep_ms })
             .await?;
     }
 
@@ -124,7 +138,7 @@ async fn setup(
 
 async fn execute(concurrency: usize, jobs_count: u64) -> Result<(), oxanus::OxanusError> {
     let config = build_config(concurrency).exit_when_processed(jobs_count);
-    let ctx = oxanus::Context::value(WorkerState {});
+    let ctx = oxanus::ContextValue::new(WorkerState {});
 
     let stats = oxanus::run(config, ctx).await?;
 
@@ -153,5 +167,5 @@ fn build_config(concurrency: usize) -> oxanus::Config<WorkerState, ServiceError>
         .expect("Failed to build storage");
     oxanus::Config::new(&storage)
         .register_queue_with_concurrency::<QueueOne>(concurrency)
-        .register_worker::<WorkerNoop>()
+        .register_worker::<WorkerNoop, WorkerNoopJob>()
 }

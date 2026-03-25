@@ -11,14 +11,22 @@ enum WorkerError {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
+#[derive(Debug, Serialize, Deserialize)]
+struct TestWorkerJob {}
+
+#[derive(oxanus::Worker)]
+#[oxanus(args = TestWorkerJob)]
 #[oxanus(registry = None)]
 #[oxanus(max_retries = 3, retry_delay = 0)]
-#[oxanus(cron(schedule = "*/10 * * * * *"))]
-struct TestWorker {}
+#[oxanus(cron(schedule = "*/10 * * * * *", queue = QueueOne))]
+struct TestWorker;
 
 impl TestWorker {
-    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
+    async fn process(
+        &self,
+        _job: &TestWorkerJob,
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), WorkerError> {
         if rand::rng().random_bool(0.5) {
             Err(WorkerError::GenericError("foo".to_string()))
         } else {
@@ -29,8 +37,7 @@ impl TestWorker {
 
 #[derive(Serialize, oxanus::Queue)]
 #[oxanus(registry = None)]
-#[oxanus(prefix = "two")]
-struct QueueDynamic(i32);
+struct QueueOne;
 
 #[tokio::main]
 pub async fn main() -> Result<(), oxanus::OxanusError> {
@@ -39,10 +46,10 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::Context::value(WorkerContext {});
+    let ctx = oxanus::ContextValue::new(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = oxanus::Config::new(&storage)
-        .register_cron_worker::<TestWorker>(QueueDynamic(2))
+        .register_worker::<TestWorker, TestWorkerJob>()
         .with_graceful_shutdown(tokio::signal::ctrl_c());
 
     oxanus::run(config, ctx).await?;

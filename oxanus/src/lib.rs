@@ -108,7 +108,7 @@ pub mod prometheus;
 mod test_helper;
 
 pub use crate::config::Config;
-pub use crate::context::{Context, JobState};
+pub use crate::context::{ContextValue, JobContext, JobState};
 pub use crate::drainer::drain;
 pub use crate::error::OxanusError;
 pub use crate::job_envelope::{JobConflictStrategy, JobEnvelope, JobId, JobMeta};
@@ -118,7 +118,7 @@ pub use crate::stats::*;
 pub use crate::storage::Storage;
 pub use crate::storage_builder::{StorageBuilder, StorageBuilderTimeouts};
 pub use crate::storage_types::*;
-pub use crate::worker::Worker;
+pub use crate::worker::{BoxedProcessable, FromContext, Job, Processable, Worker};
 pub use crate::worker_registry::{WorkerConfig, WorkerConfigKind, job_factory};
 
 #[cfg(feature = "registry")]

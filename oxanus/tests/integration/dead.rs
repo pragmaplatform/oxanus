@@ -4,16 +4,30 @@ use testresult::TestResult;
 use crate::shared::*;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct WorkerFail {}
+pub struct WorkerFailJob {}
+
+pub struct WorkerFail;
+
+impl oxanus::Job for WorkerFailJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<WorkerFail>()
+    }
+}
+
+impl oxanus::FromContext<()> for WorkerFail {
+    fn from_context(_ctx: &()) -> Self {
+        Self
+    }
+}
 
 #[async_trait::async_trait]
-impl oxanus::Worker for WorkerFail {
-    type Context = ();
+impl oxanus::Worker<WorkerFailJob> for WorkerFail {
     type Error = WorkerError;
 
     async fn process(
         &self,
-        oxanus::Context { .. }: &oxanus::Context<()>,
+        _job: &WorkerFailJob,
+        _ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
         Err(WorkerError::Generic(
             "I have nothing to live for...".to_string(),
@@ -23,7 +37,6 @@ impl oxanus::Worker for WorkerFail {
     fn retry_delay(&self, _retries: u32) -> u64 {
         0
     }
-
     fn max_retries(&self) -> u32 {
         0
     }
@@ -32,16 +45,16 @@ impl oxanus::Worker for WorkerFail {
 #[tokio::test]
 pub async fn test_dead() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxanus::Context::value(());
+    let ctx = oxanus::ContextValue::new(());
     let storage = oxanus::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
     let config = oxanus::Config::new(&storage)
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerFail>()
+        .register_worker::<WorkerFail, WorkerFailJob>()
         .exit_when_processed(1);
 
-    storage.enqueue(QueueOne, WorkerFail {}).await?;
+    storage.enqueue(QueueOne, WorkerFailJob {}).await?;
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 1);
 

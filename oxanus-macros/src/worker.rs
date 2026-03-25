@@ -9,6 +9,7 @@ use syn::{
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(oxanus), supports(struct_any))]
 struct OxanusArgs {
+    args: Option<Path>,
     context: Option<Path>,
     error: Option<Path>,
     registry: Option<Path>,
@@ -154,64 +155,86 @@ impl FromMeta for UniqueIdSpec {
     }
 }
 
+fn extract_format_placeholders(fmt_str: &str) -> Vec<syn::Ident> {
+    let mut result = Vec::new();
+    let mut chars = fmt_str.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '{' {
+            let mut name = String::new();
+            for inner in chars.by_ref() {
+                if inner == '}' {
+                    break;
+                }
+                name.push(inner);
+            }
+            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                result.push(syn::Ident::new(&name, proc_macro2::Span::call_site()));
+            }
+        }
+    }
+    result
+}
+
 pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
     let args = match OxanusArgs::from_derive_input(&input) {
         Ok(v) => v,
         Err(e) => {
-            // darling::Error -> emit nice compile errors
             abort!(input.ident, "{}", e);
         }
     };
 
     let struct_ident = &input.ident;
 
-    let type_context = match args.context {
+    let type_args = match &args.args {
+        Some(path) => quote!(#path),
+        None => abort!(
+            input.ident,
+            "Worker must have #[oxanus(args = MyJob)] attribute specifying the job type"
+        ),
+    };
+
+    let type_context = match &args.context {
         Some(context) => quote!(#context),
         None => quote!(WorkerContext),
     };
 
-    let type_error = match args.error {
+    let type_error = match &args.error {
         Some(error) => quote!(#error),
         None => quote!(WorkerError),
     };
 
-    let max_retries = match args.max_retries {
+    let worker_impl = expand_worker_impl(struct_ident, &type_args, &type_error, &args);
+    let job_impl = expand_job_impl(struct_ident, &type_args, &args);
+    let from_context_impl = expand_from_context_impl(struct_ident, &type_context, &input);
+    let registry_impl =
+        expand_registry(struct_ident, &type_args, &type_context, &type_error, &args);
+
+    quote! {
+        #worker_impl
+        #job_impl
+        #from_context_impl
+        #registry_impl
+    }
+}
+
+fn expand_worker_impl(
+    struct_ident: &Ident,
+    type_args: &TokenStream,
+    type_error: &TokenStream,
+    args: &OxanusArgs,
+) -> TokenStream {
+    let max_retries = match &args.max_retries {
         Some(max_retries) => expand_max_retries(max_retries),
         None => quote!(),
     };
 
-    let retry_delay = match args.retry_delay {
+    let retry_delay = match &args.retry_delay {
         Some(retry_delay) => expand_retry_delay(retry_delay),
         None => quote!(),
     };
 
-    let on_conflict = match args.on_conflict {
-        Some(on_conflict) => quote! {
-            fn on_conflict(&self) -> oxanus::JobConflictStrategy {
-                oxanus::JobConflictStrategy::#on_conflict
-            }
-        },
-        None => quote!(),
-    };
-
-    let unique_id = match args.unique_id {
-        Some(unique_id) => expand_unique_id(
-            unique_id,
-            match &input.data {
-                Data::Struct(data_struct) => &data_struct.fields,
-                _ => abort!(input.ident, "Worker must be a struct."),
-            },
-        ),
-        None => quote!(),
-    };
-
-    let cron = match args.cron {
+    let cron = match &args.cron {
         Some(cron) => expand_cron(cron),
-        None => quote!(),
-    };
-
-    let throttle_cost = match args.throttle_cost {
-        Some(throttle_cost) => expand_throttle_cost(throttle_cost),
         None => quote!(),
     };
 
@@ -227,12 +250,142 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
-    let component_registry = match args.registry {
+    quote! {
+        #[automatically_derived]
+        #[async_trait::async_trait]
+        impl oxanus::Worker<#type_args> for #struct_ident {
+            type Error = #type_error;
+
+            async fn process(&self, job: &#type_args, ctx: &oxanus::JobContext) -> Result<(), Self::Error> {
+                self.process(job, ctx).await
+            }
+
+            #max_retries
+
+            #retry_delay
+
+            #cron
+
+            #resurrect
+        }
+    }
+}
+
+fn expand_job_impl(
+    struct_ident: &Ident,
+    type_args: &TokenStream,
+    args: &OxanusArgs,
+) -> TokenStream {
+    let unique_id = match &args.unique_id {
+        Some(unique_id) => expand_unique_id(unique_id),
+        None => quote!(),
+    };
+
+    let on_conflict = match &args.on_conflict {
+        Some(on_conflict) => quote! {
+            fn on_conflict(&self) -> oxanus::JobConflictStrategy {
+                oxanus::JobConflictStrategy::#on_conflict
+            }
+        },
+        None => quote!(),
+    };
+
+    let resurrect = match args.resurrect {
+        Some(value) => quote! {
+            fn should_resurrect() -> bool
+            where
+                Self: Sized,
+            {
+                #value
+            }
+        },
+        None => quote!(),
+    };
+
+    let throttle_cost = match &args.throttle_cost {
+        Some(throttle_cost) => expand_throttle_cost(throttle_cost),
+        None => quote!(),
+    };
+
+    quote! {
+        #[automatically_derived]
+        impl oxanus::Job for #type_args {
+            fn worker_name() -> &'static str
+            where
+                Self: Sized,
+            {
+                std::any::type_name::<#struct_ident>()
+            }
+
+            #unique_id
+
+            #on_conflict
+
+            #resurrect
+
+            #throttle_cost
+        }
+    }
+}
+
+fn expand_from_context_impl(
+    struct_ident: &Ident,
+    type_context: &TokenStream,
+    input: &DeriveInput,
+) -> TokenStream {
+    let fields = match &input.data {
+        Data::Struct(data_struct) => &data_struct.fields,
+        _ => abort!(input.ident, "Worker must be a struct."),
+    };
+
+    let constructor = match fields {
+        Fields::Unit => quote!(Self),
+        Fields::Named(named) if named.named.is_empty() => quote!(Self {}),
+        Fields::Named(named) if named.named.len() == 1 => {
+            let field = named.named.first().expect("checked len == 1");
+            let field_name = field.ident.as_ref().expect("named field has ident");
+            quote!(Self { #field_name: ctx.clone() })
+        }
+        Fields::Named(named) => {
+            abort!(
+                input.ident,
+                "Worker structs with {} fields cannot auto-derive FromContext. \
+                 Implement oxanus::FromContext<{}> manually.",
+                named.named.len(),
+                type_context
+            );
+        }
+        Fields::Unnamed(_) => {
+            abort!(
+                input.ident,
+                "Tuple worker structs are not supported. Use named fields or a unit struct."
+            );
+        }
+    };
+
+    quote! {
+        #[automatically_derived]
+        impl oxanus::FromContext<#type_context> for #struct_ident {
+            fn from_context(ctx: &#type_context) -> Self {
+                #constructor
+            }
+        }
+    }
+}
+
+fn expand_registry(
+    struct_ident: &Ident,
+    type_args: &TokenStream,
+    type_context: &TokenStream,
+    type_error: &TokenStream,
+    args: &OxanusArgs,
+) -> TokenStream {
+    let component_registry = match &args.registry {
         Some(registry) => quote!(#registry),
         None => quote!(ComponentRegistry),
     };
 
-    let registry = if cfg!(feature = "registry") && component_registry.to_string() != "None" {
+    if cfg!(feature = "registry") && component_registry.to_string() != "None" {
         quote! {
             oxanus::register_component! {
                 #component_registry(oxanus::ComponentRegistry {
@@ -241,8 +394,8 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
                     definition: || {
                         oxanus::ComponentDefinition::Worker(oxanus::WorkerConfig {
                             name: std::any::type_name::<#struct_ident>().to_owned(),
-                            factory: oxanus::job_factory::<#struct_ident, #type_context, #type_error>,
-                            kind: <#struct_ident as oxanus::Worker>::to_config(),
+                            factory: oxanus::job_factory::<#struct_ident, #type_args, #type_context, #type_error>,
+                            kind: <#struct_ident as oxanus::Worker<#type_args>>::to_config(),
                         })
                     }
                 })
@@ -250,39 +403,10 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
         }
     } else {
         quote!()
-    };
-
-    quote! {
-        #[automatically_derived]
-        #[async_trait::async_trait]
-        impl oxanus::Worker for #struct_ident {
-            type Context = #type_context;
-            type Error = #type_error;
-
-            async fn process(&self, data: &oxanus::Context<Self::Context>) -> Result<(), Self::Error> {
-                self.process(data).await
-            }
-
-            #unique_id
-
-            #max_retries
-
-            #retry_delay
-
-            #on_conflict
-
-            #cron
-
-            #resurrect
-
-            #throttle_cost
-        }
-
-        #registry
     }
 }
 
-fn expand_max_retries(max_retries: MaxRetries) -> TokenStream {
+fn expand_max_retries(max_retries: &MaxRetries) -> TokenStream {
     match max_retries {
         MaxRetries::Value(value) => {
             quote! {
@@ -301,7 +425,7 @@ fn expand_max_retries(max_retries: MaxRetries) -> TokenStream {
     }
 }
 
-fn expand_retry_delay(retry_delay: RetryDelay) -> TokenStream {
+fn expand_retry_delay(retry_delay: &RetryDelay) -> TokenStream {
     match retry_delay {
         RetryDelay::Value(value) => {
             quote! {
@@ -320,18 +444,12 @@ fn expand_retry_delay(retry_delay: RetryDelay) -> TokenStream {
     }
 }
 
-fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
+fn expand_unique_id(spec: &UniqueIdSpec) -> TokenStream {
     let formatter = match spec {
         UniqueIdSpec::Shorthand(fmt) => {
             let fmt_str = fmt.value();
-            let args = fields.iter().filter_map(|f| {
-                let name = f.ident.as_ref()?;
-                if fmt_str.contains(&format!("{{{name}}}")) {
-                    Some(quote!(#name = self.#name))
-                } else {
-                    None
-                }
-            });
+            let placeholders = extract_format_placeholders(&fmt_str);
+            let args = placeholders.iter().map(|name| quote!(#name = self.#name));
 
             quote! {
                 Some(format!(
@@ -362,7 +480,7 @@ fn expand_unique_id(spec: UniqueIdSpec, fields: &Fields) -> TokenStream {
     }
 }
 
-fn expand_throttle_cost(throttle_cost: ThrottleCost) -> TokenStream {
+fn expand_throttle_cost(throttle_cost: &ThrottleCost) -> TokenStream {
     match throttle_cost {
         ThrottleCost::Value(value) => {
             quote! {
@@ -381,9 +499,9 @@ fn expand_throttle_cost(throttle_cost: ThrottleCost) -> TokenStream {
     }
 }
 
-fn expand_cron(cron: Cron) -> TokenStream {
-    let cron_schedule = cron.schedule;
-    let cron_queue_config = match cron.queue {
+fn expand_cron(cron: &Cron) -> TokenStream {
+    let cron_schedule = &cron.schedule;
+    let cron_queue_config = match &cron.queue {
         Some(queue) => quote! {
             fn cron_queue_config() -> Option<oxanus::QueueConfig>
             where
