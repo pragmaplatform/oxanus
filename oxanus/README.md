@@ -83,6 +83,40 @@ async fn main() -> Result<(), oxanus::OxanusError> {
 
 For more detailed usage examples, check out the [examples directory](https://github.com/pragmaplatform/oxanus/tree/main/oxanus/examples).
 
+## Web Dashboard
+
+The `oxanus-web` crate provides a web UI dashboard for monitoring jobs, queues, and cron schedules. It integrates as a nested axum router.
+
+```rust
+use oxanus_web::OxanusWebState;
+
+// Build your oxanus config as usual
+let config = ComponentRegistry::build_config(&storage)
+    .with_graceful_shutdown(tokio::signal::ctrl_c());
+
+// Create the oxanus-web router
+let oxanus_router = oxanus_web::router(OxanusWebState {
+    catalog: config.catalog(),
+    storage: config.storage.clone(),
+    base_path: "/oxanus".to_string(),
+});
+
+// Nest it into your existing axum app
+let app = your_app_router().nest("/oxanus", oxanus_router);
+```
+
+The dashboard exposes these pages:
+
+- `/` - Overview with job stats
+- `/busy` - Currently processing jobs
+- `/queues` - All queues with stats
+- `/queues/{queue_key}` - Jobs in a specific queue
+- `/cron` - Cron job schedules
+- `/scheduled` - Scheduled jobs
+- `/retries` - Jobs pending retry
+- `/dead` - Dead letter queue
+
+It also provides management actions for wiping queues and deleting individual jobs.
 
 ## Core Concepts
 
