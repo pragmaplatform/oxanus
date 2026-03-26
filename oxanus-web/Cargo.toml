@@ -1,0 +1,25 @@
+[package]
+name = "oxanus-web"
+version = "0.9.1"
+edition = "2024"
+license = "MIT"
+description = "Web UI for Oxanus job queue system."
+repository = "https://github.com/pragmaplatform/oxanus"
+keywords = ["job", "scheduler", "worker", "web"]
+categories = ["asynchronous", "web-programming"]
+exclude = [".*", "logo.jpg"]
+
+[lib]
+doctest = false
+test = true
+
+[dependencies]
+oxanus = { workspace = true }
+
+askama = "0.15"
+askama_web = { version = "0.15", features = ["axum-0.8"] }
+axum = "0.8"
+chrono = { version = "^0.4", features = ["serde"] }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0", features = ["preserve_order"] }
+urlencoding = "2"
