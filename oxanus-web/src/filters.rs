@@ -18,13 +18,9 @@ pub fn relative_time(ts: &i64, _env: &dyn askama::Values) -> askama::Result<Stri
     Ok(result)
 }
 
-#[askama::filter_fn]
-pub fn relative_time_micros(ts: &i64, _env: &dyn askama::Values) -> askama::Result<String> {
-    let now_micros = chrono::Utc::now().timestamp_micros();
-    let diff_secs = (now_micros - ts) / 1_000_000;
-
+fn format_relative_micros(diff_secs: i64) -> String {
     if diff_secs.abs() < 15 {
-        return Ok("now".to_string());
+        return "now".to_string();
     }
 
     let abs = diff_secs.abs();
@@ -34,7 +30,7 @@ pub fn relative_time_micros(ts: &i64, _env: &dyn askama::Values) -> askama::Resu
         ("in ", "")
     };
 
-    let result = if abs < 60 {
+    if abs < 60 {
         format!("{prefix}{abs}s{suffix}")
     } else if abs < 3600 {
         format!("{prefix}{}m{suffix}", abs / 60)
@@ -46,9 +42,14 @@ pub fn relative_time_micros(ts: &i64, _env: &dyn askama::Values) -> askama::Resu
         } else {
             format!("{prefix}{h}h{m}m{suffix}")
         }
-    };
+    }
+}
 
-    Ok(result)
+#[askama::filter_fn]
+pub fn relative_time_micros(ts: &i64, _env: &dyn askama::Values) -> askama::Result<String> {
+    let now_micros = chrono::Utc::now().timestamp_micros();
+    let diff_secs = (now_micros - ts) / 1_000_000;
+    Ok(format_relative_micros(diff_secs))
 }
 
 #[askama::filter_fn]
@@ -78,33 +79,7 @@ pub fn relative_time_micros_opt(
 
     let now_micros = chrono::Utc::now().timestamp_micros();
     let diff_secs = (now_micros - ts) / 1_000_000;
-
-    if diff_secs.abs() < 15 {
-        return Ok("now".to_string());
-    }
-
-    let abs = diff_secs.abs();
-    let (prefix, suffix) = if diff_secs > 0 {
-        ("", " ago")
-    } else {
-        ("in ", "")
-    };
-
-    let result = if abs < 60 {
-        format!("{prefix}{abs}s{suffix}")
-    } else if abs < 3600 {
-        format!("{prefix}{}m{suffix}", abs / 60)
-    } else {
-        let h = abs / 3600;
-        let m = (abs % 3600) / 60;
-        if m == 0 {
-            format!("{prefix}{h}h{suffix}")
-        } else {
-            format!("{prefix}{h}h{m}m{suffix}")
-        }
-    };
-
-    Ok(result)
+    Ok(format_relative_micros(diff_secs))
 }
 
 fn format_with_commas(mut n: u64) -> String {
