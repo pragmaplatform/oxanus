@@ -65,10 +65,17 @@ impl<DT, ET> Config<DT, ET> {
         let factory = worker_registry::job_factory::<W, A, DT, ET>;
         let kind = <W as Worker<A>>::to_config();
 
-        if let WorkerConfigKind::Cron { .. } = &kind
-            && let Some(queue_config) = <W as Worker<A>>::cron_queue_config()
-        {
-            self.register_queue_with(queue_config);
+        if let WorkerConfigKind::Cron { .. } = &kind {
+            let worker_name = std::any::type_name::<W>();
+            assert!(
+                serde_json::from_value::<A>(serde_json::json!({})).is_ok(),
+                "{worker_name}: Cron job args must be deserializable from empty JSON `{{}}`. \
+                 Use `#[serde(default)]` on all fields or define the args struct with no fields."
+            );
+
+            if let Some(queue_config) = <W as Worker<A>>::cron_queue_config() {
+                self.register_queue_with(queue_config);
+            }
         }
 
         self.registry.register_worker_with(WorkerConfig {
