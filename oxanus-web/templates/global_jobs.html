@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ kind.title() }} - Oxanus</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="flex items-center justify-between mb-6">
+            <h1 class="text-2xl font-bold tracking-tight">Oxanus Dashboard</h1>
+        </div>
+
+        {% include "_tabs.html" %}
+
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">
+                {% if total > 0 %}
+                {{ self.range_start() }}&ndash;{{ self.range_end() }} of {{ total }} {{ kind.label() }}
+                {% else %}
+                0 {{ kind.label() }}
+                {% endif %}
+            </h2>
+            <div class="flex items-center gap-2 text-sm">
+                {% if page > 1 %}
+                <a href="?page={{ page - 1 }}" class="px-3 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300">&larr; Prev</a>
+                {% else %}
+                <span class="px-3 py-1 rounded bg-gray-900 border border-gray-800 text-gray-600 cursor-not-allowed">&larr; Prev</span>
+                {% endif %}
+                {% if has_next %}
+                <a href="?page={{ page + 1 }}" class="px-3 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300">Next &rarr;</a>
+                {% else %}
+                <span class="px-3 py-1 rounded bg-gray-900 border border-gray-800 text-gray-600 cursor-not-allowed">Next &rarr;</span>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if jobs.is_empty() %}
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500">
+            {{ kind.empty_label() }}
+        </div>
+        {% else %}
+        <div class="space-y-3">
+            {% for job in &jobs %}
+            <div class="bg-gray-900 border {{ kind.border_class() }} rounded-lg p-4">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="inline-block w-2 h-2 rounded-full {{ kind.dot_class() }}"></span>
+                    <span class="font-semibold text-sm">{{ job.job.name }}</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs text-gray-400 mt-2">
+                    <div>
+                        <span class="text-gray-500">Queue:</span>
+                        <span class="ml-1 text-gray-300">{{ job.queue }}</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Retries:</span>
+                        <span class="ml-1 text-gray-300">{{ job.meta.retries }}</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Created:</span>
+                        <span class="ml-1 text-gray-300">{{ job.meta.created_at|relative_time_micros }}</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Scheduled:</span>
+                        <span class="ml-1 text-gray-300">{{ job.meta.scheduled_at|relative_time_micros }}</span>
+                    </div>
+                </div>
+                {% if job.job.args|has_args %}
+                <details class="mt-3" open>
+                    <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Arguments</summary>
+                    <pre class="mt-2 text-xs bg-gray-950 rounded p-3 overflow-x-auto text-gray-300 border border-gray-800">{{ job.job.args|pretty_json }}</pre>
+                </details>
+                {% endif %}
+                {% match job.meta.error %}
+                {% when Some with (error) %}
+                <details class="mt-3" open>
+                    <summary class="text-xs text-red-400 cursor-pointer hover:text-red-300">Error</summary>
+                    <pre class="mt-2 text-xs bg-gray-950 rounded p-3 overflow-x-auto text-red-300 border border-red-900/50">{{ error }}</pre>
+                </details>
+                {% when None %}
+                {% endmatch %}
+                {% match job.meta.state %}
+                {% when Some with (state) %}
+                {% if state|has_args %}
+                <details class="mt-3">
+                    <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">State</summary>
+                    <pre class="mt-2 text-xs bg-gray-950 rounded p-3 overflow-x-auto text-gray-300 border border-gray-800">{{ state|pretty_json }}</pre>
+                </details>
+                {% endif %}
+                {% when None %}
+                {% endmatch %}
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="flex items-center justify-between mt-6 text-sm">
+            <span class="text-gray-500">{{ self.range_start() }}&ndash;{{ self.range_end() }} of {{ total }}</span>
+            <div class="flex items-center gap-2">
+                {% if page > 1 %}
+                <a href="?page={{ page - 1 }}" class="px-3 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300">&larr; Prev</a>
+                {% endif %}
+                {% if has_next %}
+                <a href="?page={{ page + 1 }}" class="px-3 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300">Next &rarr;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

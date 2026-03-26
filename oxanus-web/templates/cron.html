@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cron - Oxanus</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="mb-6">
+            <h1 class="text-2xl font-bold tracking-tight">Oxanus Dashboard</h1>
+        </div>
+
+        {% include "_tabs.html" %}
+
+        <h2 class="text-lg font-semibold mb-4">Cron Workers ({{ total }})</h2>
+
+        {% if rows.is_empty() %}
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500">
+            No cron workers registered
+        </div>
+        {% else %}
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-gray-800 text-left text-xs text-gray-400 uppercase tracking-wide">
+                        <th class="pb-3 pr-4">Worker</th>
+                        <th class="pb-3 pr-4">Queue</th>
+                        <th class="pb-3 pr-4">Schedule</th>
+                        <th class="pb-3">Next Run</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in &rows %}
+                    {% match row %}
+                    {% when CronRow::Group { name, depth: _ } %}
+                    <tr class="border-b border-gray-800/50">
+                        <td colspan="4" class="py-2 pt-4 font-mono text-xs text-gray-500 font-semibold" style="padding-left: {{ row.indent_px() }}px">{{ name }}</td>
+                    </tr>
+                    {% when CronRow::Worker { view: cw, depth: _ } %}
+                    <tr class="border-b border-gray-800/50 hover:bg-gray-900/50">
+                        <td class="py-3 pr-4 font-mono text-sm" style="padding-left: {{ row.indent_px() }}px"><span class="text-gray-600">&#8627; </span>{{ cw.short_name }}</td>
+                        <td class="py-3 pr-4 font-mono text-sm text-gray-400">{{ cw.queue_key }}</td>
+                        <td class="py-3 pr-4 font-mono text-sm text-yellow-400">{{ cw.schedule }}</td>
+                        <td class="py-3 text-gray-300">{{ cw.next_run_micros|relative_time_micros_opt }}</td>
+                    </tr>
+                    {% endmatch %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

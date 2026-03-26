@@ -1,0 +1,9 @@
+<nav class="flex gap-1 mb-8 border-b border-gray-800">
+    <a href="{{ base_path }}" class="px-4 py-2 text-sm font-medium {% if active_tab == "" %}text-white border-b-2 border-blue-500{% else %}text-gray-400 border-b-2 border-transparent hover:text-gray-200 hover:border-gray-600{% endif %}">Overview</a>
+    <a href="{{ base_path }}/busy" class="px-4 py-2 text-sm font-medium {% if active_tab == "/busy" %}text-white border-b-2 border-blue-500{% else %}text-gray-400 border-b-2 border-transparent hover:text-gray-200 hover:border-gray-600{% endif %}">Busy</a>
+    <a href="{{ base_path }}/queues" class="px-4 py-2 text-sm font-medium {% if active_tab == "/queues" %}text-white border-b-2 border-blue-500{% else %}text-gray-400 border-b-2 border-transparent hover:text-gray-200 hover:border-gray-600{% endif %}">Queues</a>
+    <a href="{{ base_path }}/cron" class="px-4 py-2 text-sm font-medium {% if active_tab == "/cron" %}text-white border-b-2 border-blue-500{% else %}text-gray-400 border-b-2 border-transparent hover:text-gray-200 hover:border-gray-600{% endif %}">Cron</a>
+    <a href="{{ base_path }}/scheduled" class="px-4 py-2 text-sm font-medium {% if active_tab == "/scheduled" %}text-white border-b-2 border-blue-500{% else %}text-gray-400 border-b-2 border-transparent hover:text-gray-200 hover:border-gray-600{% endif %}">Scheduled</a>
+    <a href="{{ base_path }}/retries" class="px-4 py-2 text-sm font-medium {% if active_tab == "/retries" %}text-white border-b-2 border-blue-500{% else %}text-gray-400 border-b-2 border-transparent hover:text-gray-200 hover:border-gray-600{% endif %}">Retries</a>
+    <a href="{{ base_path }}/dead" class="px-4 py-2 text-sm font-medium {% if active_tab == "/dead" %}text-white border-b-2 border-blue-500{% else %}text-gray-400 border-b-2 border-transparent hover:text-gray-200 hover:border-gray-600{% endif %}">Dead</a>
+</nav>

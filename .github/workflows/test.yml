@@ -32,6 +32,9 @@ jobs:
         with:
           tool: nextest
 
+      - name: Format
+        run: cargo fmt --workspace --check
+
       - name: Test
         run: |
           cargo test --lib --no-default-features
@@ -48,5 +51,6 @@ jobs:
         run: |
           cargo publish -p oxanus-macros || true
           cargo publish -p oxanus || true
+          cargo publish -p oxanus-web || true
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

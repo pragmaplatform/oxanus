@@ -1,5 +1,5 @@
 [workspace]
-members = ["oxanus", "oxanus-macros"]
+members = ["oxanus", "oxanus-macros", "oxanus-web"]
 resolver = "3"
 default-members = ["oxanus"]
 
