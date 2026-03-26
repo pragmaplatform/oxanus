@@ -3,6 +3,8 @@ mod filters;
 mod handlers;
 mod templates;
 
+use std::collections::HashMap;
+
 use axum::{
     Router,
     extract::Extension,
@@ -16,6 +18,23 @@ pub struct OxanusWebState {
     pub storage: oxanus::Storage,
     pub catalog: oxanus::Catalog,
     pub base_path: String,
+    pub concurrency_map: HashMap<String, usize>,
+}
+
+impl OxanusWebState {
+    pub fn new(storage: oxanus::Storage, catalog: oxanus::Catalog, base_path: String) -> Self {
+        let concurrency_map = catalog
+            .queues
+            .iter()
+            .map(|q| (q.key.clone(), q.concurrency))
+            .collect();
+        Self {
+            storage,
+            catalog,
+            base_path,
+            concurrency_map,
+        }
+    }
 }
 
 pub fn router(state: OxanusWebState) -> Router {

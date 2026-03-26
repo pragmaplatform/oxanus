@@ -17,13 +17,12 @@ pub(crate) async fn dashboard(
     Extension(state): Extension<OxanusWebState>,
 ) -> Result<DashboardTemplate, OxanusWebError> {
     let stats = state.storage.stats().await?;
-    let concurrency_map = build_concurrency_map(&state);
 
     Ok(DashboardTemplate {
         base_path: state.base_path,
         active_tab: "",
         stats,
-        concurrency_map,
+        concurrency_map: state.concurrency_map,
     })
 }
 
@@ -31,13 +30,12 @@ pub(crate) async fn busy(
     Extension(state): Extension<OxanusWebState>,
 ) -> Result<BusyTemplate, OxanusWebError> {
     let stats = state.storage.stats().await?;
-    let concurrency_map = build_concurrency_map(&state);
 
     Ok(BusyTemplate {
         base_path: state.base_path,
         active_tab: "/busy",
         stats,
-        concurrency_map,
+        concurrency_map: state.concurrency_map,
     })
 }
 
@@ -46,19 +44,18 @@ pub(crate) async fn queues_list(
     Query(params): Query<QueuesParams>,
 ) -> Result<QueuesTemplate, OxanusWebError> {
     let mut stats = state.storage.stats().await?;
-    let concurrency_map = build_concurrency_map(&state);
 
     let sort = params.sort.as_deref().unwrap_or("key");
     let dir = params.dir.as_deref().unwrap_or("asc");
     let desc = dir == "desc";
 
-    sort_queues(&mut stats.queues, &concurrency_map, sort, desc);
+    sort_queues(&mut stats.queues, &state.concurrency_map, sort, desc);
 
     Ok(QueuesTemplate {
         base_path: state.base_path,
         active_tab: "/queues",
         queues: stats.queues,
-        concurrency_map,
+        concurrency_map: state.concurrency_map,
         sort: sort.to_string(),
         dir: dir.to_string(),
     })
@@ -85,7 +82,6 @@ pub(crate) async fn scheduled_jobs(
     let opts = list_opts(page);
 
     let total = state.storage.scheduled_count().await?;
-
     let mut jobs = state.storage.list_scheduled(&opts).await?;
 
     let has_next = jobs.len() > JOBS_PER_PAGE;
@@ -110,7 +106,6 @@ pub(crate) async fn dead_jobs(
     let opts = list_opts(page);
 
     let total = state.storage.dead_count().await?;
-
     let mut jobs = state.storage.list_dead(&opts).await?;
 
     let has_next = jobs.len() > JOBS_PER_PAGE;
@@ -135,7 +130,6 @@ pub(crate) async fn retry_jobs(
     let opts = list_opts(page);
 
     let total = state.storage.retries_count().await?;
-
     let mut jobs = state.storage.list_retries(&opts).await?;
 
     let has_next = jobs.len() > JOBS_PER_PAGE;
@@ -164,7 +158,6 @@ pub(crate) async fn queue_detail(
         .storage
         .enqueued_count(RawQueue(queue_key.clone()))
         .await?;
-
     let mut jobs = state
         .storage
         .list_queue_jobs(RawQueue(queue_key.clone()), &opts)
@@ -214,15 +207,6 @@ pub(crate) async fn delete_job(
 }
 
 // --- Helpers ---
-
-fn build_concurrency_map(state: &OxanusWebState) -> HashMap<String, usize> {
-    state
-        .catalog
-        .queues
-        .iter()
-        .map(|q| (q.key.clone(), q.concurrency))
-        .collect()
-}
 
 #[derive(Serialize)]
 struct RawQueue(String);
