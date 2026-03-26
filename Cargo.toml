@@ -7,5 +7,5 @@ default-members = ["oxanus"]
 rust-version = "1.75"
 
 [workspace.dependencies]
-oxanus = { path = "oxanus" }
+oxanus = { version = "^0.9", path = "oxanus" }
 oxanus-macros = { version = "^0.9", path = "oxanus-macros" }
