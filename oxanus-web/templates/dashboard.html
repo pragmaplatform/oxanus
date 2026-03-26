@@ -28,10 +28,10 @@
                 <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Busy</div>
                 <div class="text-2xl font-semibold text-purple-400">{{ stats.processing.len() }}</div>
             </a>
-            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+            <a href="{{ base_path }}/queues" class="bg-gray-900 rounded-lg p-4 border border-gray-800 hover:border-gray-600 transition-colors block">
                 <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Enqueued</div>
                 <div class="text-2xl font-semibold text-blue-400">{{ stats.global.enqueued|format_number }}</div>
-            </div>
+            </a>
             <a href="{{ base_path }}/retries" class="bg-gray-900 rounded-lg p-4 border border-gray-800 hover:border-gray-600 transition-colors block">
                 <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Retries</div>
                 <div class="text-2xl font-semibold text-orange-400">{{ stats.global.retries|format_number }}</div>
