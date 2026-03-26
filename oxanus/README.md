@@ -95,11 +95,11 @@ let config = ComponentRegistry::build_config(&storage)
     .with_graceful_shutdown(tokio::signal::ctrl_c());
 
 // Create the oxanus-web router
-let oxanus_router = oxanus_web::router(OxanusWebState {
-    catalog: config.catalog(),
-    storage: config.storage.clone(),
-    base_path: "/oxanus".to_string(),
-});
+let oxanus_router = oxanus_web::router(OxanusWebState::new(
+    config.storage.clone(),
+    config.catalog(),
+    "/oxanus".to_string(),
+));
 
 // Nest it into your existing axum app
 let app = your_app_router().nest("/oxanus", oxanus_router);

@@ -1,24 +1,11 @@
 #[askama::filter_fn]
 pub fn relative_time(ts: &i64, _env: &dyn askama::Values) -> askama::Result<String> {
     let now = chrono::Utc::now().timestamp();
-    let diff = now - ts;
-
-    if diff < 15 {
-        return Ok("now".to_string());
-    }
-
-    let result = if diff < 60 {
-        format!("{diff}s ago")
-    } else if diff < 3600 {
-        format!("{}m ago", diff / 60)
-    } else {
-        format!("{}h ago", diff / 3600)
-    };
-
-    Ok(result)
+    let diff_secs = now - ts;
+    Ok(format_relative(diff_secs))
 }
 
-fn format_relative_micros(diff_secs: i64) -> String {
+fn format_relative(diff_secs: i64) -> String {
     if diff_secs.abs() < 15 {
         return "now".to_string();
     }
@@ -49,7 +36,7 @@ fn format_relative_micros(diff_secs: i64) -> String {
 pub fn relative_time_micros(ts: &i64, _env: &dyn askama::Values) -> askama::Result<String> {
     let now_micros = chrono::Utc::now().timestamp_micros();
     let diff_secs = (now_micros - ts) / 1_000_000;
-    Ok(format_relative_micros(diff_secs))
+    Ok(format_relative(diff_secs))
 }
 
 #[askama::filter_fn]
@@ -79,7 +66,7 @@ pub fn relative_time_micros_opt(
 
     let now_micros = chrono::Utc::now().timestamp_micros();
     let diff_secs = (now_micros - ts) / 1_000_000;
-    Ok(format_relative_micros(diff_secs))
+    Ok(format_relative(diff_secs))
 }
 
 fn format_with_commas(mut n: u64) -> String {
