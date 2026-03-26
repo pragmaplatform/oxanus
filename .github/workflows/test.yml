@@ -33,7 +33,7 @@ jobs:
           tool: nextest
 
       - name: Format
-        run: cargo fmt --workspace --check
+        run: cargo fmt --all --check
 
       - name: Test
         run: |
