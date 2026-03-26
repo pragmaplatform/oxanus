@@ -238,18 +238,6 @@ fn expand_worker_impl(
         None => quote!(),
     };
 
-    let resurrect = match args.resurrect {
-        Some(value) => quote! {
-            fn should_resurrect() -> bool
-            where
-                Self: Sized,
-            {
-                #value
-            }
-        },
-        None => quote!(),
-    };
-
     quote! {
         #[automatically_derived]
         #[async_trait::async_trait]
@@ -265,8 +253,6 @@ fn expand_worker_impl(
             #retry_delay
 
             #cron
-
-            #resurrect
         }
     }
 }
@@ -290,17 +276,7 @@ fn expand_job_impl(
         None => quote!(),
     };
 
-    let resurrect = match args.resurrect {
-        Some(value) => quote! {
-            fn should_resurrect() -> bool
-            where
-                Self: Sized,
-            {
-                #value
-            }
-        },
-        None => quote!(),
-    };
+    let resurrect = expand_resurrect(args.resurrect);
 
     let throttle_cost = match &args.throttle_cost {
         Some(throttle_cost) => expand_throttle_cost(throttle_cost),
@@ -403,6 +379,20 @@ fn expand_registry(
         }
     } else {
         quote!()
+    }
+}
+
+fn expand_resurrect(resurrect: Option<bool>) -> TokenStream {
+    match resurrect {
+        Some(value) => quote! {
+            fn should_resurrect() -> bool
+            where
+                Self: Sized,
+            {
+                #value
+            }
+        },
+        None => quote!(),
     }
 }
 

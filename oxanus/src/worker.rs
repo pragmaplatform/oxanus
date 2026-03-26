@@ -64,16 +64,10 @@ pub trait Worker<Args: Send + Sync>: Send + Sync {
         None
     }
 
-    fn should_resurrect() -> bool
-    where
-        Self: Sized,
-    {
-        true
-    }
-
     fn to_config() -> WorkerConfigKind
     where
         Self: Sized,
+        Args: Job,
     {
         if let Some(schedule) = Self::cron_schedule() {
             let queue_config = Self::cron_queue_config()
@@ -84,7 +78,7 @@ pub trait Worker<Args: Send + Sync>: Send + Sync {
             return WorkerConfigKind::Cron {
                 schedule,
                 queue_key,
-                resurrect: Self::should_resurrect(),
+                resurrect: Args::should_resurrect(),
             };
         }
         WorkerConfigKind::Normal
@@ -389,7 +383,7 @@ mod tests {
             <TestCronWorker as oxanus::Worker<TestCronJob>>::cron_queue_config(),
             Some(DefaultQueue::to_config()),
         );
-        assert!(<TestCronWorker as oxanus::Worker<TestCronJob>>::should_resurrect());
+        assert!(<TestCronJob as oxanus::Job>::should_resurrect());
     }
 
     #[tokio::test]
@@ -415,7 +409,7 @@ mod tests {
             }
         }
 
-        assert!(!<NoResurrectWorker as oxanus::Worker<NoResurrectJob>>::should_resurrect());
+        assert!(!<NoResurrectJob as oxanus::Job>::should_resurrect());
 
         #[derive(Debug, Serialize, Deserialize)]
         struct DefaultResurrectJob {}
@@ -434,8 +428,6 @@ mod tests {
             }
         }
 
-        assert!(<DefaultResurrectWorker as oxanus::Worker<
-            DefaultResurrectJob,
-        >>::should_resurrect());
+        assert!(<DefaultResurrectJob as oxanus::Job>::should_resurrect());
     }
 }

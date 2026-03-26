@@ -210,7 +210,7 @@ impl oxanus::Worker<MyJob> for MyWorker {
         Ok(())
     }
 
-    // Optional: max_retries, retry_delay, cron_schedule, cron_queue_config, should_resurrect
+    // Optional: max_retries, retry_delay, cron_schedule, cron_queue_config
 }
 
 // 3. FromContext trait for constructing the worker from app context
