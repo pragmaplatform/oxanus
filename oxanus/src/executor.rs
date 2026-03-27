@@ -46,7 +46,7 @@ where
         ),
     };
 
-    let result = match AssertUnwindSafe(process(&worker, job_ctx, &envelope))
+    let result = match AssertUnwindSafe(process(&worker, job_ctx, envelope))
         .catch_unwind()
         .await
     {
