@@ -21,13 +21,13 @@ pub(crate) enum ExecutionError<ET> {
 pub async fn run<DT, ET>(
     config: Arc<Config<DT, ET>>,
     worker: BoxedProcessable<ET>,
-    envelope: &JobEnvelope,
+    envelope: &mut JobEnvelope,
 ) -> Result<Result<(), ExecutionError<ET>>, OxanusError>
 where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
-    let envelope = config.storage.internal.set_started_at(&envelope.id).await?;
+    config.storage.internal.set_started_at(envelope).await?;
 
     tracing::info!(
         job_id = envelope.id,
@@ -82,7 +82,7 @@ where
         ExecutionResult::NotPanic(result) => {
             match &result {
                 Ok(()) => {
-                    if let Err(e) = config.storage.internal.finish_with_success(&envelope).await {
+                    if let Err(e) = config.storage.internal.finish_with_success(envelope).await {
                         tracing::error!("Failed to finish job: {}", e);
                     }
                 }
@@ -97,7 +97,7 @@ where
                         "Job failed"
                     );
 
-                    handle_err(config, &e.to_string(), &envelope, retry_delay, max_retries).await;
+                    handle_err(config, &e.to_string(), envelope, retry_delay, max_retries).await;
                 }
             }
 
@@ -107,7 +107,7 @@ where
             #[cfg(feature = "sentry")]
             sentry_core::capture_message(&panic_msg, sentry_core::Level::Error);
 
-            handle_err(config, &panic_msg, &envelope, retry_delay, max_retries).await;
+            handle_err(config, &panic_msg, envelope, retry_delay, max_retries).await;
 
             Ok(Err(ExecutionError::Panic()))
         }

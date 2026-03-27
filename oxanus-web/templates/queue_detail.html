@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Queue: {{ queue_key }} - Oxanus</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="flex items-center justify-between mb-6">
+            <h1 class="text-2xl font-bold tracking-tight">Oxanus Dashboard</h1>
+        </div>
+
+        {% include "_tabs.html" %}
+
+        <div class="flex items-center justify-between mb-6">
+            <div class="flex items-center gap-3">
+                <h2 class="text-lg font-semibold font-mono">{{ queue_key }}</h2>
+            </div>
+            <form method="POST" action="{{ base_path }}/queues/{{ queue_key|urlencode }}/wipe" onsubmit="return confirmWipe('{{ queue_key }}')">
+                <button type="submit" class="px-3 py-1.5 rounded bg-red-900/50 border border-red-800 hover:bg-red-800 text-red-300 text-sm transition-colors">Wipe Queue</button>
+            </form>
+        </div>
+
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">
+                {% if total > 0 %}
+                {{ self.range_start() }}&ndash;{{ self.range_end() }} of {{ total }} jobs
+                {% else %}
+                0 jobs
+                {% endif %}
+            </h2>
+            <div class="flex items-center gap-2 text-sm">
+                {% if page > 1 %}
+                <a href="?page={{ page - 1 }}" class="px-3 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300">&larr; Prev</a>
+                {% else %}
+                <span class="px-3 py-1 rounded bg-gray-900 border border-gray-800 text-gray-600 cursor-not-allowed">&larr; Prev</span>
+                {% endif %}
+                {% if has_next %}
+                <a href="?page={{ page + 1 }}" class="px-3 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300">Next &rarr;</a>
+                {% else %}
+                <span class="px-3 py-1 rounded bg-gray-900 border border-gray-800 text-gray-600 cursor-not-allowed">Next &rarr;</span>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if jobs.is_empty() %}
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500">
+            No jobs in this queue
+        </div>
+        {% else %}
+        <div class="space-y-3">
+            {% for job in &jobs %}
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                <div class="flex items-start justify-between mb-2">
+                    <span class="font-semibold text-sm">{{ job.job.name }}</span>
+                    <span class="text-xs text-gray-500 font-mono">{{ job.id }}</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-gray-400 mt-2">
+                    <div>
+                        <span class="text-gray-500">Retries:</span>
+                        <span class="ml-1 text-gray-300">{{ job.meta.retries }}</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Created:</span>
+                        <span class="ml-1 text-gray-300">{{ job.meta.created_at|relative_time_micros }}</span>
+                    </div>
+                    <div>
+                        <span class="text-gray-500">Scheduled:</span>
+                        <span class="ml-1 text-gray-300">{{ job.meta.scheduled_at|relative_time_micros }}</span>
+                    </div>
+                </div>
+                {% if job.job.args|has_args %}
+                <details class="mt-3" open>
+                    <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Arguments</summary>
+                    <pre class="mt-2 text-xs bg-gray-950 rounded p-3 overflow-x-auto text-gray-300 border border-gray-800">{{ job.job.args|pretty_json }}</pre>
+                </details>
+                {% endif %}
+                {% match job.meta.state %}
+                {% when Some with (state) %}
+                {% if state|has_args %}
+                <details class="mt-3">
+                    <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">State</summary>
+                    <pre class="mt-2 text-xs bg-gray-950 rounded p-3 overflow-x-auto text-gray-300 border border-gray-800">{{ state|pretty_json }}</pre>
+                </details>
+                {% endif %}
+                {% when None %}
+                {% endmatch %}
+                <div class="mt-3 flex justify-end">
+                    <form method="POST" action="{{ base_path }}/queues/{{ queue_key|urlencode }}/jobs/{{ job.id|urlencode }}/delete" onsubmit="return confirmDeleteJob('{{ job.id }}')">
+                        <button type="submit" class="px-2.5 py-1 rounded bg-red-900/50 border border-red-800 hover:bg-red-800 text-red-300 text-xs transition-colors">Delete Job</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="flex items-center justify-between mt-6 text-sm">
+            <span class="text-gray-500">{{ self.range_start() }}&ndash;{{ self.range_end() }} of {{ total }}</span>
+            <div class="flex items-center gap-2">
+                {% if page > 1 %}
+                <a href="?page={{ page - 1 }}" class="px-3 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300">&larr; Prev</a>
+                {% endif %}
+                {% if has_next %}
+                <a href="?page={{ page + 1 }}" class="px-3 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300">Next &rarr;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    <script>
+        function confirmWipe(queueKey) {
+            var input = prompt('Type the queue name to confirm wipe: ' + queueKey);
+            return input === queueKey;
+        }
+        function confirmDeleteJob(jobId) {
+            return confirm('Are you sure you want to delete job ' + jobId + '?');
+        }
+    </script>
+</body>
+</html>

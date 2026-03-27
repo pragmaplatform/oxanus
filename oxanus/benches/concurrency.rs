@@ -65,61 +65,27 @@ impl oxanus::Queue for QueueOne {
 const JOBS_COUNT: u64 = 1000;
 const CONCURRENCY: &[usize] = &[1, 2, 4, 8, 12, 16, 512];
 
-#[divan::bench(args = CONCURRENCY, sample_size = 1, sample_count = 1)]
-fn run_1000_jobs_taking_0_ms(bencher: divan::Bencher, n: usize) {
-    let rt = &tokio::runtime::Runtime::new().unwrap();
-    let sleep_ms = 0;
-    let config = build_config(n);
-    rt.block_on(async { setup(config, JOBS_COUNT, sleep_ms).await.unwrap() });
+macro_rules! bench_jobs {
+    ($name:ident, $sleep_ms:expr) => {
+        #[divan::bench(args = CONCURRENCY, sample_size = 1, sample_count = 1)]
+        fn $name(bencher: divan::Bencher, n: usize) {
+            let rt = &tokio::runtime::Runtime::new().unwrap();
+            let config = build_config(n);
+            rt.block_on(async { setup(config, JOBS_COUNT, $sleep_ms).await.unwrap() });
 
-    bencher.bench(|| {
-        rt.block_on(async {
-            execute(n, JOBS_COUNT).await.unwrap();
-        })
-    });
+            bencher.bench(|| {
+                rt.block_on(async {
+                    execute(n, JOBS_COUNT).await.unwrap();
+                })
+            });
+        }
+    };
 }
 
-#[divan::bench(args = CONCURRENCY, sample_size = 1, sample_count = 1)]
-fn run_1000_jobs_taking_1_ms(bencher: divan::Bencher, n: usize) {
-    let rt = &tokio::runtime::Runtime::new().unwrap();
-    let sleep_ms = 1;
-    let config = build_config(n);
-    rt.block_on(async { setup(config, JOBS_COUNT, sleep_ms).await.unwrap() });
-
-    bencher.bench(|| {
-        rt.block_on(async {
-            execute(n, JOBS_COUNT).await.unwrap();
-        })
-    });
-}
-
-#[divan::bench(args = CONCURRENCY, sample_size = 1, sample_count = 1)]
-fn run_1000_jobs_taking_2_ms(bencher: divan::Bencher, n: usize) {
-    let rt = &tokio::runtime::Runtime::new().unwrap();
-    let sleep_ms = 2;
-    let config = build_config(n);
-    rt.block_on(async { setup(config, JOBS_COUNT, sleep_ms).await.unwrap() });
-
-    bencher.bench(|| {
-        rt.block_on(async {
-            execute(n, JOBS_COUNT).await.unwrap();
-        })
-    });
-}
-
-#[divan::bench(args = CONCURRENCY, sample_size = 1, sample_count = 1)]
-fn run_1000_jobs_taking_10_ms(bencher: divan::Bencher, n: usize) {
-    let rt = &tokio::runtime::Runtime::new().unwrap();
-    let sleep_ms = 10;
-    let config = build_config(n);
-    rt.block_on(async { setup(config, JOBS_COUNT, sleep_ms).await.unwrap() });
-
-    bencher.bench(|| {
-        rt.block_on(async {
-            execute(n, JOBS_COUNT).await.unwrap();
-        })
-    });
-}
+bench_jobs!(run_1000_jobs_taking_0_ms, 0);
+bench_jobs!(run_1000_jobs_taking_1_ms, 1);
+bench_jobs!(run_1000_jobs_taking_2_ms, 2);
+bench_jobs!(run_1000_jobs_taking_10_ms, 10);
 
 async fn setup(
     config: oxanus::Config<WorkerState, ServiceError>,

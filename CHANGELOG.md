@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1]
+
+### Fixed
+- Fix queue latency calculation by falling back to `created_at` when `scheduled_at` is zero
+
 ## [0.9.0]
 
 ### Added

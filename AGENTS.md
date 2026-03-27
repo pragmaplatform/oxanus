@@ -17,10 +17,11 @@ This file provides guidance to any coding agent (Claude, ChatGPT, etc.) when wor
 
 ### Package Structure
 
-This is a Rust workspace with two main crates:
+This is a Rust workspace with three crates:
 
 - `oxanus/` - Main job processing library
-- `oxanus-api/` - API placeholder crate (minimal implementation)
+- `oxanus-macros/` - Proc macros for Oxanus
+- `oxanus-web/` - Web UI dashboard for monitoring jobs, queues, and cron
 
 ## Architecture Overview
 
@@ -53,7 +54,8 @@ The workspace is organized as:
 
 - Root `Cargo.toml` defines workspace members and shared package metadata
 - `oxanus/` contains the main library implementation
-- `oxanus-api/` is a placeholder for future API functionality
+- `oxanus-macros/` contains proc macros
+- `oxanus-web/` contains the web UI dashboard (uses askama templates + axum)
 
 ### Testing
 

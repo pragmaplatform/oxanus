@@ -309,14 +309,10 @@ impl StorageInternal {
         Ok(envelope)
     }
 
-    pub async fn set_started_at(&self, id: &JobId) -> Result<JobEnvelope, OxanusError> {
-        let mut envelope = match self.get_job(id).await? {
-            Some(envelope) => envelope,
-            None => return Err(OxanusError::JobNotFound),
-        };
+    pub async fn set_started_at(&self, envelope: &mut JobEnvelope) -> Result<(), OxanusError> {
         envelope.meta.started_at = Some(chrono::Utc::now().timestamp_micros());
-        self.update_job(&envelope).await?;
-        Ok(envelope)
+        self.update_job(envelope).await?;
+        Ok(())
     }
 
     pub async fn delete_job(&self, id: &JobId) -> Result<(), OxanusError> {
@@ -538,7 +534,7 @@ impl StorageInternal {
                 let envelope = self.get_job_w_conn(redis, job_id).await?;
                 Ok(envelope.map_or(0.0, |envelope| {
                     let now = chrono::Utc::now().timestamp_micros();
-                    (now - envelope.meta.created_at) as f64
+                    (now - envelope.meta.effective_scheduled_at_micros()) as f64
                 }))
             }
             None => Ok(0.0),
@@ -1180,7 +1176,9 @@ mod tests {
         let mut envelope = JobEnvelope::new(queue.clone(), TestJob {})?;
         let now = chrono::Utc::now();
         let actual_latency = 7777;
-        envelope.meta.created_at = now.timestamp_micros() - actual_latency * 1_000;
+        let past = now.timestamp_micros() - actual_latency * 1_000;
+        envelope.meta.created_at = past;
+        envelope.meta.scheduled_at = past;
         storage.enqueue(envelope).await?;
 
         let latency = storage.latency_ms(&queue).await?;
@@ -1206,7 +1204,9 @@ mod tests {
         let actual_latency_ms = 7777;
         let actual_latency_micros = actual_latency_ms * 1_000;
         let actual_latency_s = actual_latency_ms as f64 / 1_000.0;
-        envelope.meta.created_at = now.timestamp_micros() - actual_latency_micros;
+        let past = now.timestamp_micros() - actual_latency_micros;
+        envelope.meta.created_at = past;
+        envelope.meta.scheduled_at = past;
         storage.enqueue(envelope).await?;
 
         let latency_ms = storage.latency_ms(&queue).await?;
@@ -1221,7 +1221,9 @@ mod tests {
         let mut envelope2 = JobEnvelope::new(queue.clone(), TestJob {})?;
         let actual_latency_ms2 = 5000;
         let actual_latency_micros2 = actual_latency_ms2 * 1_000;
-        envelope2.meta.created_at = now.timestamp_micros() - actual_latency_micros2;
+        let past2 = now.timestamp_micros() - actual_latency_micros2;
+        envelope2.meta.created_at = past2;
+        envelope2.meta.scheduled_at = past2;
         storage.enqueue(envelope2).await?;
 
         let latency_ms = storage.latency_ms(&queue).await?;
@@ -1499,16 +1501,16 @@ mod tests {
         let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
         let queue = random_string();
 
-        let envelope = JobEnvelope::new(queue.clone(), TestJob {})?;
+        let mut envelope = JobEnvelope::new(queue.clone(), TestJob {})?;
         assert!(envelope.meta.started_at.is_none());
 
         storage.enqueue(envelope.clone()).await?;
 
         let before = chrono::Utc::now().timestamp_micros();
-        let updated = storage.set_started_at(&envelope.id).await?;
+        storage.set_started_at(&mut envelope).await?;
         let after = chrono::Utc::now().timestamp_micros();
 
-        let started_at = updated.meta.started_at.expect("started_at should be set");
+        let started_at = envelope.meta.started_at.expect("started_at should be set");
         assert!(started_at >= before);
         assert!(started_at <= after);
 
@@ -1517,16 +1519,6 @@ mod tests {
             .await?
             .expect("job should exist");
         assert_eq!(persisted.meta.started_at, Some(started_at));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_set_started_at_job_not_found() -> TestResult {
-        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
-
-        let result = storage.set_started_at(&"nonexistent".to_string()).await;
-        assert!(result.is_err());
 
         Ok(())
     }

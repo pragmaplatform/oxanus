@@ -166,11 +166,19 @@ impl JobMeta {
         self.scheduled_at / 1000000
     }
 
+    pub fn effective_scheduled_at_micros(&self) -> i64 {
+        if self.scheduled_at > 0 {
+            self.scheduled_at
+        } else {
+            self.created_at
+        }
+    }
+
     pub fn latency_micros(&self) -> i64 {
         let reference = self
             .started_at
             .unwrap_or_else(|| chrono::Utc::now().timestamp_micros());
-        (reference - self.scheduled_at).max(0)
+        (reference - self.effective_scheduled_at_micros()).max(0)
     }
 
     pub fn latency_secs(&self) -> i64 {
