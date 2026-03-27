@@ -83,7 +83,7 @@ where
 {
     tracing::trace!("Processing job: {:?}", job_event);
 
-    let envelope: JobEnvelope = match config.storage.internal.get_job(&job_event.job_id).await {
+    let mut envelope: JobEnvelope = match config.storage.internal.get_job(&job_event.job_id).await {
         Ok(Some(envelope)) => envelope,
         Ok(None) => {
             tracing::warn!("Job {} not found", job_event.job_id);
@@ -125,7 +125,7 @@ where
         }
     };
 
-    let result = executor::run(config, job, &envelope, ctx.clone()).await?;
+    let result = executor::run(config, job, &mut envelope, ctx.clone()).await?;
     drop(job_event.permit);
 
     process_result(result_tx, result, envelope).await;
