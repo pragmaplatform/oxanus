@@ -60,9 +60,7 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with_graceful_shutdown(tokio::signal::ctrl_c())
         .exit_when_processed(11);
 
-    storage
-        .enqueue(QueueOne, ResumableTestWorkerJob {})
-        .await?;
+    storage.enqueue(QueueOne, ResumableTestWorkerJob {}).await?;
 
     oxanus::run(config, ctx).await?;
 

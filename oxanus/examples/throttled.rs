@@ -61,30 +61,18 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = ComponentRegistry::build_config(&storage).exit_when_processed(8);
 
-    storage
-        .enqueue(QueueThrottled, WorkerInstantJob {})
-        .await?;
+    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
     storage
         .enqueue(QueueThrottled, WorkerInstant2Job {})
         .await?;
-    storage
-        .enqueue(QueueThrottled, WorkerInstantJob {})
-        .await?;
-    storage
-        .enqueue(QueueThrottled, WorkerInstantJob {})
-        .await?;
+    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
+    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
     storage
         .enqueue(QueueThrottled, WorkerInstant2Job {})
         .await?;
-    storage
-        .enqueue(QueueThrottled, WorkerInstantJob {})
-        .await?;
-    storage
-        .enqueue(QueueThrottled, WorkerInstantJob {})
-        .await?;
-    storage
-        .enqueue(QueueThrottled, WorkerInstantJob {})
-        .await?;
+    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
+    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
+    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
 
     oxanus::run(config, ctx).await?;
 

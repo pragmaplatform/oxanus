@@ -342,10 +342,7 @@ mod tests {
             oxanus::Worker::<CustomUniqueJob>::retry_delay(&worker, 2),
             4
         );
-        assert_eq!(
-            oxanus::Worker::<CustomUniqueJob>::max_retries(&worker),
-            9
-        );
+        assert_eq!(oxanus::Worker::<CustomUniqueJob>::max_retries(&worker), 9);
     }
 
     #[tokio::test]

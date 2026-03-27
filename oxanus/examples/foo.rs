@@ -165,18 +165,12 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
             15,
         )
         .await?;
-    storage
-        .enqueue(QueueThrottled, WorkerInstantJob {})
-        .await?;
+    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
     storage
         .enqueue(QueueThrottled, WorkerInstant2Job {})
         .await?;
-    storage
-        .enqueue(QueueThrottled, WorkerInstantJob {})
-        .await?;
-    storage
-        .enqueue(QueueThrottled, WorkerInstantJob {})
-        .await?;
+    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
+    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
     storage
         .enqueue(QueueThrottled, WorkerInstant2Job {})
         .await?;
