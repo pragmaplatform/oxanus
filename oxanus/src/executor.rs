@@ -49,7 +49,7 @@ where
     };
 
     // Process the job and handle panics
-    let result = match AssertUnwindSafe(process(&worker, full_ctx, &envelope))
+    let result = match AssertUnwindSafe(process(&worker, full_ctx, envelope))
         .catch_unwind()
         .await
     {
@@ -85,7 +85,7 @@ where
         ExecutionResult::NotPanic(result) => {
             match &result {
                 Ok(()) => {
-                    if let Err(e) = config.storage.internal.finish_with_success(&envelope).await {
+                    if let Err(e) = config.storage.internal.finish_with_success(envelope).await {
                         tracing::error!("Failed to finish job: {}", e);
                     }
                 }
@@ -100,7 +100,7 @@ where
                         "Job failed"
                     );
 
-                    handle_err(config, &e.to_string(), &envelope, retry_delay, max_retries).await;
+                    handle_err(config, &e.to_string(), envelope, retry_delay, max_retries).await;
                 }
             }
 
@@ -110,7 +110,7 @@ where
             #[cfg(feature = "sentry")]
             sentry_core::capture_message(&panic_msg, sentry_core::Level::Error);
 
-            handle_err(config, &panic_msg, &envelope, retry_delay, max_retries).await;
+            handle_err(config, &panic_msg, envelope, retry_delay, max_retries).await;
 
             Ok(Err(ExecutionError::Panic()))
         }
