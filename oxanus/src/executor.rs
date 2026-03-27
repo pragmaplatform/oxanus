@@ -21,14 +21,14 @@ pub(crate) enum ExecutionError<ET> {
 pub async fn run<DT, ET>(
     config: Arc<Config<DT, ET>>,
     worker: BoxedWorker<DT, ET>,
-    envelope: &JobEnvelope,
+    envelope: &mut JobEnvelope,
     ctx: ContextValue<DT>,
 ) -> Result<Result<(), ExecutionError<ET>>, OxanusError>
 where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
-    let envelope = config.storage.internal.set_started_at(&envelope.id).await?;
+    config.storage.internal.set_started_at(envelope).await?;
 
     tracing::info!(
         job_id = envelope.id,
