@@ -1,5 +1,5 @@
 use darling::{Error, FromDeriveInput, FromMeta};
-use proc_macro_error2::abort;
+use proc_macro_error2::{abort, emit_error};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
@@ -156,6 +156,7 @@ impl FromMeta for UniqueIdSpec {
 }
 
 fn extract_format_placeholders(fmt_str: &str) -> Vec<syn::Ident> {
+    let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
     let mut chars = fmt_str.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -167,7 +168,11 @@ fn extract_format_placeholders(fmt_str: &str) -> Vec<syn::Ident> {
                 }
                 name.push(inner);
             }
-            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            if !name.is_empty()
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && !name.chars().next().unwrap().is_ascii_digit()
+                && seen.insert(name.clone())
+            {
                 result.push(syn::Ident::new(&name, proc_macro2::Span::call_site()));
             }
         }
@@ -323,19 +328,21 @@ fn expand_from_context_impl(
             quote!(Self { #field_name: ctx.clone() })
         }
         Fields::Named(named) => {
-            abort!(
+            emit_error!(
                 input.ident,
                 "Worker structs with {} fields cannot auto-derive FromContext. \
                  Implement oxanus::FromContext<{}> manually.",
                 named.named.len(),
                 type_context
             );
+            return quote!();
         }
         Fields::Unnamed(_) => {
-            abort!(
+            emit_error!(
                 input.ident,
                 "Tuple worker structs are not supported. Use named fields or a unit struct."
             );
+            return quote!();
         }
     };
 
