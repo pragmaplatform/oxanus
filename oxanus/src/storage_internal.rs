@@ -1533,7 +1533,7 @@ mod tests {
         let envelope = JobEnvelope {
             id: id.clone(),
             queue: queue.clone(),
-            job: crate::job_envelope::Job {
+            job: crate::job_envelope::JobData {
                 name: "MyWorker".to_string(),
                 args: serde_json::json!({"key": "value"}),
             },

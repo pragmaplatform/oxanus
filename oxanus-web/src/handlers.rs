@@ -219,7 +219,7 @@ pub(crate) async fn enqueue_job(
     let envelope = oxanus::JobEnvelope {
         id: id.clone(),
         queue: form.queue.clone(),
-        job: oxanus::Job {
+        job: oxanus::JobData {
             name: form.name,
             args,
         },

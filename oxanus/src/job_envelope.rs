@@ -3,20 +3,20 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::OxanusError;
-use crate::worker::Job as JobTrait;
+use crate::worker::Job;
 
 pub type JobId = String;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct JobEnvelope {
     pub id: JobId,
-    pub job: Job,
+    pub job: JobData,
     pub queue: String,
     pub meta: JobMeta,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Job {
+pub struct JobData {
     pub name: String,
     pub args: serde_json::Value,
 }
@@ -56,7 +56,7 @@ pub enum JobConflictStrategy {
 }
 
 impl JobEnvelope {
-    pub(crate) fn new<T: JobTrait>(queue: String, job: T) -> Result<Self, OxanusError> {
+    pub(crate) fn new<T: Job>(queue: String, job: T) -> Result<Self, OxanusError> {
         let job_name = T::worker_name().to_string();
         let unique_id = job.unique_id();
         let unique = unique_id.is_some();
@@ -68,7 +68,7 @@ impl JobEnvelope {
         Ok(Self {
             id: id.clone(),
             queue,
-            job: Job {
+            job: JobData {
                 name: job_name,
                 args: serde_json::to_value(&job)?,
             },
@@ -102,7 +102,7 @@ impl JobEnvelope {
         Ok(Self {
             id: id.clone(),
             queue,
-            job: Job {
+            job: JobData {
                 name,
                 args: serde_json::to_value(serde_json::json!({}))?,
             },
@@ -285,7 +285,7 @@ mod tests {
         let envelope = JobEnvelope {
             id: "test".to_string(),
             queue: "default".to_string(),
-            job: Job {
+            job: JobData {
                 name: "TestJob".to_string(),
                 args: serde_json::json!({}),
             },

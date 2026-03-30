@@ -170,7 +170,7 @@ fn extract_format_placeholders(fmt_str: &str) -> Vec<syn::Ident> {
             }
             if !name.is_empty()
                 && name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                && !name.chars().next().unwrap().is_ascii_digit()
+                && !name.starts_with(|c: char| c.is_ascii_digit())
                 && seen.insert(name.clone())
             {
                 result.push(syn::Ident::new(&name, proc_macro2::Span::call_site()));
