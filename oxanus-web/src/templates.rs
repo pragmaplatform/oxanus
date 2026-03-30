@@ -206,6 +206,10 @@ impl JobListKind {
         }
     }
 
+    pub fn is_dead(&self) -> bool {
+        matches!(self, Self::Dead)
+    }
+
     pub fn dot_class(&self) -> &'static str {
         match self {
             Self::Dead => "bg-red-400",

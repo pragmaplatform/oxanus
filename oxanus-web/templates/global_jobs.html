@@ -90,6 +90,17 @@
                 {% endif %}
                 {% when None %}
                 {% endmatch %}
+                {% if kind.is_dead() %}
+                <div class="mt-3 flex justify-end">
+                    <form method="POST" action="{{ base_path }}/enqueue" onsubmit="return confirm('Revive job {{ job.job.name }}?')">
+                        <input type="hidden" name="queue" value="{{ job.queue }}">
+                        <input type="hidden" name="name" value="{{ job.job.name }}">
+                        <input type="hidden" name="args" value="{{ job.job.args }}">
+                        <input type="hidden" name="redirect" value="/dead">
+                        <button type="submit" class="px-2.5 py-1 rounded bg-green-900/50 border border-green-800 hover:bg-green-800 text-green-300 text-xs transition-colors">Revive</button>
+                    </form>
+                </div>
+                {% endif %}
             </div>
             {% endfor %}
         </div>

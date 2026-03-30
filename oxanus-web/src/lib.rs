@@ -47,6 +47,7 @@ pub fn router(state: OxanusWebState) -> Router {
         .route("/dead", get(handlers::dead_jobs))
         .route("/retries", get(handlers::retry_jobs))
         .route("/queues/{queue_key}", get(handlers::queue_detail))
+        .route("/enqueue", post(handlers::enqueue_job))
         .route("/queues/{queue_key}/wipe", post(handlers::wipe_queue))
         .route(
             "/queues/{queue_key}/jobs/{job_id}/delete",
