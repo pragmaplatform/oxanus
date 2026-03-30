@@ -10,11 +10,19 @@ enum WorkerError {}
 #[derive(Debug, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
-struct Worker2Sec {}
+#[derive(Debug, Serialize, Deserialize)]
+struct Worker2SecJob {}
+
+#[derive(oxanus::Worker)]
+#[oxanus(args = Worker2SecJob)]
+struct Worker2Sec;
 
 impl Worker2Sec {
-    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
+    async fn process(
+        &self,
+        _job: &Worker2SecJob,
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         Ok(())
     }
@@ -38,24 +46,24 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::Context::value(WorkerContext {});
+    let ctx = oxanus::ContextValue::new(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = ComponentRegistry::build_config(&storage).exit_when_processed(5);
 
     storage
-        .enqueue(QueueDynamic(Animal::Cat, 2), Worker2Sec {})
+        .enqueue(QueueDynamic(Animal::Cat, 2), Worker2SecJob {})
         .await?;
     storage
-        .enqueue(QueueDynamic(Animal::Dog, 1), Worker2Sec {})
+        .enqueue(QueueDynamic(Animal::Dog, 1), Worker2SecJob {})
         .await?;
     storage
-        .enqueue(QueueDynamic(Animal::Cat, 2), Worker2Sec {})
+        .enqueue(QueueDynamic(Animal::Cat, 2), Worker2SecJob {})
         .await?;
     storage
-        .enqueue(QueueDynamic(Animal::Bird, 1), Worker2Sec {})
+        .enqueue(QueueDynamic(Animal::Bird, 1), Worker2SecJob {})
         .await?;
     storage
-        .enqueue(QueueDynamic(Animal::Dog, 1), Worker2Sec {})
+        .enqueue(QueueDynamic(Animal::Dog, 1), Worker2SecJob {})
         .await?;
 
     oxanus::run(config, ctx).await?;

@@ -1141,15 +1141,11 @@ mod tests {
     use crate::test_helper::{random_string, redis_pool};
 
     #[derive(Serialize)]
-    struct TestWorker {}
+    struct TestJob {}
 
-    #[async_trait::async_trait]
-    impl crate::Worker for TestWorker {
-        type Context = ();
-        type Error = std::io::Error;
-
-        async fn process(&self, _: &crate::Context<Self::Context>) -> Result<(), Self::Error> {
-            Ok(())
+    impl crate::worker::Job for TestJob {
+        fn worker_name() -> &'static str {
+            "TestJob"
         }
     }
 
@@ -1177,7 +1173,7 @@ mod tests {
         let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
         let queue = random_string();
 
-        let mut envelope = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let mut envelope = JobEnvelope::new(queue.clone(), TestJob {})?;
         let now = chrono::Utc::now();
         let actual_latency = 7777;
         let past = now.timestamp_micros() - actual_latency * 1_000;
@@ -1203,7 +1199,7 @@ mod tests {
         let latency_micros = storage.latency_micros(&queue).await?;
         assert_eq!(latency_micros, 0.0);
 
-        let mut envelope = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let mut envelope = JobEnvelope::new(queue.clone(), TestJob {})?;
         let now = chrono::Utc::now();
         let actual_latency_ms = 7777;
         let actual_latency_micros = actual_latency_ms * 1_000;
@@ -1222,7 +1218,7 @@ mod tests {
         let latency_s = latency_micros / 1_000_000.0;
         assert!((latency_s - actual_latency_s).abs() < 0.05);
 
-        let mut envelope2 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let mut envelope2 = JobEnvelope::new(queue.clone(), TestJob {})?;
         let actual_latency_ms2 = 5000;
         let actual_latency_micros2 = actual_latency_ms2 * 1_000;
         let past2 = now.timestamp_micros() - actual_latency_micros2;
@@ -1243,14 +1239,14 @@ mod tests {
     async fn test_cleanup() -> TestResult {
         let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
         let queue = random_string();
-        let mut expired_envelope1 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let mut expired_envelope1 = JobEnvelope::new(queue.clone(), TestJob {})?;
         expired_envelope1.meta.created_at =
             (chrono::Utc::now().timestamp() - JOB_EXPIRE_TIME - 1) * 1000000;
-        let mut expired_envelope2 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let mut expired_envelope2 = JobEnvelope::new(queue.clone(), TestJob {})?;
         expired_envelope2.meta.created_at =
             (chrono::Utc::now().timestamp() - JOB_EXPIRE_TIME - 1) * 1000000;
 
-        let active_envelope = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let active_envelope = JobEnvelope::new(queue.clone(), TestJob {})?;
 
         storage.enqueue(expired_envelope1.clone()).await?;
         storage.enqueue(expired_envelope2.clone()).await?;
@@ -1282,7 +1278,7 @@ mod tests {
     async fn test_resurrect() -> TestResult {
         let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
         let queue = random_string();
-        let envelope = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let envelope = JobEnvelope::new(queue.clone(), TestJob {})?;
 
         storage.enqueue(envelope.clone()).await?;
 
@@ -1375,7 +1371,7 @@ mod tests {
     async fn test_resurrect_when_process_is_missing() -> TestResult {
         let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
         let queue = random_string();
-        let envelope = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let envelope = JobEnvelope::new(queue.clone(), TestJob {})?;
 
         storage.enqueue(envelope.clone()).await?;
 
@@ -1405,9 +1401,9 @@ mod tests {
         let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
         let queue = random_string();
 
-        let envelope1 = JobEnvelope::new(queue.clone(), TestWorker {})?;
-        let envelope2 = JobEnvelope::new(queue.clone(), TestWorker {})?;
-        let envelope3 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let envelope1 = JobEnvelope::new(queue.clone(), TestJob {})?;
+        let envelope2 = JobEnvelope::new(queue.clone(), TestJob {})?;
+        let envelope3 = JobEnvelope::new(queue.clone(), TestJob {})?;
 
         storage.enqueue(envelope1.clone()).await?;
         storage.enqueue(envelope2.clone()).await?;
@@ -1437,9 +1433,9 @@ mod tests {
         let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
         let queue = random_string();
 
-        let envelope1 = JobEnvelope::new(queue.clone(), TestWorker {})?;
-        let envelope2 = JobEnvelope::new(queue.clone(), TestWorker {})?;
-        let envelope3 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let envelope1 = JobEnvelope::new(queue.clone(), TestJob {})?;
+        let envelope2 = JobEnvelope::new(queue.clone(), TestJob {})?;
+        let envelope3 = JobEnvelope::new(queue.clone(), TestJob {})?;
 
         storage.enqueue(envelope1.clone()).await?;
         storage.enqueue(envelope2.clone()).await?;
@@ -1481,8 +1477,8 @@ mod tests {
         let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
         let queue = random_string();
 
-        let envelope1 = JobEnvelope::new(queue.clone(), TestWorker {})?;
-        let envelope2 = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let envelope1 = JobEnvelope::new(queue.clone(), TestJob {})?;
+        let envelope2 = JobEnvelope::new(queue.clone(), TestJob {})?;
 
         storage.enqueue(envelope1.clone()).await?;
         storage.enqueue(envelope2.clone()).await?;
@@ -1505,7 +1501,7 @@ mod tests {
         let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
         let queue = random_string();
 
-        let mut envelope = JobEnvelope::new(queue.clone(), TestWorker {})?;
+        let mut envelope = JobEnvelope::new(queue.clone(), TestJob {})?;
         assert!(envelope.meta.started_at.is_none());
 
         storage.enqueue(envelope.clone()).await?;
@@ -1537,7 +1533,7 @@ mod tests {
         let envelope = JobEnvelope {
             id: id.clone(),
             queue: queue.clone(),
-            job: crate::job_envelope::Job {
+            job: crate::job_envelope::JobData {
                 name: "MyWorker".to_string(),
                 args: serde_json::json!({"key": "value"}),
             },

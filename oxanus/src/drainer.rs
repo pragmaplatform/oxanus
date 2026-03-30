@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::context::{ContextValue, JobState};
 use crate::error::OxanusError;
-use crate::{Context, JobId, Queue};
+use crate::{JobContext, JobId, Queue};
 
 enum ProcessJobResult {
     Success,
@@ -73,15 +73,14 @@ where
 
     let job = config
         .registry
-        .build(&envelope.job.name, envelope.job.args.clone())?;
+        .build(&envelope.job.name, envelope.job.args.clone(), &ctx.0)?;
 
-    let full_ctx = Context {
-        ctx: ctx.0,
+    let job_ctx = JobContext {
         meta: envelope.meta.clone(),
         state: JobState::new(config.storage.clone(), job_id, envelope.meta.state.clone()),
     };
 
-    let job_result = job.process(&full_ctx).await;
+    let job_result = job.process(&job_ctx).await;
 
     match job_result {
         Ok(()) => {

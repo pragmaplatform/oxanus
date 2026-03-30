@@ -5,78 +5,104 @@ use testresult::TestResult;
 use crate::shared::*;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct WorkerUniqueSkip {
+pub struct WorkerUniqueSkipJob {
     pub id: i32,
     pub key: String,
     pub value: i32,
 }
 
-#[async_trait::async_trait]
-impl oxanus::Worker for WorkerUniqueSkip {
-    type Context = WorkerState;
-    type Error = WorkerError;
+pub struct WorkerUniqueSkip {
+    state: WorkerState,
+}
 
-    async fn process(
-        &self,
-        oxanus::Context { ctx, .. }: &oxanus::Context<WorkerState>,
-    ) -> Result<(), WorkerError> {
-        let mut redis = ctx.redis.get().await?;
-        let _: () = redis.set_ex(&self.key, self.value.to_string(), 3).await?;
-        Ok(())
+impl oxanus::Job for WorkerUniqueSkipJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<WorkerUniqueSkip>()
     }
-
     fn unique_id(&self) -> Option<String> {
         Some(format!("unique:{}", self.id))
     }
-
-    fn retry_delay(&self, _retries: u32) -> u64 {
-        0
-    }
-
-    fn max_retries(&self) -> u32 {
-        0
-    }
-
     fn on_conflict(&self) -> oxanus::JobConflictStrategy {
         oxanus::JobConflictStrategy::Skip
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct WorkerUniqueReplace {
-    pub id: i32,
-    pub key: String,
-    pub value: i32,
+impl oxanus::FromContext<WorkerState> for WorkerUniqueSkip {
+    fn from_context(ctx: &WorkerState) -> Self {
+        Self { state: ctx.clone() }
+    }
 }
 
 #[async_trait::async_trait]
-impl oxanus::Worker for WorkerUniqueReplace {
-    type Context = WorkerState;
+impl oxanus::Worker<WorkerUniqueSkipJob> for WorkerUniqueSkip {
     type Error = WorkerError;
 
     async fn process(
         &self,
-        oxanus::Context { ctx, .. }: &oxanus::Context<WorkerState>,
+        job: &WorkerUniqueSkipJob,
+        _ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
-        let mut redis = ctx.redis.get().await?;
-        let _: () = redis.set_ex(&self.key, self.value.to_string(), 3).await?;
+        let mut redis = self.state.redis.get().await?;
+        let _: () = redis.set_ex(&job.key, job.value.to_string(), 3).await?;
         Ok(())
-    }
-
-    fn unique_id(&self) -> Option<String> {
-        Some(format!("unique:{}", self.id))
     }
 
     fn retry_delay(&self, _retries: u32) -> u64 {
         0
     }
-
     fn max_retries(&self) -> u32 {
         0
     }
+}
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WorkerUniqueReplaceJob {
+    pub id: i32,
+    pub key: String,
+    pub value: i32,
+}
+
+pub struct WorkerUniqueReplace {
+    state: WorkerState,
+}
+
+impl oxanus::Job for WorkerUniqueReplaceJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<WorkerUniqueReplace>()
+    }
+    fn unique_id(&self) -> Option<String> {
+        Some(format!("unique:{}", self.id))
+    }
     fn on_conflict(&self) -> oxanus::JobConflictStrategy {
         oxanus::JobConflictStrategy::Replace
+    }
+}
+
+impl oxanus::FromContext<WorkerState> for WorkerUniqueReplace {
+    fn from_context(ctx: &WorkerState) -> Self {
+        Self { state: ctx.clone() }
+    }
+}
+
+#[async_trait::async_trait]
+impl oxanus::Worker<WorkerUniqueReplaceJob> for WorkerUniqueReplace {
+    type Error = WorkerError;
+
+    async fn process(
+        &self,
+        job: &WorkerUniqueReplaceJob,
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), WorkerError> {
+        let mut redis = self.state.redis.get().await?;
+        let _: () = redis.set_ex(&job.key, job.value.to_string(), 3).await?;
+        Ok(())
+    }
+
+    fn retry_delay(&self, _retries: u32) -> u64 {
+        0
+    }
+    fn max_retries(&self) -> u32 {
+        0
     }
 }
 
@@ -84,7 +110,7 @@ impl oxanus::Worker for WorkerUniqueReplace {
 pub async fn test_unique_skip() -> TestResult {
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
-    let ctx = oxanus::Context::value(WorkerState {
+    let ctx = oxanus::ContextValue::new(WorkerState {
         redis: redis_pool.clone(),
     });
     let storage = oxanus::Storage::builder()
@@ -92,7 +118,7 @@ pub async fn test_unique_skip() -> TestResult {
         .build_from_pool(redis_pool.clone())?;
     let config = oxanus::Config::new(&storage)
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerUniqueSkip>()
+        .register_worker::<WorkerUniqueSkip, WorkerUniqueSkipJob>()
         .exit_when_processed(2);
     let key1 = random_string();
     let key2 = random_string();
@@ -100,7 +126,7 @@ pub async fn test_unique_skip() -> TestResult {
     storage
         .enqueue(
             QueueOne,
-            WorkerUniqueSkip {
+            WorkerUniqueSkipJob {
                 id: 1,
                 key: key1.clone(),
                 value: 1,
@@ -110,7 +136,7 @@ pub async fn test_unique_skip() -> TestResult {
     storage
         .enqueue(
             QueueOne,
-            WorkerUniqueSkip {
+            WorkerUniqueSkipJob {
                 id: 1,
                 key: key1.clone(),
                 value: 2,
@@ -120,7 +146,7 @@ pub async fn test_unique_skip() -> TestResult {
     storage
         .enqueue(
             QueueOne,
-            WorkerUniqueSkip {
+            WorkerUniqueSkipJob {
                 id: 2,
                 key: key2.clone(),
                 value: 3,
@@ -130,7 +156,7 @@ pub async fn test_unique_skip() -> TestResult {
     storage
         .enqueue(
             QueueOne,
-            WorkerUniqueSkip {
+            WorkerUniqueSkipJob {
                 id: 2,
                 key: key2.clone(),
                 value: 4,
@@ -158,7 +184,7 @@ pub async fn test_unique_skip() -> TestResult {
 pub async fn test_unique_replace() -> TestResult {
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
-    let ctx = oxanus::Context::value(WorkerState {
+    let ctx = oxanus::ContextValue::new(WorkerState {
         redis: redis_pool.clone(),
     });
     let storage = oxanus::Storage::builder()
@@ -166,7 +192,7 @@ pub async fn test_unique_replace() -> TestResult {
         .build_from_pool(redis_pool)?;
     let config = oxanus::Config::new(&storage)
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerUniqueReplace>()
+        .register_worker::<WorkerUniqueReplace, WorkerUniqueReplaceJob>()
         .exit_when_processed(2);
 
     let key1 = random_string();
@@ -175,7 +201,7 @@ pub async fn test_unique_replace() -> TestResult {
     storage
         .enqueue(
             QueueOne,
-            WorkerUniqueReplace {
+            WorkerUniqueReplaceJob {
                 id: 1,
                 key: key1.clone(),
                 value: 1,
@@ -185,7 +211,7 @@ pub async fn test_unique_replace() -> TestResult {
     storage
         .enqueue(
             QueueOne,
-            WorkerUniqueReplace {
+            WorkerUniqueReplaceJob {
                 id: 1,
                 key: key1.clone(),
                 value: 2,
@@ -195,7 +221,7 @@ pub async fn test_unique_replace() -> TestResult {
     storage
         .enqueue(
             QueueOne,
-            WorkerUniqueReplace {
+            WorkerUniqueReplaceJob {
                 id: 2,
                 key: key2.clone(),
                 value: 3,
@@ -205,7 +231,7 @@ pub async fn test_unique_replace() -> TestResult {
     storage
         .enqueue(
             QueueOne,
-            WorkerUniqueReplace {
+            WorkerUniqueReplaceJob {
                 id: 2,
                 key: key2.clone(),
                 value: 4,

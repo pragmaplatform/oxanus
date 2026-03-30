@@ -10,14 +10,22 @@ enum WorkerError {}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
-struct TestWorker {
+#[derive(Debug, Serialize, Deserialize)]
+struct TestWorkerJob {
     sleep_s: u64,
 }
 
+#[derive(oxanus::Worker)]
+#[oxanus(args = TestWorkerJob)]
+struct TestWorker;
+
 impl TestWorker {
-    async fn process(&self, _: &oxanus::Context<WorkerContext>) -> Result<(), WorkerError> {
-        tokio::time::sleep(std::time::Duration::from_secs(self.sleep_s)).await;
+    async fn process(
+        &self,
+        job: &TestWorkerJob,
+        _ctx: &oxanus::JobContext,
+    ) -> Result<(), WorkerError> {
+        tokio::time::sleep(std::time::Duration::from_secs(job.sleep_s)).await;
         Ok(())
     }
 }
@@ -33,16 +41,18 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxanus::Context::value(WorkerContext {});
+    let ctx = oxanus::ContextValue::new(WorkerContext {});
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = ComponentRegistry::build_config(&storage)
         .with_graceful_shutdown(tokio::signal::ctrl_c())
         .exit_when_processed(1);
 
     storage
-        .enqueue(QueueOne, TestWorker { sleep_s: 10 })
+        .enqueue(QueueOne, TestWorkerJob { sleep_s: 10 })
         .await?;
-    storage.enqueue(QueueOne, TestWorker { sleep_s: 5 }).await?;
+    storage
+        .enqueue(QueueOne, TestWorkerJob { sleep_s: 5 })
+        .await?;
 
     oxanus::run(config, ctx).await?;
 

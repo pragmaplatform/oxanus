@@ -7,7 +7,7 @@ pub async fn test_standard() -> TestResult {
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxanus::Context::value(WorkerState {
+    let ctx = oxanus::ContextValue::new(WorkerState {
         redis: redis_pool.clone(),
     });
 
@@ -16,7 +16,7 @@ pub async fn test_standard() -> TestResult {
         .build_from_pool(redis_pool.clone())?;
     let config = oxanus::Config::new(&storage)
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerRedisSet>()
+        .register_worker::<WorkerRedisSet, WorkerRedisSetJob>()
         .exit_when_processed(1);
 
     let random_key = uuid::Uuid::new_v4().to_string();
@@ -25,7 +25,7 @@ pub async fn test_standard() -> TestResult {
     storage
         .enqueue(
             QueueOne,
-            WorkerRedisSet {
+            WorkerRedisSetJob {
                 key: random_key.clone(),
                 value: random_value.clone(),
             },

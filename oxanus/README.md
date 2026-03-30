@@ -30,7 +30,7 @@ Oxanus goes for simplicity and depth over breadth. It only aims to support a sin
 ## Quick Start
 
 ```rust
-use oxanus::{Context, Storage};
+use oxanus::Storage;
 use serde::{Serialize, Deserialize};
 
 // Define your component registry
@@ -45,16 +45,21 @@ enum MyError {}
 #[derive(Debug, Clone)]
 struct MyContext {}
 
-// Define your worker using the derive macro
-#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
-struct MyWorker {
+// Define your job data (the serialized payload)
+#[derive(Debug, Serialize, Deserialize)]
+struct MyJob {
     data: String,
 }
 
+// Define your worker (the processing logic)
+#[derive(oxanus::Worker)]
+#[oxanus(args = MyJob)]
+struct MyWorker;
+
 impl MyWorker {
-    async fn process(&self, _ctx: &Context<MyContext>) -> Result<(), MyError> {
+    async fn process(&self, job: &MyJob, _ctx: &oxanus::JobContext) -> Result<(), MyError> {
         // Process your job here
-        println!("Processing: {}", self.data);
+        println!("Processing: {}", job.data);
         Ok(())
     }
 }
@@ -67,13 +72,13 @@ struct MyQueue;
 // Run your worker
 #[tokio::main]
 async fn main() -> Result<(), oxanus::OxanusError> {
-    let ctx = Context::value(MyContext {});
+    let ctx = oxanus::ContextValue::new(MyContext {});
     let storage = Storage::builder().build_from_env()?;
     let config = ComponentRegistry::build_config(&storage)
         .with_graceful_shutdown(tokio::signal::ctrl_c());
 
     // Enqueue some jobs
-    storage.enqueue(MyQueue, MyWorker { data: "hello".into() }).await?;
+    storage.enqueue(MyQueue, MyJob { data: "hello".into() }).await?;
 
     // Run the worker
     oxanus::run(config, ctx).await?;
