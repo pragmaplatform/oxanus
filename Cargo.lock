@@ -1155,6 +1155,7 @@ dependencies = [
  "serde",
  "serde_json",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]

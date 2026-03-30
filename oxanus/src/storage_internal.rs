@@ -1526,4 +1526,47 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_enqueue_envelope() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        let now = chrono::Utc::now().timestamp_micros();
+        let id = uuid::Uuid::new_v4().to_string();
+        let envelope = JobEnvelope {
+            id: id.clone(),
+            queue: queue.clone(),
+            job: crate::job_envelope::Job {
+                name: "MyWorker".to_string(),
+                args: serde_json::json!({"key": "value"}),
+            },
+            meta: crate::job_envelope::JobMeta {
+                id: id.clone(),
+                retries: 0,
+                unique: false,
+                on_conflict: None,
+                created_at: now,
+                scheduled_at: now,
+                started_at: None,
+                state: None,
+                resurrect: true,
+                error: None,
+                throttle_cost: None,
+            },
+        };
+
+        let returned_id = storage.enqueue(envelope).await?;
+        assert_eq!(returned_id, id);
+        assert_eq!(storage.enqueued_count(&queue).await?, 1);
+
+        let job = storage.get_job(&id).await?.expect("job should exist");
+        assert_eq!(job.queue, queue);
+        assert_eq!(job.job.name, "MyWorker");
+        assert_eq!(job.job.args, serde_json::json!({"key": "value"}));
+        assert_eq!(job.meta.retries, 0);
+        assert!(job.meta.error.is_none());
+
+        Ok(())
+    }
 }
