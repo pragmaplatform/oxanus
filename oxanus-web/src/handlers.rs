@@ -1,4 +1,5 @@
 use axum::{
+    Form,
     extract::{Extension, Path, Query},
     response::Redirect,
 };
@@ -206,6 +207,43 @@ pub(crate) async fn delete_job(
     )))
 }
 
+pub(crate) async fn enqueue_job(
+    Extension(state): Extension<OxanusWebState>,
+    Form(form): Form<EnqueueJobForm>,
+) -> Result<Redirect, OxanusWebError> {
+    let now = chrono::Utc::now().timestamp_micros();
+    let id = uuid::Uuid::new_v4().to_string();
+    let args: serde_json::Value =
+        serde_json::from_str(&form.args).map_err(oxanus::OxanusError::from)?;
+
+    let envelope = oxanus::JobEnvelope {
+        id: id.clone(),
+        queue: form.queue.clone(),
+        job: oxanus::Job {
+            name: form.name,
+            args,
+        },
+        meta: oxanus::JobMeta {
+            id,
+            retries: 0,
+            unique: false,
+            on_conflict: None,
+            created_at: now,
+            scheduled_at: now,
+            started_at: None,
+            state: None,
+            resurrect: true,
+            error: None,
+            throttle_cost: None,
+        },
+    };
+
+    state.storage.enqueue_envelope(envelope).await?;
+
+    let redirect = form.redirect.as_deref().unwrap_or("/dead");
+    Ok(Redirect::to(&format!("{}{}", state.base_path, redirect)))
+}
+
 // --- Helpers ---
 
 #[derive(Serialize)]
@@ -237,6 +275,15 @@ pub(crate) struct QueuesParams {
     sort: Option<String>,
     #[serde(default)]
     dir: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct EnqueueJobForm {
+    queue: String,
+    name: String,
+    args: String,
+    #[serde(default)]
+    redirect: Option<String>,
 }
 
 fn list_opts(page: usize) -> oxanus::QueueListOpts {

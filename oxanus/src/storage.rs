@@ -325,6 +325,23 @@ impl Storage {
         self.internal.list_scheduled(opts).await
     }
 
+    /// Enqueues a pre-built job envelope for immediate processing.
+    ///
+    /// Unlike [`enqueue`](Self::enqueue), this accepts a raw [`JobEnvelope`] directly,
+    /// which is useful for re-enqueueing jobs from the dead queue or other sources
+    /// where the original worker type is not available.
+    ///
+    /// # Arguments
+    ///
+    /// * `envelope` - The job envelope to enqueue
+    ///
+    /// # Returns
+    ///
+    /// The [`JobId`] of the enqueued job, or an [`OxanusError`] if the operation fails.
+    pub async fn enqueue_envelope(&self, envelope: JobEnvelope) -> Result<JobId, OxanusError> {
+        self.internal.enqueue(envelope).await
+    }
+
     /// Removes all jobs from the specified queue.
     ///
     /// # Arguments
