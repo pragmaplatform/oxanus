@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.2]
+
+### Added
+- Web UI dashboard (`oxanus-web` crate) for monitoring jobs, queues, and cron
+- Revive button to dead jobs dashboard
+- Link enqueued stat box to queues tab in web dashboard
+
+### Changed
+- Eliminate redundant Redis fetch in job execution hot path
+- Deduplicate relative time filter and pre-compute concurrency map
+
 ## [0.9.1]
 
 ### Fixed
