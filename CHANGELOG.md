@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.6]
+
+### Fixed
+- Show stats tiles on dynamic sub-queue detail pages
+
 ## [0.9.5]
 
 ### Added

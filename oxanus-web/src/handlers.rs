@@ -156,7 +156,27 @@ pub(crate) async fn queue_detail(
     let opts = list_opts(page);
 
     let stats = state.storage.stats().await?;
-    let queue_stats = stats.queues.iter().find(|q| q.key == queue_key).cloned();
+    let queue_stats = stats
+        .queues
+        .iter()
+        .find(|q| q.key == queue_key)
+        .cloned()
+        .or_else(|| {
+            // For dynamic sub-queues (prefix#suffix), look inside parent's sub-queues
+            let (prefix, suffix) = queue_key.split_once('#')?;
+            let parent = stats.queues.iter().find(|q| q.key == prefix)?;
+            let dq = parent.queues.iter().find(|dq| dq.suffix == suffix)?;
+            Some(oxanus::QueueStats {
+                key: queue_key.clone(),
+                enqueued: dq.enqueued,
+                processed: dq.processed,
+                succeeded: dq.succeeded,
+                panicked: dq.panicked,
+                failed: dq.failed,
+                latency_s: dq.latency_s,
+                queues: Vec::new(),
+            })
+        });
     let total = queue_stats.as_ref().map_or(0, |q| q.enqueued);
     let busy = stats
         .processing
