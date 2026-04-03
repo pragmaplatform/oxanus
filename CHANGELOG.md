@@ -2,7 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.4]
+
+### Added
+- Queue stats tiles to queue detail page
+- Add latency tile to overview dashboard
+
 ## [0.9.3]
+
+### Added
+- Truncate long errors and add Copy Error Info button in web dashboard
 
 ### Fixed
 - Fix panic instrumentation: trace was missing `success` value instead of recording `false`
