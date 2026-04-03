@@ -51,7 +51,7 @@
                 <div class="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs text-gray-400 mt-2">
                     <div>
                         <span class="text-gray-500">Queue:</span>
-                        <span class="ml-1 text-gray-300">{{ job.queue }}</span>
+                        <a href="{{ base_path }}/queues/{{ job.queue|urlencode }}" class="ml-1 text-blue-400 hover:text-blue-300 hover:underline">{{ job.queue }}</a>
                     </div>
                     <div>
                         <span class="text-gray-500">Retries:</span>

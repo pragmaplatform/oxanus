@@ -111,6 +111,17 @@
                             <td class="py-3 pr-4 text-right text-blue-400">{{ queue.enqueued }}</td>
                             <td class="py-3 text-right text-purple-400">{{ queue.latency_s|format_latency }}</td>
                         </tr>
+                        {% for dq in &queue.queues %}
+                        {% if dq.enqueued > 0 %}
+                        <tr class="border-b border-gray-800/50 hover:bg-gray-900/50 text-gray-500">
+                            <td class="py-2 pr-4 pl-10 font-mono text-xs">&#8627; <a href="{{ base_path }}/queues/{{ queue.key }}%23{{ dq.suffix|urlencode }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ dq.suffix }}</a></td>
+                            <td class="py-2 pr-4 text-right text-xs text-gray-500">{{ self.concurrency_for(&queue.key) }}</td>
+                            <td class="py-2 pr-4 text-right text-xs text-purple-400"></td>
+                            <td class="py-2 pr-4 text-right text-xs text-blue-400">{{ dq.enqueued }}</td>
+                            <td class="py-2 text-right text-xs text-purple-400">{{ dq.latency_s|format_latency }}</td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
                         {% endfor %}
                     </tbody>
                 </table>

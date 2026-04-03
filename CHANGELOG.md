@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.5]
+
+### Added
+- Make queue name clickable in job cards linking to queue detail page
+- Show dynamic child queues in Active Queues sections on dashboard and busy pages
+
 ## [0.9.4]
 
 ### Added
