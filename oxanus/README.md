@@ -1,18 +1,18 @@
 # Oxanus
+
 [![Build Status](https://img.shields.io/github/actions/workflow/status/pragmaplatform/oxanus/test.yml?branch=main)](https://github.com/pragmaplatform/oxanus/actions)
 [![Latest Version](https://img.shields.io/crates/v/oxanus.svg)](https://crates.io/crates/oxanus)
 [![docs.rs](https://img.shields.io/static/v1?label=docs.rs&message=oxanus&color=blue&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K)](https://docs.rs/oxanus/latest)
 
+Oxanus is job processing library written in Rust that doesn't suck (or at least sucks in a completely different way than other options).
+
+Oxanus goes for simplicity and depth over breadth. It only aims to support a single backend with a simple flow.
 
 <p align="center">
   <picture>
-    <img alt="Oxanus logo" src="https://raw.githubusercontent.com/pragmaplatform/oxanus/refs/heads/main/logo.jpg" width="320">
+    <img alt="Oxanus Web Dashboard" src="https://raw.githubusercontent.com/pragmaplatform/oxanus/refs/heads/main/web.png">
   </picture>
 </p>
-
-Oxanus is job processing library written in Rust doesn't suck (or at least sucks in a completely different way than other options).
-
-Oxanus goes for simplicity and depth over breadth. It only aims to support a single backend with a simple flow.
 
 ## Key Features
 
@@ -126,6 +126,7 @@ It also provides management actions for wiping queues and deleting individual jo
 Workers are the units of work in Oxanus. They can be defined using the `#[derive(oxanus::Worker)]` macro or by implementing the [`Worker`] trait manually. Workers define the processing logic for jobs.
 
 Worker attributes:
+
 - `#[oxanus(max_retries = 3)]` - Set maximum retry attempts
 - `#[oxanus(retry_delay = 5)]` - Set retry delay in seconds
 - `#[oxanus(unique_id = "worker_{id}")]` - Define unique job identifiers
@@ -142,6 +143,7 @@ Queues can be:
 - **Dynamic**: Created at runtime with each instance being a separate queue (requires struct fields)
 
 Queue attributes:
+
 - `#[oxanus(key = "my_queue")]` - Set static queue key
 - `#[oxanus(prefix = "dynamic")]` - Set prefix for dynamic queues
 - `#[oxanus(concurrency = 2)]` - Set concurrency limit
@@ -193,4 +195,3 @@ let metrics = storage.metrics().await?;
 let output = metrics.encode_to_string()?;
 // Serve `output` on your metrics endpoint
 ```
-
