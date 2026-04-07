@@ -20,7 +20,7 @@ use crate::{
 
 const JOB_EXPIRE_TIME: i64 = 7 * 24 * 3600; // 7 days
 const RESURRECT_THRESHOLD_SECS: i64 = 5;
-const MAX_CONSECUTIVE_REDIS_FAILURES: u32 = 10;
+const MAX_CONSECUTIVE_REDIS_FAILURES: u32 = 30;
 
 #[derive(Clone)]
 pub(crate) struct StorageInternal {
@@ -1010,6 +1010,10 @@ impl StorageInternal {
             let job_id = format!("{job_name}-{scheduled_at}");
 
             loop {
+                if cancel_token.is_cancelled() {
+                    return Ok(());
+                }
+
                 let envelope = JobEnvelope::new_cron(
                     cron_job.queue_key.clone(),
                     job_id.clone(),
