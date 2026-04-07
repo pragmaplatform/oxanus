@@ -26,6 +26,7 @@ Oxanus goes for simplicity and depth over breadth. It only aims to support a sin
 - **Graceful Shutdown**: Clean shutdown of workers with in-progress job handling
 - **Periodic Jobs**: Run jobs on a schedule using cron-like expressions
 - **Resumable Jobs**: Jobs that can be resumed from where they left off when they are retried
+- **Web UI**: Built-in dashboard for monitoring jobs, queues, and cron schedules
 
 ## Quick Start
 
