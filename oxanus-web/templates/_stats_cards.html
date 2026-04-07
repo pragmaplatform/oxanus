@@ -1,0 +1,34 @@
+        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4 mb-10">
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Processed</div>
+                <div class="text-2xl font-semibold text-green-400">{{ stats.global.processed|format_number_i64 }}</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Failed</div>
+                <div class="text-2xl font-semibold text-red-400">{{ stats.global.failed|format_number_i64 }}</div>
+            </div>
+            <a href="{{ base_path }}/busy" class="bg-gray-900 rounded-lg p-4 border border-gray-800 hover:border-gray-600 transition-colors block">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Busy</div>
+                <div class="text-2xl font-semibold text-purple-400">{{ stats.processing.len() }}</div>
+            </a>
+            <a href="{{ base_path }}/queues" class="bg-gray-900 rounded-lg p-4 border border-gray-800 hover:border-gray-600 transition-colors block">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Enqueued</div>
+                <div class="text-2xl font-semibold text-blue-400">{{ stats.global.enqueued|format_number }}</div>
+            </a>
+            <a href="{{ base_path }}/retries" class="bg-gray-900 rounded-lg p-4 border border-gray-800 hover:border-gray-600 transition-colors block">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Retries</div>
+                <div class="text-2xl font-semibold text-orange-400">{{ stats.global.retries|format_number }}</div>
+            </a>
+            <a href="{{ base_path }}/scheduled" class="bg-gray-900 rounded-lg p-4 border border-gray-800 hover:border-gray-600 transition-colors block">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Scheduled</div>
+                <div class="text-2xl font-semibold text-yellow-400">{{ stats.global.scheduled|format_number }}</div>
+            </a>
+            <a href="{{ base_path }}/dead" class="bg-gray-900 rounded-lg p-4 border border-gray-800 hover:border-gray-600 transition-colors block">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Dead</div>
+                <div class="text-2xl font-semibold text-red-400">{{ stats.global.dead|format_number }}</div>
+            </a>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Latency</div>
+                <div class="text-2xl font-semibold text-yellow-400">{{ stats.global.latency_s_max|format_latency }}</div>
+            </div>
+        </div>

@@ -55,7 +55,7 @@ pub(crate) async fn queues_list(
     Ok(QueuesTemplate {
         base_path: state.base_path,
         active_tab: "/queues",
-        queues: stats.queues,
+        stats,
         concurrency_map: state.concurrency_map,
         sort: sort.to_string(),
         dir: dir.to_string(),

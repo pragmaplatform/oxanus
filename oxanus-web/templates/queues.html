@@ -7,16 +7,18 @@
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="max-w-[88rem] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div class="mb-6">
             <h1 class="text-2xl font-bold tracking-tight">Oxanus Dashboard</h1>
         </div>
 
         {% include "_tabs.html" %}
 
-        <h2 class="text-lg font-semibold mb-4">Queues ({{ queues.len() }})</h2>
+        {% include "_stats_cards.html" %}
 
-        {% if queues.is_empty() %}
+        <h2 class="text-lg font-semibold mb-4">Queues ({{ stats.queues.len() }})</h2>
+
+        {% if stats.queues.is_empty() %}
         <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500">
             No queues
         </div>
@@ -36,7 +38,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for queue in &queues %}
+                    {% for queue in &stats.queues %}
                     <tr class="border-b border-gray-800/50 hover:bg-gray-900/50">
                         <td class="py-3 pr-4 font-mono text-sm">{% if queue.queues.is_empty() %}<a href="{{ base_path }}/queues/{{ queue.key|urlencode }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ queue.key }}</a>{% else %}{{ queue.key }}{% endif %}</td>
                         <td class="py-3 pr-4 text-right text-gray-400">{{ self.concurrency_for(&queue.key) }}</td>
