@@ -104,7 +104,7 @@ impl JobEnvelope {
             queue,
             job: JobData {
                 name,
-                args: serde_json::to_value(serde_json::json!({}))?,
+                args: serde_json::json!({}),
             },
             meta: JobMeta {
                 id,

@@ -118,7 +118,7 @@ pub use crate::stats::*;
 pub use crate::storage::Storage;
 pub use crate::storage_builder::{StorageBuilder, StorageBuilderTimeouts};
 pub use crate::storage_types::*;
-pub use crate::worker::{BoxedProcessable, FromContext, Job, Processable, Worker};
+pub use crate::worker::{FromContext, Job, Worker};
 pub use crate::worker_registry::{WorkerConfig, WorkerConfigKind, job_factory};
 
 #[cfg(feature = "registry")]

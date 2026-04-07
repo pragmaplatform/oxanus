@@ -61,15 +61,14 @@ impl<DT, ET> Config<DT, ET> {
         DT: Clone + Send + Sync + 'static,
         ET: std::error::Error + Send + Sync + 'static,
     {
-        let name = std::any::type_name::<W>().to_string();
+        let name = A::worker_name().to_string();
         let factory = worker_registry::job_factory::<W, A, DT, ET>;
         let kind = <W as Worker<A>>::to_config();
 
         if let WorkerConfigKind::Cron { .. } = &kind {
-            let worker_name = std::any::type_name::<W>();
             assert!(
                 serde_json::from_value::<A>(serde_json::json!({})).is_ok(),
-                "{worker_name}: Cron job args must be deserializable from empty JSON `{{}}`. \
+                "{name}: Cron job args must be deserializable from empty JSON `{{}}`. \
                  Use `#[serde(default)]` on all fields or define the args struct with no fields."
             );
 
@@ -146,14 +145,11 @@ impl<DT, ET> Config<DT, ET> {
             .collect();
         cron_workers.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let cron_names: std::collections::HashSet<&str> =
-            cron_workers.iter().map(|c| c.name.as_str()).collect();
-
         let mut workers: Vec<WorkerInfo> = self
             .registry
             .worker_names()
             .into_iter()
-            .filter(|name| !cron_names.contains(name))
+            .filter(|name| !self.registry.schedules.contains_key(*name))
             .map(|name| WorkerInfo {
                 name: name.to_string(),
             })
