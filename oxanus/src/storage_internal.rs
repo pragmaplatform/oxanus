@@ -1008,19 +1008,22 @@ impl StorageInternal {
 
             let scheduled_at = next.timestamp_micros();
             let job_id = format!("{job_name}-{scheduled_at}");
-            let envelope = JobEnvelope::new_cron(
-                cron_job.queue_key.clone(),
-                job_id,
-                job_name.clone(),
-                scheduled_at,
-                cron_job.resurrect,
-            )?;
 
-            if self
-                .track_redis_result(self.enqueue_at(envelope, next).await)?
-                .is_none()
-            {
-                continue;
+            loop {
+                let envelope = JobEnvelope::new_cron(
+                    cron_job.queue_key.clone(),
+                    job_id.clone(),
+                    job_name.clone(),
+                    scheduled_at,
+                    cron_job.resurrect,
+                )?;
+
+                match self.track_redis_result(self.enqueue_at(envelope, next).await)? {
+                    Some(_) => break,
+                    None => {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                }
             }
 
             previous = Some(next);
