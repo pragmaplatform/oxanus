@@ -17,7 +17,8 @@ pub async fn run<DT, ET>(
     queue_key: String,
     job_tx: mpsc::Sender<WorkerJob>,
     semaphores: Arc<SemaphoresMap>,
-) where
+) -> Result<(), OxanusError>
+where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
@@ -27,12 +28,19 @@ pub async fn run<DT, ET>(
 
         tokio::select! {
             result = pop_queue_message(&config.storage.internal, &queue_config, &queue_key) => {
-                let job_id = result.expect("Failed to pop queue message");
-                let job = WorkerJob { job_id, permit };
-                job_tx
-                    .send(job)
-                    .await
-                    .expect("Failed to send job to worker");
+                match config.storage.internal.track_redis_result(result)? {
+                    Some(job_id) => {
+                        let job = WorkerJob { job_id, permit };
+                        job_tx
+                            .send(job)
+                            .await
+                            .expect("Failed to send job to worker");
+                    }
+                    None => {
+                        drop(permit);
+                        sleep(Duration::from_secs(1)).await;
+                    }
+                }
             }
             _ = config.cancel_token.cancelled() => {
                 tracing::debug!("Stopping dispatcher for queue {}", queue_key);
@@ -41,6 +49,8 @@ pub async fn run<DT, ET>(
             }
         }
     }
+
+    Ok(())
 }
 
 async fn pop_queue_message(

@@ -166,13 +166,17 @@ where
     loop {
         let all_queues: HashSet<String> = match &queue_config.kind {
             QueueKind::Static { key } => HashSet::from([key.clone()]),
-            QueueKind::Dynamic { prefix, .. } => {
-                config
-                    .storage
-                    .internal
-                    .queue_keys(&format!("{prefix}*"))
-                    .await?
-            }
+            QueueKind::Dynamic { prefix, .. } => config
+                .storage
+                .internal
+                .track_redis_result(
+                    config
+                        .storage
+                        .internal
+                        .queue_keys(&format!("{prefix}*"))
+                        .await,
+                )?
+                .unwrap_or_default(),
         };
         let new_queues: HashSet<String> = all_queues.difference(&tracked_queues).cloned().collect();
 
@@ -183,13 +187,24 @@ where
                 "Tracking queue"
             );
 
-            tokio::spawn(dispatcher::run(
-                Arc::clone(&config),
-                queue_config.clone(),
-                queue.clone(),
-                job_tx.clone(),
-                Arc::clone(&semaphores),
-            ));
+            let dispatcher_config = Arc::clone(&config);
+            let dispatcher_queue_config = queue_config.clone();
+            let dispatcher_job_tx = job_tx.clone();
+            let dispatcher_semaphores = Arc::clone(&semaphores);
+            let dispatcher_queue = queue.clone();
+            tokio::spawn(async move {
+                if let Err(e) = dispatcher::run(
+                    dispatcher_config,
+                    dispatcher_queue_config,
+                    dispatcher_queue,
+                    dispatcher_job_tx,
+                    dispatcher_semaphores,
+                )
+                .await
+                {
+                    tracing::error!(error = %e, "Dispatcher exited with error");
+                }
+            });
 
             tracked_queues.insert(queue);
         }

@@ -39,7 +39,11 @@ where
         tokio::select! {
             result = rx.recv() => {
                 match result {
-                    Some(result) => update_stats(Arc::clone(&config), Arc::clone(&stats), result).await?,
+                    Some(result) => {
+                        config.storage.internal.track_redis_result(
+                            update_stats(Arc::clone(&config), Arc::clone(&stats), result).await
+                        )?;
+                    }
                     None => return Ok(()),
                 }
             }

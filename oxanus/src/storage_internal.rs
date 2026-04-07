@@ -3,6 +3,8 @@ use deadpool_redis::redis::{self, AsyncCommands};
 use std::{
     collections::{HashMap, HashSet},
     num::NonZero,
+    sync::Arc,
+    sync::atomic::{AtomicU32, Ordering},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -18,12 +20,14 @@ use crate::{
 
 const JOB_EXPIRE_TIME: i64 = 7 * 24 * 3600; // 7 days
 const RESURRECT_THRESHOLD_SECS: i64 = 5;
+const MAX_CONSECUTIVE_REDIS_FAILURES: u32 = 10;
 
 #[derive(Clone)]
 pub(crate) struct StorageInternal {
     pool: deadpool_redis::Pool,
     keys: StorageKeys,
     started_at: i64,
+    consecutive_redis_failures: Arc<AtomicU32>,
 }
 
 enum JobEnqueueAction {
@@ -39,6 +43,44 @@ impl StorageInternal {
             pool,
             keys,
             started_at: chrono::Utc::now().timestamp(),
+            consecutive_redis_failures: Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    fn record_redis_success(&self) {
+        if self.consecutive_redis_failures.load(Ordering::Relaxed) != 0 {
+            self.consecutive_redis_failures.store(0, Ordering::Relaxed);
+        }
+    }
+
+    fn record_redis_failure(&self, err: &OxanusError) -> bool {
+        let count = self
+            .consecutive_redis_failures
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        tracing::warn!(error = %err, consecutive_failures = count, "Transient Redis error");
+        count >= MAX_CONSECUTIVE_REDIS_FAILURES
+    }
+
+    /// Wraps a Redis operation result with resilience tracking.
+    /// Returns `Ok(Some(value))` on success, `Ok(None)` on transient failure,
+    /// or `Err(e)` if the consecutive failure threshold has been exceeded.
+    pub(crate) fn track_redis_result<T>(
+        &self,
+        result: Result<T, OxanusError>,
+    ) -> Result<Option<T>, OxanusError> {
+        match result {
+            Ok(val) => {
+                self.record_redis_success();
+                Ok(Some(val))
+            }
+            Err(e) => {
+                if self.record_redis_failure(&e) {
+                    Err(e)
+                } else {
+                    Ok(None)
+                }
+            }
         }
     }
 
@@ -766,7 +808,7 @@ impl StorageInternal {
                     return Ok(());
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_millis(300)) => {
-                    self.enqueue_scheduled(&self.keys.retry).await?;
+                    self.track_redis_result(self.enqueue_scheduled(&self.keys.retry).await)?;
                 }
             }
         }
@@ -781,8 +823,7 @@ impl StorageInternal {
                     return Ok(());
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_millis(300)) => {
-                    self.enqueue_scheduled(&self.keys.schedule)
-                        .await?;
+                    self.track_redis_result(self.enqueue_scheduled(&self.keys.schedule).await)?;
                 }
             }
         }
@@ -797,7 +838,7 @@ impl StorageInternal {
                     return Ok(());
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(600)) => {
-                    self.cleanup().await?;
+                    self.track_redis_result(self.cleanup().await)?;
                 }
             }
         }
@@ -810,7 +851,7 @@ impl StorageInternal {
                     return Ok(());
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_millis(500)) => {
-                    self.ping().await?;
+                    self.track_redis_result(self.ping().await)?;
                 }
             }
         }
@@ -923,7 +964,7 @@ impl StorageInternal {
                     return Ok(());
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {
-                    self.resurrect().await?;
+                    self.track_redis_result(self.resurrect().await)?;
                 }
             }
         }
@@ -975,7 +1016,12 @@ impl StorageInternal {
                 cron_job.resurrect,
             )?;
 
-            self.enqueue_at(envelope, next).await?;
+            if self
+                .track_redis_result(self.enqueue_at(envelope, next).await)?
+                .is_none()
+            {
+                continue;
+            }
 
             previous = Some(next);
         }
