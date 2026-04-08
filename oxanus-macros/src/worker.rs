@@ -64,7 +64,7 @@ enum ThrottleCost {
 #[derive(Debug, FromMeta)]
 struct Cron {
     schedule: String,
-    queue: Option<Path>,
+    queue: Path,
 }
 
 macro_rules! impl_from_meta_for_num_or_path {
@@ -498,18 +498,7 @@ fn expand_throttle_cost(throttle_cost: &ThrottleCost) -> TokenStream {
 
 fn expand_cron(cron: &Cron) -> TokenStream {
     let cron_schedule = &cron.schedule;
-    let cron_queue_config = match &cron.queue {
-        Some(queue) => quote! {
-            fn cron_queue_config() -> Option<oxanus::QueueConfig>
-            where
-                Self: Sized,
-            {
-                use oxanus::Queue;
-                Some(#queue::to_config())
-            }
-        },
-        None => quote!(),
-    };
+    let queue = &cron.queue;
 
     quote! {
         fn cron_schedule() -> Option<String>
@@ -519,6 +508,12 @@ fn expand_cron(cron: &Cron) -> TokenStream {
             Some(#cron_schedule.to_string())
         }
 
-        #cron_queue_config
+        fn cron_queue_config() -> Option<oxanus::QueueConfig>
+        where
+            Self: Sized,
+        {
+            use oxanus::Queue;
+            Some(#queue::to_config())
+        }
     }
 }
