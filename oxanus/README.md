@@ -26,7 +26,8 @@ Oxanus goes for simplicity and depth over breadth. It only aims to support a sin
 - **Graceful Shutdown**: Clean shutdown of workers with in-progress job handling
 - **Periodic Jobs**: Run jobs on a schedule using cron-like expressions
 - **Resumable Jobs**: Jobs that can be resumed from where they left off when they are retried
-- **Web UI**: Built-in dashboard for monitoring jobs, queues, and cron schedules
+- **Web UI**: Built-in dashboard for monitoring jobs, queues, and cron schedules — pure Rust, no JavaScript build step or external toolchain needed
+- **Well Tested**: Comprehensive integration test suite covering core functionality
 
 ## Quick Start
 
@@ -199,3 +200,27 @@ let metrics = storage.metrics().await?;
 let output = metrics.encode_to_string()?;
 // Serve `output` on your metrics endpoint
 ```
+
+## Comparison with Similar Libraries
+
+| Feature | Oxanus | [Apalis](https://crates.io/crates/apalis) | [rusty-sidekiq](https://crates.io/crates/rusty-sidekiq) | [Fang](https://crates.io/crates/fang) |
+|---|---|---|---|---|
+| Backend | Redis | Redis, Postgres, SQLite, MySQL, AMQP, NATS | Redis | Postgres, SQLite, MySQL |
+| Retries | Yes | Yes (tower layer) | Yes | Yes |
+| Scheduled Jobs | Yes | Yes | Yes | Yes |
+| Cron | Yes | Yes | Yes | Yes |
+| Unique Jobs | Yes | No | Yes | Yes |
+| Throttling | Yes | No | No | No |
+| Dynamic Queues | Yes | No | No | No |
+| Resumable Jobs | Yes | No | No | No |
+| Graceful Shutdown | Yes | Yes | Partial | No |
+| Web UI | Yes | Yes (apalis-board) | No (uses Ruby Sidekiq UI) | No |
+| License | MIT | MIT | MIT | MIT |
+
+**Oxanus** focuses on depth with a single Redis backend rather than breadth across multiple backends. It is the only Rust job library offering resumable jobs and combines unique jobs, throttling, and a built-in web dashboard in one package.
+
+**Apalis** offers the most backend options and integrates with the tower middleware ecosystem, making it highly extensible. It suits projects that need backend flexibility or already use tower layers. However, its breadth of abstraction can come at the cost of reliability and debuggability in production.
+
+**rusty-sidekiq** is wire-compatible with Ruby Sidekiq, making it ideal for teams migrating from or coexisting with Ruby services. It can share queues with Ruby Sidekiq workers and use the existing Sidekiq web UI.
+
+**Fang** is SQL-database-backed (no Redis dependency) with both async and threaded execution modes. A good fit for projects that prefer Postgres/SQLite over Redis.
