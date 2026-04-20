@@ -4,9 +4,9 @@
 [![Latest Version](https://img.shields.io/crates/v/oxanus.svg)](https://crates.io/crates/oxanus)
 [![docs.rs](https://img.shields.io/static/v1?label=docs.rs&message=oxanus&color=blue&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K)](https://docs.rs/oxanus/latest)
 
-Oxanus is job processing library written in Rust that doesn't suck (or at least sucks in a completely different way than other options).
+Oxanus is a Redis-backed job processing library for Rust. It powers the background job infrastructure behind [Player.gg](https://player.gg) and [Firstlook.gg](https://firstlook.gg), serving hundreds of studios and millions of players.
 
-Oxanus goes for simplicity and depth over breadth. It only aims to support a single backend with a simple flow.
+Oxanus focuses on simplicity and depth over breadth - one backend, done well.
 
 <p align="center">
   <picture>
@@ -16,18 +16,19 @@ Oxanus goes for simplicity and depth over breadth. It only aims to support a sin
 
 ## Key Features
 
-- **Isolated Queues**: Separate job processing queues with independent configurations
-- **Retrying**: Automatic retry of failed jobs with configurable backoff
-- **Scheduled Jobs**: Schedule jobs to run at specific times or after delays
-- **Dynamic Queues**: Create and manage queues at runtime
-- **Throttling**: Control job processing rates with queue-based throttling
-- **Unique Jobs**: Ensure only one instance of a job runs at a time
-- **Resilient Jobs**: Jobs that can survive worker crashes and restarts
-- **Graceful Shutdown**: Clean shutdown of workers with in-progress job handling
-- **Periodic Jobs**: Run jobs on a schedule using cron-like expressions
-- **Resumable Jobs**: Jobs that can be resumed from where they left off when they are retried
-- **Web UI**: Built-in dashboard for monitoring jobs, queues, and cron schedules — pure Rust, no JavaScript build step or external toolchain needed
-- **Well Tested**: Comprehensive integration test suite covering core functionality
+- **Isolated Queues** - separate queues with independent concurrency and configuration
+- **Retries** - automatic retry with configurable backoff
+- **Scheduled Jobs** - run jobs at specific times or after delays
+- **Cron Jobs** - periodic jobs using cron expressions
+- **Dynamic Queues** - create and manage queues at runtime
+- **Throttling** - rate-limit job processing per queue
+- **Unique Jobs** - deduplicate jobs so only one instance runs at a time
+- **Resumable Jobs** - resume from where a job left off on retry
+- **Resilient Jobs** - survive worker crashes and restarts
+- **Graceful Shutdown** - clean shutdown with in-progress job handling
+- **Web Dashboard** - built-in UI for monitoring jobs, queues, and cron - pure Rust, no JS toolchain
+- **Prometheus Metrics** - export queue and job metrics for monitoring
+- **Well Tested** - comprehensive integration test suite
 
 ## Quick Start
 
@@ -35,42 +36,34 @@ Oxanus goes for simplicity and depth over breadth. It only aims to support a sin
 use oxanus::Storage;
 use serde::{Serialize, Deserialize};
 
-// Define your component registry
 #[derive(oxanus::Registry)]
 struct ComponentRegistry(oxanus::ComponentRegistry<MyContext, MyError>);
 
-// Define your error type
 #[derive(Debug, thiserror::Error)]
 enum MyError {}
 
-// Define your context
 #[derive(Debug, Clone)]
 struct MyContext {}
 
-// Define your job data (the serialized payload)
 #[derive(Debug, Serialize, Deserialize)]
 struct MyJob {
     data: String,
 }
 
-// Define your worker (the processing logic)
 #[derive(oxanus::Worker)]
 struct MyWorker;
 
 impl MyWorker {
     async fn process(&self, job: &MyJob, _ctx: &oxanus::JobContext) -> Result<(), MyError> {
-        // Process your job here
         println!("Processing: {}", job.data);
         Ok(())
     }
 }
 
-// Define your queue using the derive macro
 #[derive(Serialize, oxanus::Queue)]
 #[oxanus(key = "my_queue", concurrency = 2)]
 struct MyQueue;
 
-// Run your worker
 #[tokio::main]
 async fn main() -> Result<(), oxanus::OxanusError> {
     let ctx = oxanus::ContextValue::new(MyContext {});
@@ -78,10 +71,7 @@ async fn main() -> Result<(), oxanus::OxanusError> {
     let config = ComponentRegistry::build_config(&storage)
         .with_graceful_shutdown(tokio::signal::ctrl_c());
 
-    // Enqueue some jobs
     storage.enqueue(MyQueue, MyJob { data: "hello".into() }).await?;
-
-    // Run the worker
     oxanus::run(config, ctx).await?;
     Ok(())
 }
@@ -91,23 +81,20 @@ For more detailed usage examples, check out the [examples directory](https://git
 
 ## Web Dashboard
 
-The `oxanus-web` crate provides a web UI dashboard for monitoring jobs, queues, and cron schedules. It integrates as a nested axum router.
+The `oxanus-web` crate provides a built-in dashboard for monitoring jobs, queues, and cron schedules. It integrates as a nested axum router.
 
 ```rust
 use oxanus_web::OxanusWebState;
 
-// Build your oxanus config as usual
 let config = ComponentRegistry::build_config(&storage)
     .with_graceful_shutdown(tokio::signal::ctrl_c());
 
-// Create the oxanus-web router
 let oxanus_router = oxanus_web::router(OxanusWebState::new(
     config.storage.clone(),
     config.catalog(),
     "/oxanus".to_string(),
 ));
 
-// Nest it into your existing axum app
 let app = your_app_router().nest("/oxanus", oxanus_router);
 ```
 
@@ -128,7 +115,7 @@ It also provides management actions for wiping queues and deleting individual jo
 
 ### Workers
 
-Workers are the units of work in Oxanus. They can be defined using the `#[derive(oxanus::Worker)]` macro or by implementing the [`Worker`] trait manually. Workers define the processing logic for jobs.
+Workers define the processing logic for jobs. Use the `#[derive(oxanus::Worker)]` macro or implement the `Worker` trait manually.
 
 Worker attributes:
 
@@ -140,7 +127,7 @@ Worker attributes:
 
 ### Queues
 
-Queues are the channels through which jobs flow. They can be defined using the `#[derive(oxanus::Queue)]` macro or by implementing the [`Queue`] trait manually.
+Queues are the channels through which jobs flow. Use the `#[derive(oxanus::Queue)]` macro or implement the `Queue` trait manually.
 
 Queues can be:
 
@@ -160,14 +147,9 @@ The component registry automatically discovers and registers all workers and que
 
 ### Storage
 
-The [`Storage`] trait provides the interface for job persistence. It handles:
+`Storage` provides the interface for job persistence - enqueueing, scheduling, state management, and queue monitoring.
 
-- Job enqueueing
-- Job scheduling
-- Job state management
-- Queue monitoring
-
-Storage is built using `Storage::builder().build_from_env()` which reads the `REDIS_URL` environment variable.
+Build it with `Storage::builder().build_from_env()` which reads the `REDIS_URL` environment variable.
 
 ### Context
 
@@ -180,7 +162,7 @@ The context provides shared state and utilities to workers. It can include:
 
 ### Configuration
 
-Configuration is done through the [`Config`] builder, which allows you to:
+Configuration is done through the `Config` builder, which allows you to:
 
 - Automatically register queues and workers via the component registry
 - Set up graceful shutdown
@@ -188,8 +170,7 @@ Configuration is done through the [`Config`] builder, which allows you to:
 
 ### Error Handling
 
-Oxanus uses a custom error type [`OxanusError`] that covers all possible error cases in the library.
-Workers can define their own error type that implements `std::error::Error`.
+Oxanus uses a custom `OxanusError` type that covers all library error cases. Workers can define their own error type that implements `std::error::Error`.
 
 ### Prometheus Metrics
 
