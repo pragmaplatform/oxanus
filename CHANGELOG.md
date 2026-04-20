@@ -4,13 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [0.10.0]
 
+**Breaking release.** See [MIGRATION.md](MIGRATION.md) for the upgrade guide.
+
 ### Added
 - **Job/Worker separation**: job data (`Job` trait) is now separate from processing logic (`Worker<Args>` trait)
 - `FromContext` trait for injecting app state into workers (auto-derived for unit and single-field structs)
 - `JobContext` replaces generic `Context<T>`
 - `ContextValue::new(x)` replaces `Context::value(x)`
 - `#[oxanus(job = Type)]` attribute with `{Name}Job` convention default (strips `Worker` suffix)
-- Migration guide ([MIGRATION.md](MIGRATION.md))
 
 ### Changed
 - `#[derive(oxanus::Worker)]` now generates both `Job` and `Worker<Args>` impls
