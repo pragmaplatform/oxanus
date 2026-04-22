@@ -216,7 +216,7 @@ impl<DT, ET> Config<DT, ET> {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_family = "unix")]
 async fn default_shutdown_signal() -> Result<(), std::io::Error> {
     let ctrl_c = tokio::signal::ctrl_c();
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
