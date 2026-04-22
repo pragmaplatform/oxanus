@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.3]
+
+### Added
+- Global retry delay override in Config
+
+## [1.0.2]
+
+### Improved
+- Use LINDEX instead of LRANGE for single-element list access
+
 ## [1.0.1]
 
 ### Fixed
