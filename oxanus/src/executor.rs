@@ -76,7 +76,6 @@ where
     );
 
     let max_retries = worker.max_retries();
-    let retry_delay = worker.retry_delay(envelope.meta.retries);
 
     match result {
         ExecutionResult::NotPanic(result) => {
@@ -87,6 +86,13 @@ where
                     }
                 }
                 Err(e) => {
+                    let default_delay = worker.retry_delay(envelope.meta.retries);
+                    let retry_delay = config
+                        .retry_delay_override
+                        .as_ref()
+                        .and_then(|f| f(e, envelope.meta.retries, default_delay))
+                        .unwrap_or(default_delay);
+
                     #[cfg(feature = "sentry")]
                     sentry_core::capture_error(e);
 
@@ -104,6 +110,8 @@ where
             Ok(result.map_err(ExecutionError::NotPanic))
         }
         ExecutionResult::Panic(panic_msg) => {
+            let retry_delay = worker.retry_delay(envelope.meta.retries);
+
             #[cfg(feature = "sentry")]
             sentry_core::capture_message(&panic_msg, sentry_core::Level::Error);
 
