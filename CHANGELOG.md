@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [1.0.4]
 
 ### Added
-- BSD support for shutdown signal handling
+- BSD support for shutdown signal handling ([#41](https://github.com/pragmaplatform/oxanus/issues/41))
 
 ## [1.0.3]
 
