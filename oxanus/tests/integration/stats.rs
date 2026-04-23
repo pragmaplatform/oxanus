@@ -97,6 +97,36 @@ pub async fn test_stats() -> TestResult {
     assert_eq!(stats.queues[1].failed, 0);
     assert!(stats.queues[1].latency_s > 0.0);
 
+    // stats_queues returns all queues, same as stats().queues
+    let queue_stats = storage.stats_queues().await?;
+    assert_eq!(queue_stats.len(), 2);
+    assert_eq!(queue_stats[0].key, "dynamic");
+    assert_eq!(queue_stats[0].enqueued, 6);
+    assert_eq!(queue_stats[0].queues.len(), 4);
+    assert_eq!(queue_stats[1].key, "static");
+    assert_eq!(queue_stats[1].enqueued, 2);
+
+    // stats_queues_for with a single pattern
+    let queue_stats = storage.stats_queues_for(&["static"]).await?;
+    assert_eq!(queue_stats.len(), 1);
+    assert_eq!(queue_stats[0].key, "static");
+    assert_eq!(queue_stats[0].enqueued, 2);
+
+    // stats_queues_for with a single pattern matching the dynamic queue
+    let queue_stats = storage.stats_queues_for(&["dynamic*"]).await?;
+    assert_eq!(queue_stats.len(), 1);
+    assert_eq!(queue_stats[0].key, "dynamic");
+    assert_eq!(queue_stats[0].enqueued, 6);
+    assert_eq!(queue_stats[0].queues.len(), 4);
+
+    // stats_queues_for with multiple patterns
+    let queue_stats = storage.stats_queues_for(&["static", "dynamic*"]).await?;
+    assert_eq!(queue_stats.len(), 2);
+
+    // stats_queues_for with a pattern matching nothing
+    let queue_stats = storage.stats_queues_for(&["nonexistent"]).await?;
+    assert_eq!(queue_stats.len(), 0);
+
     let stats = oxanus::run(config, ctx).await?;
 
     assert_eq!(stats.processed, 8);
@@ -158,6 +188,27 @@ pub async fn test_stats() -> TestResult {
     assert_eq!(stats.queues[1].panicked, 0);
     assert_eq!(stats.queues[1].failed, 0);
     assert_eq!(stats.queues[1].latency_s, 0.0);
+
+    // stats_queues after processing
+    let queue_stats = storage.stats_queues().await?;
+    assert_eq!(queue_stats.len(), 2);
+    assert_eq!(queue_stats[0].key, "dynamic");
+    assert_eq!(queue_stats[0].processed, 6);
+    assert_eq!(queue_stats[0].succeeded, 6);
+    assert_eq!(queue_stats[0].enqueued, 0);
+    assert_eq!(queue_stats[1].key, "static");
+    assert_eq!(queue_stats[1].processed, 2);
+    assert_eq!(queue_stats[1].succeeded, 2);
+    assert_eq!(queue_stats[1].enqueued, 0);
+
+    // stats_queues_for after processing -- queues are drained so keys no longer
+    // exist in Redis; stats_queues_for only returns stats for queues whose keys
+    // still exist, so these should be empty
+    let queue_stats = storage.stats_queues_for(&["dynamic*"]).await?;
+    assert_eq!(queue_stats.len(), 0);
+
+    let queue_stats = storage.stats_queues_for(&["static"]).await?;
+    assert_eq!(queue_stats.len(), 0);
 
     Ok(())
 }

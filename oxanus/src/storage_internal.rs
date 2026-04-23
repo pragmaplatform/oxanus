@@ -619,15 +619,101 @@ impl StorageInternal {
         Ok(count as usize)
     }
 
+    pub async fn stats_queues_for(
+        &self,
+        patterns: &[&str],
+    ) -> Result<Vec<QueueStats>, OxanusError> {
+        let mut redis = self.connection().await?;
+        let mut matched_queues = Vec::new();
+        for pattern in patterns {
+            matched_queues.extend(self.queues(pattern).await?);
+        }
+        matched_queues.sort();
+        matched_queues.dedup();
+
+        self.build_queue_stats(&mut redis, &matched_queues, true)
+            .await
+    }
+
+    pub async fn stats_queues(&self) -> Result<Vec<QueueStats>, OxanusError> {
+        let mut redis = self.connection().await?;
+        let queues = self.queues("*").await?;
+        self.build_queue_stats(&mut redis, &queues, false).await
+    }
+
     pub async fn stats(&self) -> Result<Stats, OxanusError> {
         let mut redis = self.connection().await?;
+
+        let queues = self.queues("*").await?;
+        let values = self.build_queue_stats(&mut redis, &queues, false).await?;
+
+        let mut processed_count_total = 0;
+        let mut enqueued_count_total = 0;
+        let mut failed_count_total = 0;
+        let mut latency_s_max: f64 = 0.0;
+
+        for value in &values {
+            if value.latency_s > latency_s_max {
+                latency_s_max = value.latency_s;
+            }
+            for dq in &value.queues {
+                if dq.latency_s > latency_s_max {
+                    latency_s_max = dq.latency_s;
+                }
+            }
+            processed_count_total += value.processed;
+            enqueued_count_total += value.enqueued;
+            failed_count_total += value.failed;
+        }
+
+        let processes = self.processes().await?;
+
+        let mut processing = vec![];
+
+        for process in processes.iter() {
+            let processing_queue = self.processing_queue(&process.id());
+            let job_ids: Vec<String> = (*redis).lrange(&processing_queue, 0, -1).await?;
+
+            for job_id in job_ids {
+                if let Some(envelope) = self.get_job(&job_id).await? {
+                    processing.push(StatsProcessing {
+                        process_id: process.id(),
+                        job_envelope: envelope,
+                    });
+                }
+            }
+        }
+
+        Ok(Stats {
+            global: StatsGlobal {
+                jobs: self.jobs_count().await?,
+                enqueued: enqueued_count_total,
+                processed: processed_count_total,
+                failed: failed_count_total,
+                dead: self.dead_count().await?,
+                scheduled: self.scheduled_count().await?,
+                retries: self.retries_count().await?,
+                latency_s_max,
+            },
+            processing,
+            processes,
+            queues: values,
+        })
+    }
+
+    async fn build_queue_stats(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        queues: &[String],
+        filter: bool,
+    ) -> Result<Vec<QueueStats>, OxanusError> {
         let list: HashMap<String, i64> = (*redis).hgetall(&self.keys.stats).await?;
 
         let mut map = HashMap::new();
-        let mut queue_values = Vec::new();
+        let mut queue_values: Vec<(String, String, i64)> = Vec::new();
 
-        for queue in self.queues("*").await? {
-            queue_values.push((queue, "processed".to_string(), 0));
+        for queue in queues {
+            queue_values.push((queue.clone(), "processed".to_string(), 0));
         }
 
         for (key, value) in list {
@@ -641,6 +727,19 @@ impl StorageInternal {
                 Some(queue_key) => queue_key,
                 None => continue,
             };
+
+            if filter {
+                let base_key = queue_full_key
+                    .split_once('#')
+                    .map_or(queue_full_key, |(base, _)| base);
+                let matches = queues.iter().any(|q| {
+                    let q_base = q.split_once('#').map_or(q.as_str(), |(base, _)| base);
+                    q_base == base_key || q == queue_full_key
+                });
+                if !matches {
+                    continue;
+                }
+            }
 
             queue_values.push((queue_full_key.to_string(), stat_key.to_string(), value));
         }
@@ -712,27 +811,17 @@ impl StorageInternal {
 
         let mut values: Vec<QueueStats> = map.into_values().collect();
 
-        let mut processed_count_total = 0;
-        let mut enqueued_count_total = 0;
-        let mut failed_count_total = 0;
-        let mut latency_s_max = 0.0;
-
         for value in values.iter_mut() {
             if value.queues.is_empty() {
-                value.enqueued = self.enqueued_count_w_conn(&mut redis, &value.key).await?;
-                value.latency_s = self.latency_s_w_conn(&mut redis, &value.key).await?;
-                if value.latency_s > latency_s_max {
-                    latency_s_max = value.latency_s;
-                }
+                value.enqueued = self.enqueued_count_w_conn(redis, &value.key).await?;
+                value.latency_s = self.latency_s_w_conn(redis, &value.key).await?;
             } else {
                 for dynamic_queue in value.queues.iter_mut() {
                     let dynamic_queue_key = format!("{}#{}", value.key, dynamic_queue.suffix);
                     let enqueued = self
-                        .enqueued_count_w_conn(&mut redis, &dynamic_queue_key)
+                        .enqueued_count_w_conn(redis, &dynamic_queue_key)
                         .await?;
-                    let latency_s = self
-                        .latency_s_w_conn(&mut redis, &dynamic_queue_key)
-                        .await?;
+                    let latency_s = self.latency_s_w_conn(redis, &dynamic_queue_key).await?;
 
                     dynamic_queue.enqueued = enqueued;
                     dynamic_queue.latency_s = latency_s;
@@ -740,55 +829,16 @@ impl StorageInternal {
                     if value.latency_s < latency_s {
                         value.latency_s = latency_s;
                     }
-                    if dynamic_queue.latency_s > latency_s_max {
-                        latency_s_max = dynamic_queue.latency_s;
-                    }
                     value.enqueued += enqueued;
                 }
             }
-
-            processed_count_total += value.processed;
-            enqueued_count_total += value.enqueued;
-            failed_count_total += value.failed;
 
             value.queues.sort_by(|a, b| a.suffix.cmp(&b.suffix));
         }
 
         values.sort_by(|a, b| a.key.cmp(&b.key));
 
-        let processes = self.processes().await?;
-
-        let mut processing = vec![];
-
-        for process in processes.iter() {
-            let processing_queue = self.processing_queue(&process.id());
-            let job_ids: Vec<String> = (*redis).lrange(&processing_queue, 0, -1).await?;
-
-            for job_id in job_ids {
-                if let Some(envelope) = self.get_job(&job_id).await? {
-                    processing.push(StatsProcessing {
-                        process_id: process.id(),
-                        job_envelope: envelope,
-                    });
-                }
-            }
-        }
-
-        Ok(Stats {
-            global: StatsGlobal {
-                jobs: self.jobs_count().await?,
-                enqueued: enqueued_count_total,
-                processed: processed_count_total,
-                failed: failed_count_total,
-                dead: self.dead_count().await?,
-                scheduled: self.scheduled_count().await?,
-                retries: self.retries_count().await?,
-                latency_s_max,
-            },
-            processing,
-            processes,
-            queues: values,
-        })
+        Ok(values)
     }
 
     pub async fn update_stats(&self, result: JobResult) -> Result<(), OxanusError> {

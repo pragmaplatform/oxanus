@@ -4,7 +4,7 @@ use crate::{
     error::OxanusError,
     job_envelope::{JobEnvelope, JobId},
     queue::Queue,
-    stats::{Process, Stats},
+    stats::{Process, QueueStats, Stats},
     storage_builder::StorageBuilder,
     storage_internal::StorageInternal,
     storage_types::QueueListOpts,
@@ -235,11 +235,39 @@ impl Storage {
         self.internal.delete_job(id).await
     }
 
-    /// Returns the stats for all queues.
+    /// Returns per-queue statistics for queues matching the given patterns.
+    ///
+    /// Each pattern is matched against queue names using the same glob syntax
+    /// as Redis SCAN (e.g. `"email*"`, `"*"`).
+    ///
+    /// # Arguments
+    ///
+    /// * `patterns` - Glob patterns to match queue names against
     ///
     /// # Returns
     ///
-    /// The stats for all queues, or an [`OxanusError`] if the operation fails.
+    /// Statistics for matching queues, or an [`OxanusError`] if the operation fails.
+    pub async fn stats_queues_for(
+        &self,
+        patterns: &[&str],
+    ) -> Result<Vec<QueueStats>, OxanusError> {
+        self.internal.stats_queues_for(patterns).await
+    }
+
+    /// Returns per-queue statistics for all queues.
+    ///
+    /// # Returns
+    ///
+    /// Statistics for all queues, or an [`OxanusError`] if the operation fails.
+    pub async fn stats_queues(&self) -> Result<Vec<QueueStats>, OxanusError> {
+        self.internal.stats_queues().await
+    }
+
+    /// Returns the full stats including global aggregates, processes, and per-queue stats.
+    ///
+    /// # Returns
+    ///
+    /// The full stats, or an [`OxanusError`] if the operation fails.
     pub async fn stats(&self) -> Result<Stats, OxanusError> {
         self.internal.stats().await
     }
