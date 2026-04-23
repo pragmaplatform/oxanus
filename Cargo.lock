@@ -1149,11 +1149,14 @@ version = "1.0.1"
 dependencies = [
  "askama",
  "askama_web",
+ "async-trait",
  "axum",
  "chrono",
  "oxanus",
  "serde",
  "serde_json",
+ "thiserror",
+ "tokio",
  "urlencoding",
  "uuid",
 ]
