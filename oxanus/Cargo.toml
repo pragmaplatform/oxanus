@@ -25,20 +25,19 @@ prometheus = ["prometheus-client"]
 async-trait = "0.1"
 chrono = { version = "^0.4", features = ["serde"] }
 cron = "^0.16"
-deadpool-redis = "^0.22"
-redis = { version = "^1.0", features = ["aio", "tokio-comp"] }
+deadpool-redis = "^0.23"
 futures = { version = "^0.3" }
-gethostname = "^1.0"
+gethostname = "^1.1"
 inventory = { version = "0.3", optional = true }
 prometheus-client = { version = "0.24", optional = true }
 sentry-core = { version = "^0", optional = true }
-serde = { version = "^1.0.218", features = ["derive"] }
+serde = { version = "^1.0", features = ["derive"] }
 serde_json = { version = "^1.0", features = ["preserve_order"] }
 thiserror = "^2.0"
-tokio = { version = "^1.46", features = ["full"] }
+tokio = { version = "^1.52", features = ["full"] }
 tokio-util = { version = "^0.7" }
 tracing = { version = "^0.1", features = ["log"] }
-uuid = { version = "^1.17", features = ["serde", "v4"] }
+uuid = { version = "^1.23", features = ["serde", "v4"] }
 
 oxanus-macros = { workspace = true, optional = true }
 

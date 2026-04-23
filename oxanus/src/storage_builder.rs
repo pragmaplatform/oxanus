@@ -1,3 +1,6 @@
+use deadpool_redis::Hook;
+use std::time::Duration;
+
 use crate::{OxanusError, Storage, storage_internal::StorageInternal};
 
 #[must_use]
@@ -81,7 +84,19 @@ impl StorageBuilder {
             queue_mode: Default::default(),
         });
 
-        let pool = cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))?;
+        let pool = cfg
+            .builder()?
+            .post_create(Hook::sync_fn(|conn, _| {
+                // redis 1.0 introduced a default 500ms response_timeout on
+                // MultiplexedConnection. This causes blocking Redis commands
+                // (BLMOVE, BLPOP, etc.) to time out prematurely. Disable it
+                // so that command-level timeouts govern blocking behavior.
+                conn.set_response_timeout(Duration::from_secs(60));
+                Ok(())
+            }))
+            .runtime(deadpool_redis::Runtime::Tokio1)
+            .build()?;
+
         Ok(Storage {
             internal: StorageInternal::new(pool, self.namespace),
         })
