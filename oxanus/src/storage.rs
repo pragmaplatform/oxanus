@@ -439,12 +439,18 @@ mod tests {
 
         let scheduled_time = chrono::Utc::now() + chrono::Duration::hours(1);
 
-        let job_id = storage.enqueue_at(TestQueue, TestJob {}, scheduled_time).await?;
+        let job_id = storage
+            .enqueue_at(TestQueue, TestJob {}, scheduled_time)
+            .await?;
 
         assert_eq!(storage.enqueued_count(TestQueue).await?, 0);
         assert_eq!(storage.scheduled_count().await?, 1);
 
-        let job = storage.internal.get_job(&job_id).await?.expect("job should exist");
+        let job = storage
+            .internal
+            .get_job(&job_id)
+            .await?
+            .expect("job should exist");
         assert_eq!(
             job.meta.scheduled_at,
             scheduled_time.timestamp_micros(),
