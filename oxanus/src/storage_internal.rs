@@ -1246,11 +1246,22 @@ impl StorageInternal {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Duration;
+    use crate as oxanus;
+    use rand::random;
     use serde::Serialize;
     use testresult::TestResult;
 
     use super::*;
     use crate::test_helper::{random_string, redis_pool};
+
+    #[derive(oxanus::Registry)]
+    #[allow(dead_code)]
+    struct ComponentRegistry(oxanus::ComponentRegistry<(), ()>);
+
+    #[derive(Serialize, oxanus::Queue)]
+    #[oxanus(key = "test")]
+    struct TestQueue;
 
     #[derive(Serialize)]
     struct TestJob {}
@@ -1672,6 +1683,97 @@ mod tests {
         assert_eq!(job.queue, queue);
         assert_eq!(job.job.name, "MyWorker");
         assert_eq!(job.job.args, serde_json::json!({"key": "value"}));
+        assert_eq!(job.meta.retries, 0);
+        assert!(job.meta.error.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_in_envelope() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        let now = chrono::Utc::now().timestamp_micros();
+        let id = uuid::Uuid::new_v4().to_string();
+        let envelope = JobEnvelope {
+            id: id.clone(),
+            queue: queue.clone(),
+            job: crate::job_envelope::JobData {
+                name: "MyWorker".to_string(),
+                args: serde_json::json!({"key": "value"}),
+            },
+            meta: crate::job_envelope::JobMeta {
+                id: id.clone(),
+                retries: 0,
+                unique: false,
+                on_conflict: None,
+                created_at: now,
+                scheduled_at: now,
+                started_at: None,
+                state: None,
+                resurrect: true,
+                error: None,
+                throttle_cost: None,
+            },
+        };
+        let delay_s = 1234;
+        let delay = chrono::Duration::seconds(delay_s).num_microseconds().unwrap();
+
+        let before = chrono::Utc::now().timestamp_micros();
+        let returned_id = storage.enqueue_in(envelope, delay_s as u64).await?;
+        let after = chrono::Utc::now().timestamp_micros();
+        assert_eq!(returned_id, id);
+        assert_eq!(storage.enqueued_count(&queue).await?, 1);
+
+        let job = storage.get_job(&id).await?.expect("job should exist");
+        assert_eq!(job.queue, queue);
+        assert_eq!(job.job.name, "MyWorker");
+        assert_eq!(job.job.args, serde_json::json!({"key": "value"}));
+
+        assert!(job.meta.scheduled_at >= (before + delay));
+        assert!(job.meta.scheduled_at <= (after + delay));
+        assert_eq!(job.meta.retries, 0);
+        assert!(job.meta.error.is_none());
+
+        Ok(())
+    }
+    #[tokio::test]
+    async fn test_envelope_new_scheduled() -> TestResult {
+        let queue = random_string();
+        let scheduled_at = chrono::Utc::now() + chrono::Duration::seconds(random::<i64>());
+
+        let envelope = JobEnvelope::new_scheduled(queue.clone(), TestJob {}, scheduled_at)?;
+
+        assert_eq!(envelope.meta.scheduled_at, scheduled_at.timestamp_micros());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_at_job_envelope() -> TestResult {
+        let storage = crate::Storage::builder().build_from_env()?;
+        let internal_storage = &storage.internal;
+        let queue = random_string();
+
+        let now = chrono::Utc::now().timestamp_micros();
+        let id = uuid::Uuid::new_v4().to_string();
+        let delay = random::<i64>();
+        let scheduled_at = chrono::Utc::now() + chrono::Duration::microseconds(delay);
+
+        let before = chrono::Utc::now().timestamp_micros();
+        let returned_id = storage.enqueue_at(TestQueue, TestJob{}, scheduled_at).await?;
+        let after = chrono::Utc::now().timestamp_micros();
+        assert_eq!(returned_id, id);
+        assert_eq!(internal_storage.enqueued_count(&queue).await?, 1);
+
+        let job = internal_storage.get_job(&id).await?.expect("job should exist");
+        assert_eq!(job.queue, queue);
+        assert_eq!(job.job.name, "MyWorker");
+        assert_eq!(job.job.args, serde_json::json!({"key": "value"}));
+
+        assert!(job.meta.scheduled_at >= before + delay);
+        assert!(job.meta.scheduled_at <= after + delay);
         assert_eq!(job.meta.retries, 0);
         assert!(job.meta.error.is_none());
 
