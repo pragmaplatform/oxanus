@@ -1252,7 +1252,7 @@ impl StorageInternal {
 mod tests {
     use super::*;
     use crate as oxanus;
-    use crate::Queue;
+    use crate::queue::Queue;
     use crate::test_helper::{random_string, redis_pool};
     use rand::RngExt;
     use serde::Serialize;
@@ -1759,7 +1759,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_enqueue_at_job_envelope() -> TestResult {
-        let storage = crate::Storage::builder().build_from_env()?;
+        let storage = crate::test_helper::storage()?;
         let internal_storage = &storage.internal;
 
         let delay = rand::rng().random_range(1_000_000..10_000_000);

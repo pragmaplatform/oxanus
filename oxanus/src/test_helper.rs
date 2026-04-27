@@ -14,3 +14,11 @@ pub async fn redis_pool() -> Result<deadpool_redis::Pool, deadpool_redis::PoolEr
 
     Ok(pool)
 }
+
+pub fn storage() -> Result<crate::Storage, crate::OxanusError> {
+    dotenvy::from_filename(".env.test").ok();
+    let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL is not set");
+    crate::Storage::builder()
+        .namespace(random_string())
+        .build_from_redis_url(redis_url)
+}
