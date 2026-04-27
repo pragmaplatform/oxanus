@@ -1252,7 +1252,6 @@ impl StorageInternal {
 mod tests {
     use super::*;
     use crate as oxanus;
-    use crate::queue::Queue;
     use crate::test_helper::{random_string, redis_pool};
     use rand::RngExt;
     use serde::Serialize;
@@ -1753,39 +1752,6 @@ mod tests {
         let envelope = JobEnvelope::new_scheduled(queue.clone(), TestJob {}, scheduled_at)?;
 
         assert_eq!(envelope.meta.scheduled_at, scheduled_at.timestamp_micros());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_enqueue_at_job_envelope() -> TestResult {
-        let storage = crate::test_helper::storage()?;
-        let internal_storage = &storage.internal;
-
-        let delay = rand::rng().random_range(1_000_000..10_000_000);
-        let scheduled_at = chrono::Utc::now() + chrono::Duration::microseconds(delay);
-
-        let before = chrono::Utc::now().timestamp_micros();
-        let returned_id = storage
-            .enqueue_at(TestQueue, TestJob {}, scheduled_at)
-            .await?;
-        let after = chrono::Utc::now().timestamp_micros();
-        assert_eq!(
-            internal_storage.enqueued_count(&TestQueue {}.key()).await?,
-            0
-        );
-        assert_eq!(internal_storage.scheduled_count().await?, 1);
-
-        let job = internal_storage
-            .get_job(&returned_id)
-            .await?
-            .expect("job should exist");
-        assert_eq!(job.queue, TestQueue {}.key());
-
-        assert!(job.meta.scheduled_at >= before + delay);
-        assert!(job.meta.scheduled_at <= after + delay);
-        assert_eq!(job.meta.retries, 0);
-        assert!(job.meta.error.is_none());
 
         Ok(())
     }

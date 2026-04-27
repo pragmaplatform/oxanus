@@ -408,3 +408,49 @@ impl Storage {
         Ok(PrometheusMetrics::from_stats(&stats))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate as oxanus;
+    use crate::test_helper;
+    use serde::Serialize;
+    use testresult::TestResult;
+
+    #[derive(oxanus::Registry)]
+    #[allow(dead_code)]
+    struct ComponentRegistry(oxanus::ComponentRegistry<(), ()>);
+
+    #[derive(Serialize, oxanus::Queue)]
+    #[oxanus(key = "test")]
+    struct TestQueue;
+
+    #[derive(Serialize)]
+    struct TestJob {}
+
+    impl crate::worker::Job for TestJob {
+        fn worker_name() -> &'static str {
+            "TestJob"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_at_stores_scheduled_at() -> TestResult {
+        let storage = test_helper::storage()?;
+
+        let scheduled_time = chrono::Utc::now() + chrono::Duration::hours(1);
+
+        let job_id = storage.enqueue_at(TestQueue, TestJob {}, scheduled_time).await?;
+
+        assert_eq!(storage.enqueued_count(TestQueue).await?, 0);
+        assert_eq!(storage.scheduled_count().await?, 1);
+
+        let job = storage.internal.get_job(&job_id).await?.expect("job should exist");
+        assert_eq!(
+            job.meta.scheduled_at,
+            scheduled_time.timestamp_micros(),
+            "scheduled_at in job meta should match the requested schedule time"
+        );
+
+        Ok(())
+    }
+}
