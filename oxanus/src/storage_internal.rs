@@ -1251,19 +1251,10 @@ impl StorageInternal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate as oxanus;
     use crate::test_helper::{random_string, redis_pool};
     use rand::RngExt;
     use serde::Serialize;
     use testresult::TestResult;
-
-    #[derive(oxanus::Registry)]
-    #[allow(dead_code)]
-    struct ComponentRegistry(oxanus::ComponentRegistry<(), ()>);
-
-    #[derive(Serialize, oxanus::Queue)]
-    #[oxanus(key = "test")]
-    struct TestQueue;
 
     #[derive(Serialize)]
     struct TestJob {}

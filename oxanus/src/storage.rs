@@ -412,7 +412,6 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use crate as oxanus;
-    use crate::queue::Queue;
     use crate::test_helper;
     use serde::Serialize;
     use testresult::TestResult;
