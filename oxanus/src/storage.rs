@@ -151,11 +151,11 @@ impl Storage {
         job: T,
         time: DateTime<Utc>,
     ) -> Result<JobId, OxanusError> {
-        let envelope = JobEnvelope::new(queue.key().clone(), job)?;
+        let envelope = JobEnvelope::new_scheduled(queue.key().clone(), job, time)?;
 
         tracing::trace!("Scheduling job {:?} at {}", envelope, time);
 
-        self.internal.enqueue_at(envelope, time).await
+        self.internal.enqueue_at(envelope).await
     }
 
     /// Returns the number of jobs currently enqueued in the specified queue.
@@ -406,5 +406,68 @@ impl Storage {
     pub async fn metrics(&self) -> Result<PrometheusMetrics, OxanusError> {
         let stats = self.stats().await?;
         Ok(PrometheusMetrics::from_stats(&stats))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::queue::Queue;
+    use crate::{QueueConfig, QueueKind, test_helper};
+    use serde::Serialize;
+    use testresult::TestResult;
+
+    #[derive(Serialize, Clone, Copy)]
+    struct TestQueue;
+
+    impl Queue for TestQueue {
+        fn key(&self) -> String {
+            "test".to_string()
+        }
+
+        fn to_config() -> QueueConfig {
+            QueueConfig {
+                kind: QueueKind::Static {
+                    key: "test".to_string(),
+                },
+                concurrency: 1,
+                throttle: None,
+            }
+        }
+    }
+
+    #[derive(Serialize)]
+    struct TestJob {}
+
+    impl crate::worker::Job for TestJob {
+        fn worker_name() -> &'static str {
+            "TestJob"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_at_stores_scheduled_at() -> TestResult {
+        let storage = test_helper::storage()?;
+
+        let scheduled_time = chrono::Utc::now() + chrono::Duration::hours(1);
+
+        let job_id = storage
+            .enqueue_at(TestQueue, TestJob {}, scheduled_time)
+            .await?;
+
+        assert_eq!(storage.enqueued_count(TestQueue).await?, 0);
+        assert_eq!(storage.scheduled_count().await?, 1);
+
+        let job = storage
+            .internal
+            .get_job(&job_id)
+            .await?
+            .expect("job should exist");
+        assert_eq!(
+            job.meta.scheduled_at,
+            scheduled_time.timestamp_micros(),
+            "scheduled_at in job meta should match the requested schedule time"
+        );
+
+        Ok(())
     }
 }

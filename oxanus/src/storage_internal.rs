@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use deadpool_redis::redis::{self, AsyncCommands};
 use std::{
     collections::{HashMap, HashSet},
@@ -189,16 +188,12 @@ impl StorageInternal {
             self.enqueue(envelope).await
         } else {
             let time = chrono::Utc::now() + chrono::Duration::seconds(delay_s as i64);
-            self.enqueue_at(envelope, time).await
+            self.enqueue_at(envelope.with_scheduled_at(time)).await
         }
     }
 
-    pub async fn enqueue_at(
-        &self,
-        envelope: JobEnvelope,
-        time: DateTime<Utc>,
-    ) -> Result<JobId, OxanusError> {
-        if time <= chrono::Utc::now() {
+    pub async fn enqueue_at(&self, envelope: JobEnvelope) -> Result<JobId, OxanusError> {
+        if envelope.meta.scheduled_at <= chrono::Utc::now().timestamp_micros() {
             return self.enqueue(envelope).await;
         }
 
@@ -219,7 +214,11 @@ impl StorageInternal {
                         &envelope.id,
                         serde_json::to_string(&envelope)?,
                     )
-                    .zadd(&self.keys.schedule, &envelope.id, time.timestamp_micros())
+                    .zadd(
+                        &self.keys.schedule,
+                        &envelope.id,
+                        envelope.meta.scheduled_at,
+                    )
                     .query_async(&mut redis)
                     .await?;
             }
@@ -230,7 +229,11 @@ impl StorageInternal {
                         &envelope.id,
                         serde_json::to_string(&envelope)?,
                     )
-                    .zadd(&self.keys.schedule, &envelope.id, time.timestamp_micros())
+                    .zadd(
+                        &self.keys.schedule,
+                        &envelope.id,
+                        envelope.meta.scheduled_at,
+                    )
                     .query_async(&mut redis)
                     .await?;
             }
@@ -1084,7 +1087,7 @@ impl StorageInternal {
                     cron_job.resurrect,
                 )?;
 
-                match self.track_redis_result(self.enqueue_at(envelope, next).await)? {
+                match self.track_redis_result(self.enqueue_at(envelope).await)? {
                     Some(_) => break,
                     None => {
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -1247,11 +1250,11 @@ impl StorageInternal {
 
 #[cfg(test)]
 mod tests {
-    use serde::Serialize;
-    use testresult::TestResult;
-
     use super::*;
     use crate::test_helper::{random_string, redis_pool};
+    use rand::RngExt;
+    use serde::Serialize;
+    use testresult::TestResult;
 
     #[derive(Serialize)]
     struct TestJob {}
@@ -1675,6 +1678,71 @@ mod tests {
         assert_eq!(job.job.args, serde_json::json!({"key": "value"}));
         assert_eq!(job.meta.retries, 0);
         assert!(job.meta.error.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_in_envelope() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        let now = chrono::Utc::now().timestamp_micros();
+        let id = uuid::Uuid::new_v4().to_string();
+        let envelope = JobEnvelope {
+            id: id.clone(),
+            queue: queue.clone(),
+            job: crate::job_envelope::JobData {
+                name: "MyWorker".to_string(),
+                args: serde_json::json!({"key": "value"}),
+            },
+            meta: crate::job_envelope::JobMeta {
+                id: id.clone(),
+                retries: 0,
+                unique: false,
+                on_conflict: None,
+                created_at: now,
+                scheduled_at: now,
+                started_at: None,
+                state: None,
+                resurrect: true,
+                error: None,
+                throttle_cost: None,
+            },
+        };
+        let delay_s = rand::rng().random_range(1..3600);
+        let delay = chrono::Duration::seconds(delay_s)
+            .num_microseconds()
+            .unwrap();
+
+        let before = chrono::Utc::now().timestamp_micros();
+        let returned_id = storage.enqueue_in(envelope, delay_s as u64).await?;
+        let after = chrono::Utc::now().timestamp_micros();
+        assert_eq!(returned_id, id);
+        assert_eq!(storage.enqueued_count(&queue).await?, 0);
+        assert_eq!(storage.scheduled_count().await?, 1);
+
+        let job = storage.get_job(&id).await?.expect("job should exist");
+        assert_eq!(job.queue, queue);
+        assert_eq!(job.job.name, "MyWorker");
+        assert_eq!(job.job.args, serde_json::json!({"key": "value"}));
+
+        assert!(job.meta.scheduled_at >= (before + delay));
+        assert!(job.meta.scheduled_at <= (after + delay));
+        assert_eq!(job.meta.retries, 0);
+        assert!(job.meta.error.is_none());
+
+        Ok(())
+    }
+    #[tokio::test]
+    async fn test_envelope_new_scheduled() -> TestResult {
+        let queue = random_string();
+        let delay_s = rand::rng().random_range(1..3600);
+        let scheduled_at = chrono::Utc::now() + chrono::Duration::seconds(delay_s);
+
+        let envelope = JobEnvelope::new_scheduled(queue.clone(), TestJob {}, scheduled_at)?;
+
+        assert_eq!(envelope.meta.scheduled_at, scheduled_at.timestamp_micros());
 
         Ok(())
     }
