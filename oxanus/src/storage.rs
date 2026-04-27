@@ -412,7 +412,7 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use crate::queue::Queue;
-    use crate::{test_helper, QueueConfig, QueueKind};
+    use crate::{QueueConfig, QueueKind, test_helper};
     use serde::Serialize;
     use testresult::TestResult;
 
@@ -425,8 +425,10 @@ mod tests {
         }
 
         fn to_config() -> QueueConfig {
-            QueueConfig{
-                kind: QueueKind::Static{ key: "test".to_string() },
+            QueueConfig {
+                kind: QueueKind::Static {
+                    key: "test".to_string(),
+                },
                 concurrency: 1,
                 throttle: None,
             }
