@@ -411,18 +411,27 @@ impl Storage {
 
 #[cfg(test)]
 mod tests {
-    use crate as oxanus;
-    use crate::test_helper;
+    use crate::queue::Queue;
+    use crate::{test_helper, QueueConfig, QueueKind};
     use serde::Serialize;
     use testresult::TestResult;
 
-    #[derive(oxanus::Registry)]
-    #[allow(dead_code)]
-    struct ComponentRegistry(oxanus::ComponentRegistry<(), ()>);
-
-    #[derive(Serialize, oxanus::Queue)]
-    #[oxanus(key = "test")]
+    #[derive(Serialize, Clone, Copy)]
     struct TestQueue;
+
+    impl Queue for TestQueue {
+        fn key(&self) -> String {
+            "test".to_string()
+        }
+
+        fn to_config() -> QueueConfig {
+            QueueConfig{
+                kind: QueueKind::Static{ key: "test".to_string() },
+                concurrency: 1,
+                throttle: None,
+            }
+        }
+    }
 
     #[derive(Serialize)]
     struct TestJob {}
