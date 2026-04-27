@@ -193,10 +193,7 @@ impl StorageInternal {
         }
     }
 
-    pub async fn enqueue_at(
-        &self,
-        envelope: JobEnvelope,
-    ) -> Result<JobId, OxanusError> {
+    pub async fn enqueue_at(&self, envelope: JobEnvelope) -> Result<JobId, OxanusError> {
         if envelope.meta.scheduled_at <= chrono::Utc::now().timestamp_micros() {
             return self.enqueue(envelope).await;
         }
@@ -218,7 +215,11 @@ impl StorageInternal {
                         &envelope.id,
                         serde_json::to_string(&envelope)?,
                     )
-                    .zadd(&self.keys.schedule, &envelope.id, envelope.meta.scheduled_at)
+                    .zadd(
+                        &self.keys.schedule,
+                        &envelope.id,
+                        envelope.meta.scheduled_at,
+                    )
                     .query_async(&mut redis)
                     .await?;
             }
@@ -229,7 +230,11 @@ impl StorageInternal {
                         &envelope.id,
                         serde_json::to_string(&envelope)?,
                     )
-                    .zadd(&self.keys.schedule, &envelope.id, envelope.meta.scheduled_at)
+                    .zadd(
+                        &self.keys.schedule,
+                        &envelope.id,
+                        envelope.meta.scheduled_at,
+                    )
                     .query_async(&mut redis)
                     .await?;
             }
@@ -1246,14 +1251,14 @@ impl StorageInternal {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Duration;
+    use super::*;
     use crate as oxanus;
-    use rand::{random, Rng, RngExt};
+    use crate::Queue;
+    use crate::test_helper::{random_string, redis_pool};
+    use chrono::Duration;
+    use rand::{Rng, RngExt, random};
     use serde::Serialize;
     use testresult::TestResult;
-    use crate::Queue;
-    use super::*;
-    use crate::test_helper::{random_string, redis_pool};
 
     #[derive(oxanus::Registry)]
     #[allow(dead_code)]
@@ -1718,7 +1723,9 @@ mod tests {
             },
         };
         let delay_s = rand::rng().random_range(1..3600);
-        let delay = chrono::Duration::seconds(delay_s).num_microseconds().unwrap();
+        let delay = chrono::Duration::seconds(delay_s)
+            .num_microseconds()
+            .unwrap();
 
         let before = chrono::Utc::now().timestamp_micros();
         let returned_id = storage.enqueue_in(envelope, delay_s as u64).await?;
@@ -1761,12 +1768,17 @@ mod tests {
         let scheduled_at = chrono::Utc::now() + chrono::Duration::microseconds(delay);
 
         let before = chrono::Utc::now().timestamp_micros();
-        let returned_id = storage.enqueue_at(TestQueue, TestJob{}, scheduled_at).await?;
+        let returned_id = storage
+            .enqueue_at(TestQueue, TestJob {}, scheduled_at)
+            .await?;
         let after = chrono::Utc::now().timestamp_micros();
         assert_eq!(internal_storage.enqueued_count(&TestQueue.key()).await?, 0);
         assert_eq!(internal_storage.scheduled_count().await?, 1);
 
-        let job = internal_storage.get_job(&returned_id).await?.expect("job should exist");
+        let job = internal_storage
+            .get_job(&returned_id)
+            .await?
+            .expect("job should exist");
         assert_eq!(job.queue, TestQueue.key());
 
         assert!(job.meta.scheduled_at >= before + delay);
