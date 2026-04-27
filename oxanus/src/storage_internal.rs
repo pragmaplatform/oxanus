@@ -1248,7 +1248,7 @@ impl StorageInternal {
 mod tests {
     use chrono::Duration;
     use crate as oxanus;
-    use rand::random;
+    use rand::{random, Rng, RngExt};
     use serde::Serialize;
     use testresult::TestResult;
 
@@ -1717,7 +1717,7 @@ mod tests {
                 throttle_cost: None,
             },
         };
-        let delay_s = 1234;
+        let delay_s = rand::rng().random_range(1..3600);
         let delay = chrono::Duration::seconds(delay_s).num_microseconds().unwrap();
 
         let before = chrono::Utc::now().timestamp_micros();
@@ -1741,7 +1741,8 @@ mod tests {
     #[tokio::test]
     async fn test_envelope_new_scheduled() -> TestResult {
         let queue = random_string();
-        let scheduled_at = chrono::Utc::now() + chrono::Duration::seconds(random::<i64>());
+        let delay_s = rand::rng().random_range(1..3600);
+        let scheduled_at = chrono::Utc::now() + chrono::Duration::seconds(delay_s);
 
         let envelope = JobEnvelope::new_scheduled(queue.clone(), TestJob {}, scheduled_at)?;
 
@@ -1758,7 +1759,7 @@ mod tests {
 
         let now = chrono::Utc::now().timestamp_micros();
         let id = uuid::Uuid::new_v4().to_string();
-        let delay = random::<i64>();
+        let delay = rand::rng().random_range(1..1_000_000);
         let scheduled_at = chrono::Utc::now() + chrono::Duration::microseconds(delay);
 
         let before = chrono::Utc::now().timestamp_micros();
