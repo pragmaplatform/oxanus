@@ -1251,7 +1251,7 @@ mod tests {
     use rand::{random, Rng, RngExt};
     use serde::Serialize;
     use testresult::TestResult;
-
+    use crate::Queue;
     use super::*;
     use crate::test_helper::{random_string, redis_pool};
 
@@ -1724,7 +1724,7 @@ mod tests {
         let returned_id = storage.enqueue_in(envelope, delay_s as u64).await?;
         let after = chrono::Utc::now().timestamp_micros();
         assert_eq!(returned_id, id);
-        assert_eq!(storage.enqueued_count(&queue).await?, 1);
+        assert_eq!(storage.enqueued_count(&queue).await?, 0);
 
         let job = storage.get_job(&id).await?.expect("job should exist");
         assert_eq!(job.queue, queue);
@@ -1755,23 +1755,17 @@ mod tests {
     async fn test_enqueue_at_job_envelope() -> TestResult {
         let storage = crate::Storage::builder().build_from_env()?;
         let internal_storage = &storage.internal;
-        let queue = random_string();
 
-        let now = chrono::Utc::now().timestamp_micros();
-        let id = uuid::Uuid::new_v4().to_string();
-        let delay = rand::rng().random_range(1..1_000_000);
+        let delay = rand::rng().random_range(1_000_000..10_000_000);
         let scheduled_at = chrono::Utc::now() + chrono::Duration::microseconds(delay);
 
         let before = chrono::Utc::now().timestamp_micros();
         let returned_id = storage.enqueue_at(TestQueue, TestJob{}, scheduled_at).await?;
         let after = chrono::Utc::now().timestamp_micros();
-        assert_eq!(returned_id, id);
-        assert_eq!(internal_storage.enqueued_count(&queue).await?, 1);
+        assert_eq!(internal_storage.enqueued_count(&TestQueue.key()).await?, 0);
 
-        let job = internal_storage.get_job(&id).await?.expect("job should exist");
-        assert_eq!(job.queue, queue);
-        assert_eq!(job.job.name, "MyWorker");
-        assert_eq!(job.job.args, serde_json::json!({"key": "value"}));
+        let job = internal_storage.get_job(&returned_id).await?.expect("job should exist");
+        assert_eq!(job.queue, TestQueue.key());
 
         assert!(job.meta.scheduled_at >= before + delay);
         assert!(job.meta.scheduled_at <= after + delay);
