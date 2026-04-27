@@ -189,16 +189,15 @@ impl StorageInternal {
             self.enqueue(envelope).await
         } else {
             let time = chrono::Utc::now() + chrono::Duration::seconds(delay_s as i64);
-            self.enqueue_at(envelope, time).await
+            self.enqueue_at(envelope.with_scheduled_at(time)).await
         }
     }
 
     pub async fn enqueue_at(
         &self,
         envelope: JobEnvelope,
-        time: DateTime<Utc>,
     ) -> Result<JobId, OxanusError> {
-        if time <= chrono::Utc::now() {
+        if envelope.meta.scheduled_at <= chrono::Utc::now().timestamp_micros() {
             return self.enqueue(envelope).await;
         }
 
@@ -219,7 +218,7 @@ impl StorageInternal {
                         &envelope.id,
                         serde_json::to_string(&envelope)?,
                     )
-                    .zadd(&self.keys.schedule, &envelope.id, time.timestamp_micros())
+                    .zadd(&self.keys.schedule, &envelope.id, envelope.meta.scheduled_at)
                     .query_async(&mut redis)
                     .await?;
             }
@@ -230,7 +229,7 @@ impl StorageInternal {
                         &envelope.id,
                         serde_json::to_string(&envelope)?,
                     )
-                    .zadd(&self.keys.schedule, &envelope.id, time.timestamp_micros())
+                    .zadd(&self.keys.schedule, &envelope.id, envelope.meta.scheduled_at)
                     .query_async(&mut redis)
                     .await?;
             }
@@ -1084,7 +1083,7 @@ impl StorageInternal {
                     cron_job.resurrect,
                 )?;
 
-                match self.track_redis_result(self.enqueue_at(envelope, next).await)? {
+                match self.track_redis_result(self.enqueue_at(envelope).await)? {
                     Some(_) => break,
                     None => {
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;

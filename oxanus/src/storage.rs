@@ -155,7 +155,7 @@ impl Storage {
 
         tracing::trace!("Scheduling job {:?} at {}", envelope, time);
 
-        self.internal.enqueue_at(envelope, time).await
+        self.internal.enqueue_at(envelope).await
     }
 
     /// Returns the number of jobs currently enqueued in the specified queue.

@@ -97,9 +97,7 @@ impl JobEnvelope {
         job: T,
         scheduled_at: DateTime<Utc>,
     ) -> Result<Self, OxanusError> {
-        let mut new_job_envelope = Self::new(queue, job)?;
-        new_job_envelope.meta.scheduled_at = scheduled_at.timestamp_micros();
-        Ok(new_job_envelope)
+        Ok(Self::new(queue, job)?.with_scheduled_at(scheduled_at))
     }
 
     pub(crate) fn new_cron(
@@ -130,6 +128,11 @@ impl JobEnvelope {
                 throttle_cost: None,
             },
         })
+    }
+
+    pub(crate) fn with_scheduled_at(mut self, scheduled_at: DateTime<Utc>) -> Self {
+        self.meta.scheduled_at = scheduled_at.timestamp_micros();
+        self
     }
 
     pub(crate) fn with_error(mut self, error: String) -> Self {
