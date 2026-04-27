@@ -92,6 +92,16 @@ impl JobEnvelope {
         })
     }
 
+    pub(crate) fn new_scheduled<T: Job>(
+        queue: String,
+        job: T,
+        scheduled_at: DateTime<Utc>,
+    ) -> Result<Self, OxanusError> {
+        let mut new_job_envelope = Self::new(queue, job)?;
+        new_job_envelope.meta.scheduled_at = scheduled_at.timestamp_micros();
+        Ok(new_job_envelope)
+    }
+
     pub(crate) fn new_cron(
         queue: String,
         id: String,

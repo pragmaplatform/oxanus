@@ -151,7 +151,7 @@ impl Storage {
         job: T,
         time: DateTime<Utc>,
     ) -> Result<JobId, OxanusError> {
-        let envelope = JobEnvelope::new(queue.key().clone(), job)?;
+        let envelope = JobEnvelope::new_scheduled(queue.key().clone(), job, time)?;
 
         tracing::trace!("Scheduling job {:?} at {}", envelope, time);
 
