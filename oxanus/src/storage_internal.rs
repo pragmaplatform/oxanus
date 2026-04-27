@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use deadpool_redis::redis::{self, AsyncCommands};
 use std::{
     collections::{HashMap, HashSet},
@@ -1255,8 +1254,7 @@ mod tests {
     use crate as oxanus;
     use crate::Queue;
     use crate::test_helper::{random_string, redis_pool};
-    use chrono::Duration;
-    use rand::{Rng, RngExt, random};
+    use rand::RngExt;
     use serde::Serialize;
     use testresult::TestResult;
 
@@ -1772,14 +1770,14 @@ mod tests {
             .enqueue_at(TestQueue, TestJob {}, scheduled_at)
             .await?;
         let after = chrono::Utc::now().timestamp_micros();
-        assert_eq!(internal_storage.enqueued_count(&TestQueue.key()).await?, 0);
+        assert_eq!(internal_storage.enqueued_count(&TestQueue{}.key()).await?, 0);
         assert_eq!(internal_storage.scheduled_count().await?, 1);
 
         let job = internal_storage
             .get_job(&returned_id)
             .await?
             .expect("job should exist");
-        assert_eq!(job.queue, TestQueue.key());
+        assert_eq!(job.queue, TestQueue{}.key());
 
         assert!(job.meta.scheduled_at >= before + delay);
         assert!(job.meta.scheduled_at <= after + delay);
