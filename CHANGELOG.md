@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0]
+
+### Added
+
+- Scheduled jobs example
+
+### Changed
+
+- Update dependencies, including `deadpool-redis` to 0.23, and adjust Redis connection response timeout handling for blocking commands
+
+### Fixed
+
+- Store `scheduled_at` in job metadata when scheduling jobs with `enqueue_at`
+
 ## [1.0.5]
 
 ### Added
