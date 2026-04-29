@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1]
+
+### Fixed
+
+- Clamp scheduled jobs to the current time when a past timestamp is provided.
+
 ## [1.1.0]
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "oxanus"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 license = "MIT"
 description = "A simple & fast job queue system."
