@@ -107,6 +107,7 @@ impl JobEnvelope {
         scheduled_at: i64,
         resurrect: bool,
     ) -> Result<Self, OxanusError> {
+        let now = chrono::Utc::now().timestamp_micros();
         Ok(Self {
             id: id.clone(),
             queue,
@@ -119,8 +120,8 @@ impl JobEnvelope {
                 retries: 0,
                 unique: true,
                 on_conflict: Some(JobConflictStrategy::Skip),
-                created_at: chrono::Utc::now().timestamp_micros(),
-                scheduled_at,
+                created_at: now,
+                scheduled_at: scheduled_at.max(now),
                 started_at: None,
                 state: None,
                 resurrect,
@@ -131,7 +132,8 @@ impl JobEnvelope {
     }
 
     pub(crate) fn with_scheduled_at(mut self, scheduled_at: DateTime<Utc>) -> Self {
-        self.meta.scheduled_at = scheduled_at.timestamp_micros();
+        let now = chrono::Utc::now().timestamp_micros();
+        self.meta.scheduled_at = scheduled_at.timestamp_micros().max(now);
         self
     }
 
@@ -321,6 +323,55 @@ mod tests {
         assert_eq!(retried.meta.retries, 1);
         assert!(retried.meta.started_at.is_none());
         assert_eq!(retried.meta.error.as_deref(), Some("something went wrong"));
+    }
+
+    #[test]
+    fn test_cannot_schedule_in_past() {
+        let envelope = JobEnvelope {
+            id: "test".to_string(),
+            queue: "default".to_string(),
+            job: JobData {
+                name: "TestJob".to_string(),
+                args: serde_json::json!({}),
+            },
+            meta: JobMeta {
+                id: "test".to_string(),
+                retries: 0,
+                unique: false,
+                on_conflict: None,
+                created_at: 1_000_000,
+                scheduled_at: 1_000_000,
+                started_at: None,
+                state: None,
+                resurrect: true,
+                error: None,
+                throttle_cost: None,
+            },
+        };
+        let past = Utc::now() - chrono::Duration::hours(1);
+
+        let envelope = envelope.with_scheduled_at(past);
+
+        let drift_micros = Utc::now().timestamp_micros() - envelope.meta.scheduled_at;
+        assert!(drift_micros >= 0);
+        assert!(drift_micros < 1_000_000);
+    }
+
+    #[test]
+    fn test_cannot_schedule_cron_in_past() {
+        let past = Utc::now().timestamp_micros() - 3_600_000_000;
+        let envelope = JobEnvelope::new_cron(
+            "default".to_string(),
+            "cron-job-1".to_string(),
+            "CronJob".to_string(),
+            past,
+            true,
+        )
+        .unwrap();
+
+        let drift_micros = Utc::now().timestamp_micros() - envelope.meta.scheduled_at;
+        assert!(drift_micros >= 0);
+        assert!(drift_micros < 1_000_000);
     }
 
     #[test]
