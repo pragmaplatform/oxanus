@@ -4,9 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Add `#[derive(oxanus::Job)]` for defining enqueue-time job metadata, including unique IDs, conflict strategy, resurrection behavior, throttle cost, and worker binding.
+
 ### Changed
 
 - Replace runtime Redis `KEYS` calls with cursor-based `SCAN` for queue discovery and orphaned processing queue recovery.
+- Move job-specific derive attributes (`unique_id`, `on_conflict`, `resurrect`, and `throttle_cost`) from `#[derive(oxanus::Worker)]` to `#[derive(oxanus::Job)]`; `Self::...` in job hooks now resolves to the job type.
 
 ## [1.1.1]
 
