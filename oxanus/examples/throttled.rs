@@ -10,33 +10,33 @@ enum WorkerError {}
 #[derive(Debug, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize)]
-struct WorkerInstantJob {}
+#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+struct InstantJob {}
 
 #[derive(oxanus::Worker)]
-struct WorkerInstant;
+struct InstantWorker;
 
-impl WorkerInstant {
+impl InstantWorker {
     async fn process(
         &self,
-        _job: &WorkerInstantJob,
+        _job: &InstantJob,
         _ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
         Ok(())
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct WorkerInstant2Job {}
+#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+#[oxanus(throttle_cost = 2)]
+struct Instant2Job {}
 
 #[derive(oxanus::Worker)]
-#[oxanus(throttle_cost = 2)]
-struct WorkerInstant2;
+struct Instant2Worker;
 
-impl WorkerInstant2 {
+impl Instant2Worker {
     async fn process(
         &self,
-        _job: &WorkerInstant2Job,
+        _job: &Instant2Job,
         _ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
         Ok(())
@@ -59,18 +59,14 @@ pub async fn main() -> Result<(), oxanus::OxanusError> {
     let storage = oxanus::Storage::builder().build_from_env()?;
     let config = ComponentRegistry::build_config(&storage).exit_when_processed(8);
 
-    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
-    storage
-        .enqueue(QueueThrottled, WorkerInstant2Job {})
-        .await?;
-    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
-    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
-    storage
-        .enqueue(QueueThrottled, WorkerInstant2Job {})
-        .await?;
-    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
-    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
-    storage.enqueue(QueueThrottled, WorkerInstantJob {}).await?;
+    storage.enqueue(QueueThrottled, InstantJob {}).await?;
+    storage.enqueue(QueueThrottled, Instant2Job {}).await?;
+    storage.enqueue(QueueThrottled, InstantJob {}).await?;
+    storage.enqueue(QueueThrottled, InstantJob {}).await?;
+    storage.enqueue(QueueThrottled, Instant2Job {}).await?;
+    storage.enqueue(QueueThrottled, InstantJob {}).await?;
+    storage.enqueue(QueueThrottled, InstantJob {}).await?;
+    storage.enqueue(QueueThrottled, InstantJob {}).await?;
 
     oxanus::run(config, ctx).await?;
 

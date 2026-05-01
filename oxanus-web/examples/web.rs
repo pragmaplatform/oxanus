@@ -11,7 +11,7 @@ enum WorkerError {}
 #[derive(Debug, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
 struct PingJob {
     target: String,
 }

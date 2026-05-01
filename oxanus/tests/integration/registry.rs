@@ -10,7 +10,8 @@ struct ComponentRegistry(oxanus::ComponentRegistry<WorkerContext, WorkerError>);
 #[oxanus(key = "two")]
 struct QueueTwo;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+#[oxanus(worker = WorkerCounter)]
 pub struct WorkerCounterJob {
     pub key: String,
 }
@@ -32,7 +33,8 @@ impl WorkerCounter {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+#[oxanus(worker = CronWorkerCounter)]
 pub struct CronWorkerCounterJob {}
 
 #[derive(oxanus::Worker)]

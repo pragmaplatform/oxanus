@@ -125,4 +125,4 @@ pub use crate::worker_registry::{WorkerConfig, WorkerConfigKind, job_factory};
 pub use registry::*;
 
 #[cfg(feature = "macros")]
-pub use oxanus_macros::{Queue, Registry, Worker};
+pub use oxanus_macros::{Job, Queue, Registry, Worker};

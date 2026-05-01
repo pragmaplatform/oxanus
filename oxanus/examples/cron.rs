@@ -10,12 +10,12 @@ enum WorkerError {}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+#[oxanus(resurrect = false)]
 struct TestJob {}
 
 #[derive(oxanus::Worker)]
 #[oxanus(context = WorkerContext)]
-#[oxanus(resurrect = false)]
 #[oxanus(cron(schedule = "*/5 * * * * *", queue = QueueOne))]
 struct TestWorker;
 

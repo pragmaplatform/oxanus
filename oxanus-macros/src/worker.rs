@@ -2,9 +2,7 @@ use darling::{Error, FromDeriveInput, FromMeta};
 use proc_macro_error2::{abort, emit_error};
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{
-    Data, DeriveInput, Expr, Fields, Ident, LitStr, Meta, Path, Token, punctuated::Punctuated,
-};
+use syn::{Data, DeriveInput, Expr, Fields, Ident, Meta, Path};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(oxanus), supports(struct_any))]
@@ -15,26 +13,7 @@ struct OxanusArgs {
     registry: Option<Path>,
     max_retries: Option<MaxRetries>,
     retry_delay: Option<RetryDelay>,
-    unique_id: Option<UniqueIdSpec>,
-    on_conflict: Option<Ident>,
     cron: Option<Cron>,
-    resurrect: Option<bool>,
-    throttle_cost: Option<ThrottleCost>,
-}
-
-#[derive(Debug)]
-enum UniqueIdSpec {
-    /// #[unique_id = "job_{id}"]
-    Shorthand(LitStr),
-
-    /// #[unique_id(fmt = "...", name = expr, ...)]
-    NamedFormatter {
-        fmt: LitStr,
-        args: Vec<(syn::Ident, Expr)>,
-    },
-
-    /// #[unique_id = mymod::func]
-    CustomFunc(Path),
 }
 
 #[derive(Debug)]
@@ -50,14 +29,6 @@ enum RetryDelay {
     /// #[retry_delay = 3]
     Value(u64),
     /// #[retry_delay = mymod::func]
-    CustomFunc(Path),
-}
-
-#[derive(Debug)]
-enum ThrottleCost {
-    /// #[throttle_cost = 2]
-    Value(u64),
-    /// #[throttle_cost = Self::throttle_cost]
     CustomFunc(Path),
 }
 
@@ -98,87 +69,6 @@ macro_rules! impl_from_meta_for_num_or_path {
 
 impl_from_meta_for_num_or_path!(MaxRetries, u32, "max_retries");
 impl_from_meta_for_num_or_path!(RetryDelay, u64, "retry_delay");
-impl_from_meta_for_num_or_path!(ThrottleCost, u64, "throttle_cost");
-
-impl FromMeta for UniqueIdSpec {
-    fn from_meta(meta: &Meta) -> darling::Result<Self> {
-        match meta {
-            Meta::NameValue(nv) => match &nv.value {
-                Expr::Lit(expr_lit) => {
-                    if let syn::Lit::Str(s) = &expr_lit.lit {
-                        Ok(UniqueIdSpec::Shorthand(s.clone()))
-                    } else {
-                        Err(Error::custom("unique_id must be a string literal"))
-                    }
-                }
-                Expr::Path(expr_path) => Ok(UniqueIdSpec::CustomFunc(expr_path.path.clone())),
-                _ => Err(Error::custom("Expected string literal or type path.")),
-            },
-            Meta::List(list) => {
-                let mut fmt = None;
-                let mut args = Vec::new();
-
-                let metas =
-                    list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
-
-                for meta in metas {
-                    match meta {
-                        Meta::NameValue(nv) if nv.path.is_ident("fmt") => {
-                            #[allow(clippy::collapsible_if)] // requires 1.88
-                            if let syn::Expr::Lit(expr_lit) = nv.value {
-                                if let syn::Lit::Str(s) = expr_lit.lit {
-                                    fmt = Some(s);
-                                    continue;
-                                }
-                            }
-                            return Err(Error::custom("fmt must be a string literal"));
-                        }
-
-                        Meta::NameValue(nv) => {
-                            let ident = nv
-                                .path
-                                .get_ident()
-                                .ok_or_else(|| Error::custom("expected identifier"))?
-                                .clone();
-                            args.push((ident, nv.value));
-                        }
-
-                        _ => return Err(Error::custom("Unsupported unique_id syntax")),
-                    }
-                }
-
-                let fmt = fmt.ok_or_else(|| Error::custom("missing fmt = \"...\""))?;
-                Ok(UniqueIdSpec::NamedFormatter { fmt, args })
-            }
-            _ => Err(Error::custom("Invalid unique_id attribute")),
-        }
-    }
-}
-
-fn extract_format_placeholders(fmt_str: &str) -> Vec<syn::Ident> {
-    let mut seen = std::collections::HashSet::new();
-    let mut result = Vec::new();
-    let mut chars = fmt_str.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '{' {
-            let mut name = String::new();
-            for inner in chars.by_ref() {
-                if inner == '}' {
-                    break;
-                }
-                name.push(inner);
-            }
-            if !name.is_empty()
-                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                && !name.starts_with(|c: char| c.is_ascii_digit())
-                && seen.insert(name.clone())
-            {
-                result.push(syn::Ident::new(&name, proc_macro2::Span::call_site()));
-            }
-        }
-    }
-    result
-}
 
 pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
     let args = match OxanusArgs::from_derive_input(&input) {
@@ -211,14 +101,12 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
     };
 
     let worker_impl = expand_worker_impl(struct_ident, &type_args, &type_error, &args);
-    let job_impl = expand_job_impl(struct_ident, &type_args, &args);
     let from_context_impl = expand_from_context_impl(struct_ident, &type_context, &input);
     let registry_impl =
         expand_registry(struct_ident, &type_args, &type_context, &type_error, &args);
 
     quote! {
         #worker_impl
-        #job_impl
         #from_context_impl
         #registry_impl
     }
@@ -260,53 +148,6 @@ fn expand_worker_impl(
             #retry_delay
 
             #cron
-        }
-    }
-}
-
-fn expand_job_impl(
-    struct_ident: &Ident,
-    type_args: &TokenStream,
-    args: &OxanusArgs,
-) -> TokenStream {
-    let unique_id = match &args.unique_id {
-        Some(unique_id) => expand_unique_id(unique_id),
-        None => quote!(),
-    };
-
-    let on_conflict = match &args.on_conflict {
-        Some(on_conflict) => quote! {
-            fn on_conflict(&self) -> oxanus::JobConflictStrategy {
-                oxanus::JobConflictStrategy::#on_conflict
-            }
-        },
-        None => quote!(),
-    };
-
-    let resurrect = expand_resurrect(args.resurrect);
-
-    let throttle_cost = match &args.throttle_cost {
-        Some(throttle_cost) => expand_throttle_cost(throttle_cost),
-        None => quote!(),
-    };
-
-    quote! {
-        #[automatically_derived]
-        impl oxanus::Job for #type_args {
-            fn worker_name() -> &'static str
-            where
-                Self: Sized,
-            {
-                std::any::type_name::<#struct_ident>()
-            }
-
-            #unique_id
-
-            #on_conflict
-
-            #resurrect
-
-            #throttle_cost
         }
     }
 }
@@ -391,20 +232,6 @@ fn expand_registry(
     }
 }
 
-fn expand_resurrect(resurrect: Option<bool>) -> TokenStream {
-    match resurrect {
-        Some(value) => quote! {
-            fn should_resurrect() -> bool
-            where
-                Self: Sized,
-            {
-                #value
-            }
-        },
-        None => quote!(),
-    }
-}
-
 fn expand_max_retries(max_retries: &MaxRetries, type_args: &TokenStream) -> TokenStream {
     match max_retries {
         MaxRetries::Value(value) => {
@@ -437,61 +264,6 @@ fn expand_retry_delay(retry_delay: &RetryDelay, type_args: &TokenStream) -> Toke
             quote! {
                 fn retry_delay(&self, job: &#type_args, retries: u32) -> u64 {
                     #func(self, job, retries)
-                }
-            }
-        }
-    }
-}
-
-fn expand_unique_id(spec: &UniqueIdSpec) -> TokenStream {
-    let formatter = match spec {
-        UniqueIdSpec::Shorthand(fmt) => {
-            let fmt_str = fmt.value();
-            let placeholders = extract_format_placeholders(&fmt_str);
-            let args = placeholders.iter().map(|name| quote!(#name = self.#name));
-
-            quote! {
-                Some(format!(
-                    #fmt,
-                    #(#args),*
-                ))
-            }
-        }
-
-        UniqueIdSpec::NamedFormatter { fmt, args } => {
-            let args = args.iter().map(|(name, expr)| quote!(#name = #expr));
-
-            quote! {
-                Some(format!(
-                    #fmt,
-                    #(#args),*
-                ))
-            }
-        }
-
-        UniqueIdSpec::CustomFunc(func) => quote!(#func(self)),
-    };
-
-    quote! {
-        fn unique_id(&self) -> Option<String> {
-            #formatter
-        }
-    }
-}
-
-fn expand_throttle_cost(throttle_cost: &ThrottleCost) -> TokenStream {
-    match throttle_cost {
-        ThrottleCost::Value(value) => {
-            quote! {
-                fn throttle_cost(&self) -> Option<u64> {
-                    Some(#value)
-                }
-            }
-        }
-        ThrottleCost::CustomFunc(func) => {
-            quote! {
-                fn throttle_cost(&self) -> Option<u64> {
-                    #func(self)
                 }
             }
         }

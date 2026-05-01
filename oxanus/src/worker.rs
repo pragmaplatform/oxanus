@@ -130,7 +130,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{Job, JobConflictStrategy};
-    use crate as oxanus;
+    use crate::{self as oxanus, JobEnvelope};
     use serde::{Deserialize, Serialize};
     use std::io::Error as WorkerError;
 
@@ -147,11 +147,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_define_worker_with_macro() {
-        #[derive(Debug, Serialize, Deserialize)]
+        #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
         struct TestJob {}
 
         #[derive(oxanus::Worker)]
-
         struct TestWorker;
 
         impl TestWorker {
@@ -168,14 +167,15 @@ mod tests {
             oxanus::Worker::<TestJob>::max_retries(&TestWorker, &TestJob {}),
             2
         );
+        assert_eq!(TestJob::worker_name(), std::any::type_name::<TestWorker>());
 
-        #[derive(Debug, Serialize, Deserialize)]
+        #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+        #[oxanus(worker = TestWorkerCustomError, on_conflict = Replace)]
         struct TestWorkerCustomErrorJob {}
 
         #[derive(oxanus::Worker)]
         #[oxanus(error = std::fmt::Error, registry = ComponentRegistryFmt)]
         #[oxanus(max_retries = 3, retry_delay = 10)]
-        #[oxanus(on_conflict = Replace)]
         struct TestWorkerCustomError;
 
         impl TestWorkerCustomError {
@@ -210,14 +210,15 @@ mod tests {
             JobConflictStrategy::Replace
         );
 
-        #[derive(Debug, Serialize, Deserialize)]
+        #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+        #[oxanus(worker = TestWorkerUniqueId)]
+        #[oxanus(unique_id = "test_worker_{id}")]
         struct TestWorkerUniqueIdJob {
             id: i32,
             _1: i32,
         }
 
         #[derive(oxanus::Worker)]
-        #[oxanus(unique_id = "test_worker_{id}")]
         struct TestWorkerUniqueId;
 
         impl TestWorkerUniqueId {
@@ -251,14 +252,15 @@ mod tests {
             name: String,
         }
 
-        #[derive(Debug, Serialize, Deserialize)]
+        #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+        #[oxanus(worker = TestWorkerNestedUniqueId)]
+        #[oxanus(unique_id(fmt = "test_worker_{id}_{task}", id = self.id, task = self.task.name))]
         struct TestWorkerNestedUniqueIdJob {
             id: i32,
             task: NestedTask,
         }
 
         #[derive(oxanus::Worker)]
-        #[oxanus(unique_id(fmt = "test_worker_{id}_{task}", id = self.id, task = self.task.name))]
         struct TestWorkerNestedUniqueId;
 
         impl TestWorkerNestedUniqueId {
@@ -290,20 +292,27 @@ mod tests {
             Some("test_worker_2_task2".to_string())
         );
 
-        #[derive(Debug, Serialize, Deserialize)]
+        #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+        #[oxanus(worker = TestWorkerCustomUniqueId)]
+        #[oxanus(unique_id = Self::unique_id)]
+        #[oxanus(throttle_cost = Self::throttle_cost)]
         struct TestWorkerCustomUniqueIdJob {
             id: i32,
             task: NestedTask,
+            cost: u64,
         }
 
         impl TestWorkerCustomUniqueIdJob {
             fn unique_id(&self) -> Option<String> {
                 Some(format!("worker_id_{}_task_{}", self.id, self.task.name))
             }
+
+            fn throttle_cost(&self) -> Option<u64> {
+                Some(self.cost)
+            }
         }
 
         #[derive(oxanus::Worker)]
-        #[oxanus(unique_id = Self::unique_id)]
         #[oxanus(retry_delay = Self::retry_delay)]
         #[oxanus(max_retries = Self::max_retries)]
         struct TestWorkerCustomUniqueId;
@@ -331,7 +340,8 @@ mod tests {
                 id: 1,
                 task: NestedTask {
                     name: "11".to_owned(),
-                }
+                },
+                cost: 3,
             }),
             Some("worker_id_1_task_11".to_string())
         );
@@ -340,11 +350,13 @@ mod tests {
             task: NestedTask {
                 name: "22".to_owned(),
             },
+            cost: 5,
         };
         assert_eq!(
             oxanus::Job::unique_id(&job2),
             Some("worker_id_2_task_22".to_string())
         );
+        assert_eq!(oxanus::Job::throttle_cost(&job2), Some(5));
         let worker = TestWorkerCustomUniqueId;
         assert_eq!(
             oxanus::Worker::<TestWorkerCustomUniqueIdJob>::retry_delay(&worker, &job2, 1),
@@ -358,6 +370,63 @@ mod tests {
             oxanus::Worker::<TestWorkerCustomUniqueIdJob>::max_retries(&worker, &job2),
             9
         );
+        let envelope = JobEnvelope::new(
+            "default".to_owned(),
+            TestWorkerCustomUniqueIdJob {
+                id: 3,
+                task: NestedTask {
+                    name: "33".to_owned(),
+                },
+                cost: 7,
+            },
+        )
+        .expect("job-owned throttle_cost should populate the envelope");
+        assert_eq!(envelope.meta.throttle_cost, Some(7));
+
+        #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+        #[oxanus(worker = TestWorkerExplicitJobHooks)]
+        #[oxanus(unique_id = TestWorkerExplicitJobHooksJob::unique_id)]
+        #[oxanus(throttle_cost = TestWorkerExplicitJobHooksJob::throttle_cost)]
+        struct TestWorkerExplicitJobHooksJob {
+            id: i32,
+            cost: u64,
+        }
+
+        impl TestWorkerExplicitJobHooksJob {
+            fn unique_id(&self) -> Option<String> {
+                Some(format!("explicit_job_{}", self.id))
+            }
+
+            fn throttle_cost(&self) -> Option<u64> {
+                Some(self.cost)
+            }
+        }
+
+        #[derive(oxanus::Worker)]
+        struct TestWorkerExplicitJobHooks;
+
+        impl TestWorkerExplicitJobHooks {
+            async fn process(
+                &self,
+                _job: &TestWorkerExplicitJobHooksJob,
+                _ctx: &oxanus::JobContext,
+            ) -> Result<(), WorkerError> {
+                Ok(())
+            }
+        }
+
+        let explicit_job = TestWorkerExplicitJobHooksJob { id: 4, cost: 9 };
+        assert_eq!(
+            oxanus::Job::unique_id(&explicit_job),
+            Some("explicit_job_4".to_string())
+        );
+        assert_eq!(oxanus::Job::throttle_cost(&explicit_job), Some(9));
+        let explicit_envelope = JobEnvelope::new(
+            "default".to_owned(),
+            TestWorkerExplicitJobHooksJob { id: 5, cost: 11 },
+        )
+        .expect("explicit job hook paths should still populate the envelope");
+        assert_eq!(explicit_envelope.meta.throttle_cost, Some(11));
     }
 
     #[tokio::test]
@@ -369,7 +438,7 @@ mod tests {
         #[derive(Serialize, oxanus::Queue)]
         struct DefaultQueue;
 
-        #[derive(Debug, Serialize, Deserialize)]
+        #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
         struct TestCronJob {}
 
         #[derive(oxanus::Worker)]
@@ -402,11 +471,11 @@ mod tests {
         use crate as oxanus;
         use std::io::Error as WorkerError;
 
-        #[derive(Debug, Serialize, Deserialize)]
+        #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+        #[oxanus(resurrect = false)]
         struct NoResurrectJob {}
 
         #[derive(oxanus::Worker)]
-        #[oxanus(resurrect = false)]
         struct NoResurrectWorker;
 
         impl NoResurrectWorker {
@@ -421,11 +490,10 @@ mod tests {
 
         assert!(!<NoResurrectJob as oxanus::Job>::should_resurrect());
 
-        #[derive(Debug, Serialize, Deserialize)]
+        #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
         struct DefaultResurrectJob {}
 
         #[derive(oxanus::Worker)]
-
         struct DefaultResurrectWorker;
 
         impl DefaultResurrectWorker {

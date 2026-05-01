@@ -49,7 +49,7 @@ enum MyError {}
 #[derive(Debug, Clone)]
 struct MyContext {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
 struct MyJob {
     data: String,
 }
@@ -117,17 +117,21 @@ It also provides management actions for wiping queues and deleting individual jo
 
 ## Core Concepts
 
-### Workers
+### Jobs and Workers
 
-Workers define the processing logic for jobs. Use the `#[derive(oxanus::Worker)]` macro or implement the `Worker` trait manually.
+Jobs carry the data that gets enqueued and define enqueue-time metadata. Workers define the processing logic for jobs. Use the `#[derive(oxanus::Job)]` and `#[derive(oxanus::Worker)]` macros or implement the traits manually.
 
-Worker attributes:
+| `Job` attributes (enqueue-time) | `Worker` attributes (execution-time) |
+| --- | --- |
+| `#[oxanus(worker = MyWorker)]` - override inferred `FooJob` -> `FooWorker` binding | `#[oxanus(job = MyJob)]` - override inferred `FooWorker` -> `FooJob` binding |
+| `#[oxanus(unique_id = "worker_{id}")]` - define unique job identifiers | `#[oxanus(context = MyContext)]` - set worker context type |
+| `#[oxanus(on_conflict = Skip)]` - handle unique job conflicts (Skip or Replace) | `#[oxanus(error = MyError)]` - set worker error type |
+| `#[oxanus(resurrect = false)]` - disable crash resurrection for this job type | `#[oxanus(registry = MyRegistry)]` - choose component registry |
+| `#[oxanus(throttle_cost = 2)]` - set per-job throttle cost | `#[oxanus(max_retries = 3)]` - set maximum retry attempts |
+|  | `#[oxanus(retry_delay = 5)]` - set retry delay in seconds |
+|  | `#[oxanus(cron(schedule = "*/5 * * * * *", queue = MyQueue))]` - schedule periodic jobs |
 
-- `#[oxanus(max_retries = 3)]` - Set maximum retry attempts
-- `#[oxanus(retry_delay = 5)]` - Set retry delay in seconds
-- `#[oxanus(unique_id = "worker_{id}")]` - Define unique job identifiers
-- `#[oxanus(on_conflict = Skip)]` - Handle job conflicts (Skip or Replace)
-- `#[oxanus(cron(schedule = "*/5 * * * * *", queue = MyQueue))]` - Schedule periodic jobs
+For job hooks, `Self::...` resolves to the job type. For worker hooks, `Self::...` resolves to the worker type.
 
 ### Queues
 

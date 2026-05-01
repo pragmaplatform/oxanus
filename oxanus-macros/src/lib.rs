@@ -1,7 +1,9 @@
+mod job;
 mod queue;
 mod registry;
 mod worker;
 
+use job::*;
 use queue::*;
 use registry::*;
 use worker::*;
@@ -28,16 +30,43 @@ pub fn derive_queue(input: TokenStream) -> TokenStream {
     expand_derive_queue(input).into()
 }
 
+/// Generates impl for `oxanus::Job`.
+///
+/// Example usage:
+/// ```ignore
+/// #[derive(Serialize, oxanus::Job)]
+/// #[oxanus(on_conflict = Replace)]
+/// #[oxanus(unique_id = "foo_{id}")]
+/// #[oxanus(throttle_cost = Self::throttle_cost)]
+/// struct TestJob {
+///     id: i32,
+///     cost: u64,
+/// }
+///
+/// impl TestJob {
+///     fn throttle_cost(&self) -> Option<u64> {
+///         Some(self.cost)
+///     }
+/// }
+///
+/// #[derive(oxanus::Worker)]
+/// struct TestWorker;
+/// ```
+#[proc_macro_error]
+#[proc_macro_derive(Job, attributes(oxanus))]
+pub fn derive_job(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    expand_derive_job(input).into()
+}
+
 /// Generates impl for `oxanus::Worker`.
 ///
 /// Example usage:
 /// ```ignore
-/// #[derive(Serialize, oxanus::Worker)]
-/// #[oxanus(max_retries = 3, on_conflict = Replace)]
-/// #[oxanus(unique_id = "test_worker_{id}")]
-/// struct TestWorkerUniqueId {
-///     id: i32,
-/// }
+/// #[derive(oxanus::Worker)]
+/// #[oxanus(max_retries = 3)]
+/// struct TestWorkerUniqueId;
 /// ```
 #[proc_macro_error]
 #[proc_macro_derive(Worker, attributes(oxanus))]

@@ -15,7 +15,7 @@ enum WorkerError {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
 struct ResumableTestJob {}
 
 #[derive(oxanus::Worker)]

@@ -11,13 +11,13 @@ enum WorkerError {}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+#[oxanus(resurrect = false)]
 struct TestJob {
     label: String,
 }
 
 #[derive(oxanus::Worker)]
-#[oxanus(resurrect = false)]
 struct TestWorker;
 
 impl TestWorker {
