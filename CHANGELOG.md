@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Replace runtime Redis `KEYS` calls with cursor-based `SCAN` for queue discovery and orphaned processing queue recovery.
+
 ## [1.1.1]
 
 ### Fixed

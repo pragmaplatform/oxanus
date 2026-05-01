@@ -1,4 +1,5 @@
 use deadpool_redis::redis::{self, AsyncCommands};
+use futures::TryStreamExt;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZero,
@@ -20,6 +21,7 @@ use crate::{
 const JOB_EXPIRE_TIME: i64 = 7 * 24 * 3600; // 7 days
 const RESURRECT_THRESHOLD_SECS: i64 = 5;
 const MAX_CONSECUTIVE_REDIS_FAILURES: u32 = 30;
+const SCAN_BATCH_SIZE: usize = 500;
 
 #[derive(Clone)]
 pub(crate) struct StorageInternal {
@@ -98,18 +100,44 @@ impl StorageInternal {
             .map_err(OxanusError::DeadpoolRedisPoolError)
     }
 
-    pub async fn queue_keys(&self, pattern: &str) -> Result<HashSet<String>, OxanusError> {
-        let mut conn = self.connection().await?;
-        let keys: Vec<String> = (*conn).keys(self.namespace_queue(pattern)).await?;
+    async fn scan_keys_w_conn(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        pattern: &str,
+    ) -> Result<HashSet<String>, OxanusError> {
+        let opts = redis::ScanOptions::default()
+            .with_pattern(pattern)
+            .with_count(SCAN_BATCH_SIZE);
+        let iter = redis.scan_options::<String>(opts).await?;
+        let keys: Vec<String> = iter.try_collect().await?;
         Ok(keys.into_iter().collect())
     }
 
-    pub async fn queues(&self, pattern: &str) -> Result<Vec<String>, OxanusError> {
-        let queue_keys = self.queue_keys(pattern).await?;
+    pub async fn queue_keys(&self, pattern: &str) -> Result<HashSet<String>, OxanusError> {
+        let mut conn = self.connection().await?;
+        self.scan_keys_w_conn(&mut conn, &self.namespace_queue(pattern))
+            .await
+    }
+
+    #[allow(dead_code)]
+    async fn queues(&self, pattern: &str) -> Result<Vec<String>, OxanusError> {
+        let mut redis = self.connection().await?;
+        self.queues_w_conn(&mut redis, pattern).await
+    }
+
+    async fn queues_w_conn(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        pattern: &str,
+    ) -> Result<Vec<String>, OxanusError> {
+        let queue_keys = self
+            .scan_keys_w_conn(redis, &self.namespace_queue(pattern))
+            .await?;
         // remove namespace prefix from beginning of each key
+        let prefix = format!("{}:", &self.keys.queue_prefix);
         let queues = queue_keys
             .into_iter()
-            .map(|key| key.replace(&format!("{}:", &self.keys.queue_prefix), ""))
+            .filter_map(|key| key.strip_prefix(&prefix).map(ToOwned::to_owned))
             .collect();
         Ok(queues)
     }
@@ -629,7 +657,7 @@ impl StorageInternal {
         let mut redis = self.connection().await?;
         let mut matched_queues = Vec::new();
         for pattern in patterns {
-            matched_queues.extend(self.queues(pattern).await?);
+            matched_queues.extend(self.queues_w_conn(&mut redis, pattern).await?);
         }
         matched_queues.sort();
         matched_queues.dedup();
@@ -640,14 +668,14 @@ impl StorageInternal {
 
     pub async fn stats_queues(&self) -> Result<Vec<QueueStats>, OxanusError> {
         let mut redis = self.connection().await?;
-        let queues = self.queues("*").await?;
+        let queues = self.queues_w_conn(&mut redis, "*").await?;
         self.build_queue_stats(&mut redis, &queues, false).await
     }
 
     pub async fn stats(&self) -> Result<Stats, OxanusError> {
         let mut redis = self.connection().await?;
 
-        let queues = self.queues("*").await?;
+        let queues = self.queues_w_conn(&mut redis, "*").await?;
         let values = self.build_queue_stats(&mut redis, &queues, false).await?;
 
         let mut processed_count_total = 0;
@@ -1220,17 +1248,20 @@ impl StorageInternal {
             .zrange_withscores(&self.keys.processes, 0, -1)
             .await?;
 
-        let all_process_ids: Vec<String> = process_ids.iter().map(|(id, _)| id.clone()).collect();
-        let mut dead_process_ids: Vec<String> = process_ids
-            .iter()
-            .filter(|(_, score)| {
-                *score < (chrono::Utc::now().timestamp() - RESURRECT_THRESHOLD_SECS) as f64
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
+        let active_process_ids: HashSet<String> =
+            process_ids.iter().map(|(id, _)| id.clone()).collect();
+        let mut dead_process_ids = Vec::new();
+        let mut seen_dead = HashSet::new();
+        let threshold = (chrono::Utc::now().timestamp() - RESURRECT_THRESHOLD_SECS) as f64;
 
-        let all_processing_queues: Vec<String> = redis
-            .keys(format!("{}:*", self.keys.processing_queue_prefix))
+        for (process_id, score) in process_ids {
+            if score < threshold && seen_dead.insert(process_id.clone()) {
+                dead_process_ids.push(process_id);
+            }
+        }
+
+        let all_processing_queues = self
+            .scan_keys_w_conn(redis, &format!("{}:*", self.keys.processing_queue_prefix))
             .await?;
 
         for processing_queue in all_processing_queues {
@@ -1239,7 +1270,7 @@ impl StorageInternal {
                 None => continue,
             };
 
-            if !all_process_ids.contains(&process_id) {
+            if !active_process_ids.contains(&process_id) && seen_dead.insert(process_id.clone()) {
                 dead_process_ids.push(process_id);
             }
         }
@@ -1508,6 +1539,41 @@ mod tests {
 
         assert_eq!(storage.enqueued_count(&queue).await?, 1);
         assert!(storage.currently_processing_job_ids().await?.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_queue_discovery_only_returns_queue_keys() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue_a = storage.namespace_queue("prefix-a");
+        let queue_b = storage.namespace_queue("prefix#fast");
+        let queue_c = storage.namespace_queue("other");
+        let unrelated_key = format!("{}:misc", storage.keys.namespace);
+
+        let mut redis = storage.connection().await?;
+        let _: () = redis.lpush(&queue_a, "job-a").await?;
+        let _: () = redis.lpush(&queue_b, "job-b").await?;
+        let _: () = redis.lpush(&queue_c, "job-c").await?;
+        let _: () = redis.set(&unrelated_key, "not-a-queue").await?;
+        let _: () = redis.hset(&storage.keys.jobs, "job-1", "payload").await?;
+
+        let queue_keys = storage.queue_keys("prefix*").await?;
+        assert_eq!(
+            queue_keys,
+            HashSet::from([queue_a.clone(), queue_b.clone()])
+        );
+
+        let mut queues = storage.queues("*").await?;
+        queues.sort();
+        assert_eq!(
+            queues,
+            vec![
+                "other".to_string(),
+                "prefix#fast".to_string(),
+                "prefix-a".to_string(),
+            ]
+        );
 
         Ok(())
     }
