@@ -4,14 +4,22 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct WorkerBatchConfig {
-    pub size: usize,
-    pub timeout: std::time::Duration,
+    size: usize,
+    timeout: std::time::Duration,
 }
 
 impl WorkerBatchConfig {
     pub fn new(size: usize, timeout: std::time::Duration) -> Self {
         assert!(size > 0, "batch size must be greater than zero");
         Self { size, timeout }
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    pub fn timeout(&self) -> std::time::Duration {
+        self.timeout
     }
 }
 
@@ -532,8 +540,11 @@ mod tests {
 
         let batch_config = <TestWorkerBatch as oxanus::Worker<TestWorkerBatchJob>>::batch_config()
             .expect("batch attributes should generate worker batch config");
-        assert_eq!(batch_config.size, 25);
-        assert_eq!(batch_config.timeout, std::time::Duration::from_millis(150));
+        assert_eq!(batch_config.size(), 25);
+        assert_eq!(
+            batch_config.timeout(),
+            std::time::Duration::from_millis(150)
+        );
     }
 
     #[tokio::test]

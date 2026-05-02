@@ -268,7 +268,7 @@ where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
-    let batch_size = batch_config.size.max(1);
+    let batch_size = batch_config.size();
     let (tx, rx) = mpsc::channel(batch_size * 2);
     tokio::spawn(async move {
         if let Err(e) = run_batcher(
@@ -300,7 +300,7 @@ where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
-    let batch_size = batch_config.size.max(1);
+    let batch_size = batch_config.size();
     let mut pending = Vec::with_capacity(batch_size);
 
     loop {
@@ -326,7 +326,7 @@ where
             }
         }
 
-        if pending.len() >= batch_size || batch_config.timeout.is_zero() {
+        if pending.len() >= batch_size || batch_config.timeout().is_zero() {
             spawn_batch(
                 Arc::clone(&config),
                 ctx.clone(),
@@ -337,7 +337,7 @@ where
             continue;
         }
 
-        let timeout = tokio::time::sleep(batch_config.timeout);
+        let timeout = tokio::time::sleep(batch_config.timeout());
         tokio::pin!(timeout);
 
         loop {
@@ -490,31 +490,33 @@ where
         }
     };
 
-    let mut invalid_jobs = batch.invalid.iter().collect::<Vec<_>>();
-    invalid_jobs.sort_by_key(|invalid| std::cmp::Reverse(invalid.index));
+    let invalid_by_index = invalid_jobs_by_index(batch.invalid, envelopes.len());
+    if !invalid_by_index.is_empty() {
+        let mut valid_envelopes =
+            Vec::with_capacity(envelopes.len().saturating_sub(invalid_by_index.len()));
+        let mut valid_permits =
+            Vec::with_capacity(permits.len().saturating_sub(invalid_by_index.len()));
 
-    let mut last_removed_index = None;
-    for invalid in invalid_jobs {
-        if invalid.index >= envelopes.len() {
-            continue;
+        for (index, (envelope, permit)) in envelopes.into_iter().zip(permits).enumerate() {
+            if let Some(error) = invalid_by_index.get(&index) {
+                let err_msg = format!("Invalid job: {worker_name} - {error}");
+                tracing::error!("{}", err_msg);
+
+                if let Err(e) = config.storage.internal.kill(&envelope, err_msg).await {
+                    #[cfg(feature = "sentry")]
+                    sentry_core::capture_error(&e);
+                    tracing::error!("Failed to kill job: {}", e);
+                }
+
+                drop(permit);
+            } else {
+                valid_envelopes.push(envelope);
+                valid_permits.push(permit);
+            }
         }
-        if last_removed_index == Some(invalid.index) {
-            continue;
-        }
-        last_removed_index = Some(invalid.index);
 
-        let envelope = envelopes.remove(invalid.index);
-        let permit = permits.remove(invalid.index);
-        let err_msg = format!("Invalid job: {worker_name} - {}", invalid.error);
-        tracing::error!("{}", err_msg);
-
-        if let Err(e) = config.storage.internal.kill(&envelope, err_msg).await {
-            #[cfg(feature = "sentry")]
-            sentry_core::capture_error(&e);
-            tracing::error!("Failed to kill job: {}", e);
-        }
-
-        drop(permit);
+        envelopes = valid_envelopes;
+        permits = valid_permits;
     }
 
     let Some(job) = batch.job else {
@@ -527,6 +529,21 @@ where
     process_batch_result(result_tx, &result, envelopes).await;
 
     Ok(())
+}
+
+fn invalid_jobs_by_index(
+    invalid_jobs: Vec<crate::worker_registry::InvalidBatchJob>,
+    envelope_count: usize,
+) -> HashMap<usize, String> {
+    let mut invalid_by_index = HashMap::new();
+    for invalid in invalid_jobs {
+        if invalid.index < envelope_count {
+            invalid_by_index
+                .entry(invalid.index)
+                .or_insert(invalid.error);
+        }
+    }
+    invalid_by_index
 }
 
 async fn process_result<ET>(
