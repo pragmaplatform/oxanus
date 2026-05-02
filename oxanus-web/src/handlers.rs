@@ -84,7 +84,6 @@ pub(crate) async fn metric_detail(
 ) -> Result<MetricDetailTemplate, OxanusWebError> {
     let identity = oxanus::MetricIdentity {
         worker: params.worker,
-        queue: params.queue,
     };
     let metrics = state
         .storage
@@ -358,7 +357,6 @@ pub(crate) struct MetricsParams {
 #[derive(Deserialize)]
 pub(crate) struct MetricDetailParams {
     worker: String,
-    queue: String,
     #[serde(default)]
     minutes: Option<usize>,
 }

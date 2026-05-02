@@ -48,19 +48,16 @@
             <div>
                 <a href="{{ base_path }}/metrics?minutes={{ metrics.minutes }}" class="text-sm text-gray-400 hover:text-gray-200">&larr; Metrics</a>
                 <h2 class="mt-2 text-lg font-semibold font-mono break-all">{{ metrics.identity.worker }}</h2>
-                <div class="mt-1 text-sm text-gray-400 font-mono">{{ metrics.identity.queue }}</div>
             </div>
             <form method="GET" action="{{ base_path }}/metrics/job" class="flex items-center gap-2 text-sm">
                 <input type="hidden" name="worker" value="{{ metrics.identity.worker }}">
-                <input type="hidden" name="queue" value="{{ metrics.identity.queue }}">
                 <label for="minutes" class="text-gray-400">Window</label>
-                <select id="minutes" name="minutes" class="bg-gray-900 border border-gray-800 rounded px-3 py-1.5 text-gray-200">
+                <select id="minutes" name="minutes" class="bg-gray-900 border border-gray-800 rounded px-3 py-1.5 text-gray-200" onchange="this.form.submit()">
                     <option value="60" {% if metrics.minutes == 60 %}selected{% endif %}>60 minutes</option>
                     <option value="120" {% if metrics.minutes == 120 %}selected{% endif %}>2 hours</option>
                     <option value="240" {% if metrics.minutes == 240 %}selected{% endif %}>4 hours</option>
                     <option value="480" {% if metrics.minutes == 480 %}selected{% endif %}>8 hours</option>
                 </select>
-                <button type="submit" class="px-3 py-1.5 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300">Apply</button>
             </form>
         </div>
 
@@ -87,10 +84,25 @@
             </div>
         </div>
 
-        <section class="mb-10">
-            <h2 class="text-lg font-semibold mb-4">Execution Time</h2>
-            <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
-                <div id="detail-chart" class="w-full h-[320px]"></div>
+        <section class="space-y-6 mb-10">
+            <div>
+                <h2 class="text-lg font-semibold mb-4">Average Execution Time</h2>
+                <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
+                    <div id="average-chart" class="w-full h-[300px]"></div>
+                </div>
+            </div>
+            <div>
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+                    <h2 class="text-lg font-semibold">Total Executions</h2>
+                    <div class="flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-400">
+                        <span class="inline-flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-emerald-400"></span>Success</span>
+                        <span class="inline-flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-red-500"></span>Failures</span>
+                        <span class="inline-flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-black ring-1 ring-gray-500"></span>Panics</span>
+                    </div>
+                </div>
+                <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
+                    <div id="executions-chart" class="w-full h-[300px]"></div>
+                </div>
             </div>
         </section>
 
@@ -118,17 +130,6 @@
                 return;
             }
 
-            var chartEl = document.getElementById('detail-chart');
-            if (!chartEl) {
-                return;
-            }
-
-            var data = {{ self.detail_chart_data_json()|safe }};
-            var width = Math.max(chartEl.clientWidth, 320);
-            var tooltip = document.createElement('div');
-            tooltip.className = 'chart-tooltip hidden';
-            chartEl.appendChild(tooltip);
-
             function formatTime(ts) {
                 return new Date(ts * 1000).toLocaleString(undefined, {
                     month: 'numeric',
@@ -145,90 +146,251 @@
                 return value.toFixed(0) + 'ms';
             }
 
-            function showTooltip(u) {
-                var idx = u.cursor.idx;
-                if (idx == null || idx < 0 || idx >= data[0].length) {
+            function formatCount(value) {
+                return Math.round(value).toLocaleString();
+            }
+
+            function formatShortTime(ts) {
+                return new Date(ts * 1000).toLocaleString(undefined, {
+                    hour: 'numeric',
+                    minute: '2-digit'
+                });
+            }
+
+            function buildTooltip(chartEl, data, label, formatter) {
+                var tooltip = document.createElement('div');
+                tooltip.className = 'chart-tooltip hidden';
+                chartEl.appendChild(tooltip);
+
+                chartEl.addEventListener('mouseleave', function () {
                     tooltip.classList.add('hidden');
+                });
+
+                return function (u) {
+                    var idx = u.cursor.idx;
+                    if (idx == null || idx < 0 || idx >= data[0].length) {
+                        tooltip.classList.add('hidden');
+                        return;
+                    }
+
+                    tooltip.innerHTML =
+                        '<div><span class="chart-tooltip-label">Time:</span> ' + formatTime(data[0][idx]) + '</div>' +
+                        '<div><span class="chart-tooltip-label">' + label + ':</span> ' + formatter(data[1][idx]) + '</div>';
+
+                    tooltip.classList.remove('hidden');
+
+                    var x = u.over.offsetLeft + u.cursor.left;
+                    var y = u.over.offsetTop + u.cursor.top;
+                    var halfWidth = tooltip.offsetWidth / 2;
+                    var left = Math.min(Math.max(x, halfWidth + 8), chartEl.clientWidth - halfWidth - 8);
+                    var top = Math.max(y - 12, tooltip.offsetHeight + 8);
+
+                    tooltip.style.left = left + 'px';
+                    tooltip.style.top = top + 'px';
+                };
+            }
+
+            function renderChart(chartId, data, label, stroke, fill, valueFormatter) {
+                var chartEl = document.getElementById(chartId);
+                if (!chartEl) {
                     return;
                 }
 
-                tooltip.innerHTML =
-                    '<div><span class="chart-tooltip-label">Time:</span> ' + formatTime(data[0][idx]) + '</div>' +
-                    '<div><span class="chart-tooltip-label">Avg:</span> ' + formatMillis(data[1][idx]) + '</div>' +
-                    '<div><span class="chart-tooltip-label">Success:</span> ' + data[2][idx] + '</div>';
-
-                tooltip.classList.remove('hidden');
-
-                var x = u.over.offsetLeft + u.cursor.left;
-                var y = u.over.offsetTop + u.cursor.top;
-                var halfWidth = tooltip.offsetWidth / 2;
-                var left = Math.min(Math.max(x, halfWidth + 8), chartEl.clientWidth - halfWidth - 8);
-                var top = Math.max(y - 12, tooltip.offsetHeight + 8);
-
-                tooltip.style.left = left + 'px';
-                tooltip.style.top = top + 'px';
+                new uPlot({
+                    width: Math.max(chartEl.clientWidth, 320),
+                    height: 300,
+                    legend: { show: false },
+                    tzDate: function (ts) { return uPlot.tzDate(new Date(ts * 1e3), 'Etc/UTC'); },
+                    scales: {
+                        x: { time: true },
+                        y: { range: [0, null] }
+                    },
+                    axes: [
+                        {
+                            stroke: '#9ca3af',
+                            grid: { stroke: 'rgba(31, 41, 55, 0.7)' },
+                            ticks: { stroke: '#374151' }
+                        },
+                        {
+                            size: 72,
+                            stroke: '#9ca3af',
+                            grid: { stroke: 'rgba(31, 41, 55, 0.7)' },
+                            ticks: { stroke: '#374151' },
+                            values: function (_u, vals) {
+                                return vals.map(valueFormatter);
+                            }
+                        }
+                    ],
+                    series: [
+                        {},
+                        {
+                            label: label,
+                            stroke: stroke,
+                            fill: fill,
+                            width: 2
+                        }
+                    ],
+                    hooks: {
+                        setCursor: [buildTooltip(chartEl, data, label, valueFormatter)]
+                    }
+                }, data, chartEl);
             }
 
-            new uPlot({
-                width: width,
-                height: 320,
-                legend: { show: false },
-                tzDate: function (ts) { return uPlot.tzDate(new Date(ts * 1e3), 'Etc/UTC'); },
-                scales: {
-                    x: { time: true },
-                    ms: { range: [0, null] },
-                    count: { range: [0, null] }
-                },
-                axes: [
-                    {
-                        stroke: '#9ca3af',
-                        grid: { stroke: 'rgba(31, 41, 55, 0.7)' },
-                        ticks: { stroke: '#374151' }
-                    },
-                    {
-                        scale: 'ms',
-                        stroke: '#9ca3af',
-                        grid: { stroke: 'rgba(31, 41, 55, 0.7)' },
-                        ticks: { stroke: '#374151' },
-                        values: function (_u, vals) {
-                            return vals.map(function (v) { return v >= 1000 ? (v / 1000).toFixed(1) + 's' : v.toFixed(0) + 'ms'; });
-                        }
-                    },
-                    {
-                        scale: 'count',
-                        side: 1,
-                        stroke: '#9ca3af',
-                        grid: { show: false },
-                        ticks: { stroke: '#374151' },
-                        values: function (_u, vals) {
-                            return vals.map(function (v) { return v.toFixed(0); });
-                        }
-                    }
-                ],
-                series: [
-                    {},
-                    {
-                        label: 'Avg',
-                        scale: 'ms',
-                        stroke: '#c084fc',
-                        width: 2
-                    },
-                    {
-                        label: 'Success',
-                        scale: 'count',
-                        stroke: '#34d399',
-                        fill: 'rgba(52, 211, 153, 0.12)',
-                        width: 2
-                    }
-                ],
-                hooks: {
-                    setCursor: [showTooltip]
-                }
-            }, data, chartEl);
+            function svgEl(name) {
+                return document.createElementNS('http://www.w3.org/2000/svg', name);
+            }
 
-            chartEl.addEventListener('mouseleave', function () {
-                tooltip.classList.add('hidden');
-            });
+            function renderExecutionsChart(chartId, data) {
+                var chartEl = document.getElementById(chartId);
+                if (!chartEl) {
+                    return;
+                }
+
+                var width = Math.max(chartEl.clientWidth, 320);
+                var height = 300;
+                var margin = { top: 12, right: 16, bottom: 44, left: 72 };
+                var plotWidth = width - margin.left - margin.right;
+                var plotHeight = height - margin.top - margin.bottom;
+                var timestamps = data[0];
+                var succeeded = data[1];
+                var failed = data[2];
+                var panicked = data[3];
+                var totals = timestamps.map(function (_ts, idx) {
+                    return (succeeded[idx] || 0) + (failed[idx] || 0) + (panicked[idx] || 0);
+                });
+                var maxTotal = Math.max.apply(null, totals.concat([1]));
+                var barStep = plotWidth / Math.max(timestamps.length, 1);
+                var barWidth = Math.max(1, Math.min(18, barStep * 0.72));
+                var bottom = margin.top + plotHeight;
+
+                chartEl.replaceChildren();
+
+                var tooltip = document.createElement('div');
+                tooltip.className = 'chart-tooltip hidden';
+                chartEl.appendChild(tooltip);
+
+                var svg = svgEl('svg');
+                svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+                svg.setAttribute('width', '100%');
+                svg.setAttribute('height', height.toString());
+                svg.setAttribute('role', 'img');
+                svg.setAttribute('aria-label', 'Total executions by minute');
+                chartEl.appendChild(svg);
+
+                for (var tick = 0; tick <= 4; tick += 1) {
+                    var value = Math.round((maxTotal * tick) / 4);
+                    var y = bottom - (plotHeight * value / maxTotal);
+
+                    var grid = svgEl('line');
+                    grid.setAttribute('x1', margin.left.toString());
+                    grid.setAttribute('x2', (width - margin.right).toString());
+                    grid.setAttribute('y1', y.toString());
+                    grid.setAttribute('y2', y.toString());
+                    grid.setAttribute('stroke', 'rgba(31, 41, 55, 0.7)');
+                    svg.appendChild(grid);
+
+                    var label = svgEl('text');
+                    label.setAttribute('x', (margin.left - 14).toString());
+                    label.setAttribute('y', (y + 4).toString());
+                    label.setAttribute('text-anchor', 'end');
+                    label.setAttribute('fill', '#9ca3af');
+                    label.setAttribute('font-size', '12');
+                    label.textContent = formatCount(value);
+                    svg.appendChild(label);
+                }
+
+                var xTickIndexes = Array.from(new Set([
+                    0,
+                    Math.floor((timestamps.length - 1) / 3),
+                    Math.floor(((timestamps.length - 1) * 2) / 3),
+                    timestamps.length - 1
+                ])).filter(function (idx) {
+                    return idx >= 0 && idx < timestamps.length;
+                });
+
+                xTickIndexes.forEach(function (idx) {
+                    var x = margin.left + (idx + 0.5) * barStep;
+                    var label = svgEl('text');
+                    label.setAttribute('x', x.toString());
+                    label.setAttribute('y', (height - 14).toString());
+                    label.setAttribute('text-anchor', 'middle');
+                    label.setAttribute('fill', '#9ca3af');
+                    label.setAttribute('font-size', '12');
+                    label.textContent = formatShortTime(timestamps[idx]);
+                    svg.appendChild(label);
+                });
+
+                function appendSegment(idx, value, offset, color, stroke) {
+                    if (value <= 0) {
+                        return;
+                    }
+
+                    var segmentHeight = Math.max(1, plotHeight * value / maxTotal);
+                    var y = bottom - (plotHeight * (offset + value) / maxTotal);
+                    var rect = svgEl('rect');
+                    rect.setAttribute('x', (margin.left + idx * barStep + (barStep - barWidth) / 2).toString());
+                    rect.setAttribute('y', y.toString());
+                    rect.setAttribute('width', barWidth.toString());
+                    rect.setAttribute('height', segmentHeight.toString());
+                    rect.setAttribute('fill', color);
+                    if (stroke) {
+                        rect.setAttribute('stroke', stroke);
+                        rect.setAttribute('stroke-width', '0.75');
+                    }
+                    svg.appendChild(rect);
+                }
+
+                timestamps.forEach(function (_ts, idx) {
+                    var success = succeeded[idx] || 0;
+                    var failure = failed[idx] || 0;
+                    var panic = panicked[idx] || 0;
+
+                    appendSegment(idx, success, 0, '#34d399');
+                    appendSegment(idx, failure, success, '#ef4444');
+                    appendSegment(idx, panic, success + failure, '#000000', '#6b7280');
+                });
+
+                svg.addEventListener('mousemove', function (event) {
+                    var rect = svg.getBoundingClientRect();
+                    var localX = ((event.clientX - rect.left) / rect.width) * width;
+                    var idx = Math.round((localX - margin.left) / barStep - 0.5);
+                    idx = Math.max(0, Math.min(timestamps.length - 1, idx));
+
+                    tooltip.innerHTML =
+                        '<div><span class="chart-tooltip-label">Time:</span> ' + formatTime(timestamps[idx]) + '</div>' +
+                        '<div><span class="chart-tooltip-label">Success:</span> ' + formatCount(succeeded[idx] || 0) + '</div>' +
+                        '<div><span class="chart-tooltip-label">Failures:</span> ' + formatCount(failed[idx] || 0) + '</div>' +
+                        '<div><span class="chart-tooltip-label">Panics:</span> ' + formatCount(panicked[idx] || 0) + '</div>' +
+                        '<div><span class="chart-tooltip-label">Total:</span> ' + formatCount(totals[idx] || 0) + '</div>';
+                    tooltip.classList.remove('hidden');
+
+                    var x = event.clientX - rect.left;
+                    var y = event.clientY - rect.top;
+                    var halfWidth = tooltip.offsetWidth / 2;
+                    var left = Math.min(Math.max(x, halfWidth + 8), chartEl.clientWidth - halfWidth - 8);
+                    var top = Math.max(y - 12, tooltip.offsetHeight + 8);
+
+                    tooltip.style.left = left + 'px';
+                    tooltip.style.top = top + 'px';
+                });
+
+                svg.addEventListener('mouseleave', function () {
+                    tooltip.classList.add('hidden');
+                });
+            }
+
+            renderChart(
+                'average-chart',
+                {{ self.detail_average_chart_data_json()|safe }},
+                'Avg',
+                '#c084fc',
+                'rgba(192, 132, 252, 0.10)',
+                formatMillis
+            );
+            renderExecutionsChart(
+                'executions-chart',
+                {{ self.detail_total_chart_data_json()|safe }}
+            );
         });
     </script>
 </body>

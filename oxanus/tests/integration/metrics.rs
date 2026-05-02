@@ -88,6 +88,39 @@ impl oxanus::Worker<MetricFailJob> for MetricFailWorker {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct MetricPanicJob;
+
+impl oxanus::Job for MetricPanicJob {
+    fn worker_name() -> &'static str {
+        std::any::type_name::<MetricPanicWorker>()
+    }
+}
+
+struct MetricPanicWorker;
+
+impl oxanus::FromContext<()> for MetricPanicWorker {
+    fn from_context(_ctx: &()) -> Self {
+        Self
+    }
+}
+
+#[async_trait::async_trait]
+impl oxanus::Worker<MetricPanicJob> for MetricPanicWorker {
+    type Error = WorkerError;
+
+    async fn run_batch(
+        &self,
+        _jobs: Vec<oxanus::BatchItem<MetricPanicJob>>,
+    ) -> Result<(), WorkerError> {
+        panic!("expected panic")
+    }
+
+    fn max_retries(&self, _job: &MetricPanicJob) -> u32 {
+        0
+    }
+}
+
 #[tokio::test]
 async fn test_job_metrics_record_execution_time_counts_and_ttls() -> TestResult {
     let redis_pool = setup();
@@ -100,7 +133,8 @@ async fn test_job_metrics_record_execution_time_counts_and_ttls() -> TestResult 
         .register_queue::<MetricsQueueTwo>()
         .register_worker::<MetricSuccessWorker, MetricSuccessJob>()
         .register_worker::<MetricFailWorker, MetricFailJob>()
-        .exit_when_processed(3);
+        .register_worker::<MetricPanicWorker, MetricPanicJob>()
+        .exit_when_processed(4);
 
     storage
         .enqueue(MetricsQueueOne, MetricSuccessJob { sleep_ms: 25 })
@@ -109,61 +143,54 @@ async fn test_job_metrics_record_execution_time_counts_and_ttls() -> TestResult 
         .enqueue(MetricsQueueTwo, MetricSuccessJob { sleep_ms: 15 })
         .await?;
     storage.enqueue(MetricsQueueOne, MetricFailJob).await?;
+    storage.enqueue(MetricsQueueTwo, MetricPanicJob).await?;
 
     let run_stats = oxanus::run(config, ctx).await?;
-    assert_eq!(run_stats.processed, 3);
+    assert_eq!(run_stats.processed, 4);
+    assert_eq!(run_stats.panicked, 1);
 
     let snapshot = storage
         .job_metrics(oxanus::JobMetricsQuery::default())
         .await?;
-    assert_eq!(snapshot.totals.processed, 3);
-    assert_eq!(snapshot.totals.failed, 1);
+    assert_eq!(snapshot.totals.processed, 4);
+    assert_eq!(snapshot.totals.failed, 2);
+    assert_eq!(snapshot.totals.panicked, 1);
     assert_eq!(snapshot.totals.succeeded, 2);
     assert!(snapshot.totals.execution_ms >= 30);
     assert_eq!(snapshot.jobs.len(), 3);
 
-    let success_one = oxanus::MetricIdentity {
+    let success = oxanus::MetricIdentity {
         worker: std::any::type_name::<MetricSuccessWorker>().to_string(),
-        queue: "metrics_one".to_string(),
-    };
-    let success_two = oxanus::MetricIdentity {
-        worker: std::any::type_name::<MetricSuccessWorker>().to_string(),
-        queue: "metrics_two".to_string(),
     };
     let failure = oxanus::MetricIdentity {
         worker: std::any::type_name::<MetricFailWorker>().to_string(),
-        queue: "metrics_one".to_string(),
+    };
+    let panic = oxanus::MetricIdentity {
+        worker: std::any::type_name::<MetricPanicWorker>().to_string(),
     };
 
-    let success_one_metrics = storage
-        .job_metrics_for(&success_one, oxanus::JobMetricsQuery::default())
+    let success_metrics = storage
+        .job_metrics_for(&success, oxanus::JobMetricsQuery::default())
         .await?;
-    assert_eq!(success_one_metrics.totals.processed, 1);
-    assert_eq!(success_one_metrics.totals.failed, 0);
-    assert_eq!(success_one_metrics.totals.succeeded, 1);
-    assert!(success_one_metrics.totals.execution_ms >= 20);
+    assert_eq!(success_metrics.totals.processed, 2);
+    assert_eq!(success_metrics.totals.failed, 0);
+    assert_eq!(success_metrics.totals.succeeded, 2);
+    assert!(success_metrics.totals.execution_ms >= 30);
     assert_eq!(
-        success_one_metrics
+        success_metrics
             .histogram
             .iter()
             .map(|bucket| bucket.count)
             .sum::<u64>(),
-        1
+        2
     );
-
-    let success_two_metrics = storage
-        .job_metrics_for(&success_two, oxanus::JobMetricsQuery::default())
-        .await?;
-    assert_eq!(success_two_metrics.totals.processed, 1);
-    assert_eq!(success_two_metrics.totals.failed, 0);
-    assert_eq!(success_two_metrics.totals.succeeded, 1);
-    assert!(success_two_metrics.totals.execution_ms >= 10);
 
     let failure_metrics = storage
         .job_metrics_for(&failure, oxanus::JobMetricsQuery::default())
         .await?;
     assert_eq!(failure_metrics.totals.processed, 1);
     assert_eq!(failure_metrics.totals.failed, 1);
+    assert_eq!(failure_metrics.totals.panicked, 0);
     assert_eq!(failure_metrics.totals.succeeded, 0);
     assert_eq!(failure_metrics.totals.execution_ms, 0);
     assert_eq!(
@@ -174,6 +201,15 @@ async fn test_job_metrics_record_execution_time_counts_and_ttls() -> TestResult 
             .sum::<u64>(),
         0
     );
+
+    let panic_metrics = storage
+        .job_metrics_for(&panic, oxanus::JobMetricsQuery::default())
+        .await?;
+    assert_eq!(panic_metrics.totals.processed, 1);
+    assert_eq!(panic_metrics.totals.failed, 1);
+    assert_eq!(panic_metrics.totals.panicked, 1);
+    assert_eq!(panic_metrics.totals.succeeded, 0);
+    assert_eq!(panic_metrics.totals.execution_ms, 0);
 
     let mut redis = redis_pool.get().await?;
     let keys: Vec<String> = redis

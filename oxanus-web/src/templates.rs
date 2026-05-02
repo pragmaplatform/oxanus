@@ -121,38 +121,48 @@ pub(crate) struct MetricsTemplate {
 
 impl MetricsTemplate {
     pub fn execution_chart_data_json(&self) -> String {
-        let timestamps: Vec<i64> = self
-            .metrics
-            .series
-            .iter()
-            .map(|point| point.timestamp)
-            .collect();
-        let execution_seconds: Vec<f64> = self
-            .metrics
-            .series
-            .iter()
-            .map(|point| point.execution_ms as f64 / 1000.0)
-            .collect();
-
-        serde_json::json!([timestamps, execution_seconds]).to_string()
+        self.summary_chart_data_json(|point| point.execution_ms as f64 / 1000.0)
     }
 
     pub fn processed_chart_data_json(&self) -> String {
+        self.summary_chart_data_json(|point| point.processed as f64)
+    }
+
+    fn summary_chart_data_json(&self, value: impl Fn(&oxanus::JobMetricsPoint) -> f64) -> String {
         let timestamps: Vec<i64> = self
             .metrics
             .series
             .iter()
             .map(|point| point.timestamp)
             .collect();
-        let processed: Vec<u64> = self
+        let series: Vec<serde_json::Value> = self
             .metrics
-            .series
+            .jobs
             .iter()
-            .map(|point| point.processed)
+            .map(|job| {
+                let data: Vec<f64> = job.series.iter().map(&value).collect();
+                serde_json::json!({
+                    "label": metric_identity_label(&job.identity),
+                    "data": data,
+                })
+            })
             .collect();
 
-        serde_json::json!([timestamps, processed]).to_string()
+        serde_json::json!({
+            "timestamps": timestamps,
+            "series": series,
+        })
+        .to_string()
     }
+}
+
+fn metric_identity_label(identity: &oxanus::MetricIdentity) -> String {
+    identity
+        .worker
+        .rsplit("::")
+        .next()
+        .unwrap_or(&identity.worker)
+        .to_string()
 }
 
 #[derive(Template, WebTemplate)]
@@ -164,7 +174,7 @@ pub(crate) struct MetricDetailTemplate {
 }
 
 impl MetricDetailTemplate {
-    pub fn detail_chart_data_json(&self) -> String {
+    pub fn detail_average_chart_data_json(&self) -> String {
         let timestamps: Vec<i64> = self
             .metrics
             .series
@@ -177,14 +187,37 @@ impl MetricDetailTemplate {
             .iter()
             .map(oxanus::JobMetricsPoint::average_execution_ms)
             .collect();
+
+        serde_json::json!([timestamps, average_ms]).to_string()
+    }
+
+    pub fn detail_total_chart_data_json(&self) -> String {
+        let timestamps: Vec<i64> = self
+            .metrics
+            .series
+            .iter()
+            .map(|point| point.timestamp)
+            .collect();
         let succeeded: Vec<u64> = self
             .metrics
             .series
             .iter()
             .map(|point| point.succeeded)
             .collect();
+        let failed: Vec<u64> = self
+            .metrics
+            .series
+            .iter()
+            .map(|point| point.failed.saturating_sub(point.panicked))
+            .collect();
+        let panicked: Vec<u64> = self
+            .metrics
+            .series
+            .iter()
+            .map(|point| point.panicked)
+            .collect();
 
-        serde_json::json!([timestamps, average_ms, succeeded]).to_string()
+        serde_json::json!([timestamps, succeeded, failed, panicked]).to_string()
     }
 
     pub fn max_histogram_count(&self) -> u64 {

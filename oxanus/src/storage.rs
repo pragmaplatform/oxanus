@@ -273,7 +273,7 @@ impl Storage {
         self.internal.stats().await
     }
 
-    /// Returns Sidekiq-style job execution metrics for all worker/queue pairs.
+    /// Returns Sidekiq-style job execution metrics for all workers.
     ///
     /// Metrics are retained for up to 8 hours. The query defaults to 60 minutes
     /// and is clamped to 480 minutes.
@@ -284,7 +284,7 @@ impl Storage {
         self.internal.job_metrics(query).await
     }
 
-    /// Returns Sidekiq-style job execution metrics for a single worker/queue pair.
+    /// Returns Sidekiq-style job execution metrics for a single worker.
     ///
     /// Successful jobs contribute execution time and histogram data; failed and
     /// panicked jobs only contribute failure counts.

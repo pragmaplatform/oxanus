@@ -37,19 +37,17 @@ pub const HISTOGRAM_BUCKET_LABELS: [&str; HISTOGRAM_BUCKET_COUNT] = [
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MetricIdentity {
     pub worker: String,
-    pub queue: String,
 }
 
 impl MetricIdentity {
     pub(crate) fn from_result(result: &JobResult) -> Self {
         Self {
             worker: result.envelope.job.name.clone(),
-            queue: result.envelope.queue.clone(),
         }
     }
 
     pub(crate) fn field_key(&self) -> String {
-        format!("{}:{}{}", self.worker.len(), self.worker, self.queue)
+        format!("{}:{}", self.worker.len(), self.worker)
     }
 
     pub(crate) fn from_field_key(key: &str) -> Option<Self> {
@@ -60,10 +58,9 @@ impl MetricIdentity {
             return None;
         }
 
-        let (worker, queue) = rest.split_at(worker_len);
+        let (worker, _) = rest.split_at(worker_len);
         Some(Self {
             worker: worker.to_string(),
-            queue: queue.to_string(),
         })
     }
 
@@ -106,6 +103,7 @@ pub struct JobMetricsTotals {
     pub processed: u64,
     pub succeeded: u64,
     pub failed: u64,
+    pub panicked: u64,
     pub execution_ms: u64,
 }
 
@@ -128,6 +126,7 @@ impl JobMetricsTotals {
         match metric {
             "p" => self.processed = self.processed.saturating_add(value),
             "f" => self.failed = self.failed.saturating_add(value),
+            "pn" => self.panicked = self.panicked.saturating_add(value),
             "ms" => self.execution_ms = self.execution_ms.saturating_add(value),
             _ => {}
         }
@@ -144,6 +143,7 @@ pub struct JobMetricsPoint {
     pub processed: u64,
     pub succeeded: u64,
     pub failed: u64,
+    pub panicked: u64,
     pub execution_ms: u64,
 }
 
@@ -161,6 +161,7 @@ impl JobMetricsPoint {
         match metric {
             "p" => self.processed = self.processed.saturating_add(value),
             "f" => self.failed = self.failed.saturating_add(value),
+            "pn" => self.panicked = self.panicked.saturating_add(value),
             "ms" => self.execution_ms = self.execution_ms.saturating_add(value),
             _ => {}
         }
@@ -175,6 +176,7 @@ impl JobMetricsPoint {
 pub struct JobMetricsSummary {
     pub identity: MetricIdentity,
     pub totals: JobMetricsTotals,
+    pub series: Vec<JobMetricsPoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,7 +236,11 @@ impl JobMetricsBuffer {
                     *count = count.saturating_add(1);
                 }
             }
-            JobResultKind::Panicked | JobResultKind::Failed => {
+            JobResultKind::Panicked => {
+                metrics.failed = metrics.failed.saturating_add(1);
+                metrics.panicked = metrics.panicked.saturating_add(1);
+            }
+            JobResultKind::Failed => {
                 metrics.failed = metrics.failed.saturating_add(1);
             }
         }
@@ -253,6 +259,7 @@ impl JobMetricsBuffer {
 pub(crate) struct PendingJobMetrics {
     pub(crate) processed: u64,
     pub(crate) failed: u64,
+    pub(crate) panicked: u64,
     pub(crate) execution_ms: u64,
     pub(crate) histogram: [u64; HISTOGRAM_BUCKET_COUNT],
 }
@@ -262,6 +269,11 @@ pub(crate) struct JobMetricsAggregation {
     pub(crate) totals: JobMetricsTotals,
     pub(crate) series: Vec<JobMetricsPoint>,
     pub(crate) jobs: Vec<JobMetricsSummary>,
+}
+
+struct JobMetricsSummaryBuilder {
+    totals: JobMetricsTotals,
+    series: Vec<JobMetricsPoint>,
 }
 
 #[must_use]
@@ -288,7 +300,14 @@ pub(crate) fn aggregate_counter_hashes(
             .collect(),
         ..JobMetricsAggregation::default()
     };
-    let mut jobs: HashMap<MetricIdentity, JobMetricsTotals> = HashMap::new();
+    let job_series_template: Vec<JobMetricsPoint> = minutes
+        .iter()
+        .map(|minute| JobMetricsPoint {
+            timestamp: minute * 60,
+            ..JobMetricsPoint::default()
+        })
+        .collect();
+    let mut jobs: HashMap<MetricIdentity, JobMetricsSummaryBuilder> = HashMap::new();
 
     for (idx, hash) in hashes.into_iter().enumerate() {
         let Some(point) = aggregation.series.get_mut(idx) else {
@@ -306,7 +325,16 @@ pub(crate) fn aggregate_counter_hashes(
             let value = u64::try_from(raw_value).unwrap_or_default();
             point.add_metric(metric, value);
             aggregation.totals.add_metric(metric, value);
-            jobs.entry(identity).or_default().add_metric(metric, value);
+            let job = jobs
+                .entry(identity)
+                .or_insert_with(|| JobMetricsSummaryBuilder {
+                    totals: JobMetricsTotals::default(),
+                    series: job_series_template.clone(),
+                });
+            job.totals.add_metric(metric, value);
+            if let Some(job_point) = job.series.get_mut(idx) {
+                job_point.add_metric(metric, value);
+            }
         }
 
         point.finalize();
@@ -315,9 +343,16 @@ pub(crate) fn aggregate_counter_hashes(
     aggregation.totals.finalize();
     aggregation.jobs = jobs
         .into_iter()
-        .map(|(identity, mut totals)| {
-            totals.finalize();
-            JobMetricsSummary { identity, totals }
+        .map(|(identity, mut summary)| {
+            summary.totals.finalize();
+            for point in &mut summary.series {
+                point.finalize();
+            }
+            JobMetricsSummary {
+                identity,
+                totals: summary.totals,
+                series: summary.series,
+            }
         })
         .collect();
     aggregation.jobs.sort_by(|a, b| {
@@ -326,7 +361,6 @@ pub(crate) fn aggregate_counter_hashes(
             .cmp(&a.totals.execution_ms)
             .then_with(|| b.totals.processed.cmp(&a.totals.processed))
             .then_with(|| a.identity.worker.cmp(&b.identity.worker))
-            .then_with(|| a.identity.queue.cmp(&b.identity.queue))
     });
 
     aggregation
@@ -389,7 +423,9 @@ pub(crate) fn histogram_buckets_from_counts(
 fn split_metric_field(field: &str) -> Option<(MetricIdentity, &str)> {
     let (identity_key, metric) = field.rsplit_once('|')?;
     match metric {
-        "p" | "f" | "ms" => MetricIdentity::from_field_key(identity_key).map(|id| (id, metric)),
+        "p" | "f" | "pn" | "ms" => {
+            MetricIdentity::from_field_key(identity_key).map(|id| (id, metric))
+        }
         _ => None,
     }
 }
@@ -431,11 +467,9 @@ mod tests {
     fn query_aggregation_computes_totals_and_clamps_minutes() {
         let identity = MetricIdentity {
             worker: "WorkerA".to_string(),
-            queue: "default".to_string(),
         };
         let other = MetricIdentity {
             worker: "WorkerB".to_string(),
-            queue: "default".to_string(),
         };
         let minutes = metric_minutes(10_000, JobMetricsQuery::new(999));
         assert_eq!(minutes.len(), MAX_METRIC_MINUTES);
@@ -445,32 +479,54 @@ mod tests {
         hashes[0].insert(identity.metric_field("f"), 1);
         hashes[0].insert(identity.metric_field("ms"), 250);
         hashes[1].insert(other.metric_field("p"), 2);
+        hashes[1].insert(other.metric_field("f"), 1);
+        hashes[1].insert(other.metric_field("pn"), 1);
         hashes[1].insert(other.metric_field("ms"), 100);
 
         let aggregation = aggregate_counter_hashes(&minutes, hashes.clone(), None);
         assert_eq!(aggregation.totals.processed, 5);
-        assert_eq!(aggregation.totals.failed, 1);
-        assert_eq!(aggregation.totals.succeeded, 4);
+        assert_eq!(aggregation.totals.failed, 2);
+        assert_eq!(aggregation.totals.panicked, 1);
+        assert_eq!(aggregation.totals.succeeded, 3);
         assert_eq!(aggregation.totals.execution_ms, 350);
         assert_eq!(aggregation.jobs.len(), 2);
+        assert_eq!(aggregation.jobs[0].series.len(), MAX_METRIC_MINUTES);
+        assert_eq!(aggregation.jobs[0].series[0].processed, 3);
+        assert_eq!(aggregation.jobs[0].series[0].failed, 1);
+        assert_eq!(aggregation.jobs[0].series[0].succeeded, 2);
+        assert_eq!(aggregation.jobs[0].series[0].execution_ms, 250);
+        assert_eq!(aggregation.jobs[1].totals.panicked, 1);
 
         let filtered = aggregate_counter_hashes(&minutes, hashes, Some(&identity));
         assert_eq!(filtered.totals.processed, 3);
         assert_eq!(filtered.totals.failed, 1);
         assert_eq!(filtered.totals.succeeded, 2);
         assert_eq!(filtered.totals.execution_ms, 250);
+        assert_eq!(filtered.jobs.len(), 1);
+        assert_eq!(filtered.jobs[0].series[1].processed, 0);
     }
 
     #[test]
     fn metric_identity_round_trips_with_delimiters() {
         let identity = MetricIdentity {
             worker: "crate::worker|Name".to_string(),
-            queue: "queue:fast|blue".to_string(),
         };
 
         assert_eq!(
             MetricIdentity::from_field_key(&identity.field_key()),
             Some(identity)
+        );
+    }
+
+    #[test]
+    fn metric_identity_reads_legacy_worker_queue_keys_as_worker_only() {
+        let legacy_key = "6:Workerdefault";
+
+        assert_eq!(
+            MetricIdentity::from_field_key(legacy_key),
+            Some(MetricIdentity {
+                worker: "Worker".to_string(),
+            })
         );
     }
 }

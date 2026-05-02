@@ -961,6 +961,7 @@ impl StorageInternal {
             let counter_key = self.metrics_counter_key(minute);
             let processed_field = identity.metric_field("p");
             let failed_field = identity.metric_field("f");
+            let panicked_field = identity.metric_field("pn");
             let execution_ms_field = identity.metric_field("ms");
 
             if metrics.processed > 0 {
@@ -975,6 +976,13 @@ impl StorageInternal {
                     &counter_key,
                     failed_field,
                     redis_metric_increment(metrics.failed),
+                );
+            }
+            if metrics.panicked > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    panicked_field,
+                    redis_metric_increment(metrics.panicked),
                 );
             }
             if metrics.execution_ms > 0 {
@@ -1442,6 +1450,7 @@ impl StorageInternal {
         let fields = [
             identity.metric_field("p"),
             identity.metric_field("f"),
+            identity.metric_field("pn"),
             identity.metric_field("ms"),
         ];
         let mut pipe = redis::pipe();
