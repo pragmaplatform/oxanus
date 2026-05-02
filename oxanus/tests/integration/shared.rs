@@ -27,10 +27,9 @@ pub struct WorkerNoop;
 impl oxanus::Worker<WorkerNoopJob> for WorkerNoop {
     type Error = WorkerError;
 
-    async fn process(
+    async fn run_batch(
         &self,
-        _job: &WorkerNoopJob,
-        _ctx: &oxanus::JobContext,
+        _jobs: Vec<oxanus::BatchItem<WorkerNoopJob>>,
     ) -> Result<(), WorkerError> {
         Ok(())
     }
@@ -62,13 +61,15 @@ pub struct WorkerRedisSet {
 impl oxanus::Worker<WorkerRedisSetJob> for WorkerRedisSet {
     type Error = WorkerError;
 
-    async fn process(
+    async fn run_batch(
         &self,
-        job: &WorkerRedisSetJob,
-        _ctx: &oxanus::JobContext,
+        jobs: Vec<oxanus::BatchItem<WorkerRedisSetJob>>,
     ) -> Result<(), WorkerError> {
         let mut redis = self.state.redis.get().await?;
-        let _: () = redis.set_ex(&job.key, job.value.clone(), 3).await?;
+        for item in jobs {
+            let job = item.job;
+            let _: () = redis.set_ex(&job.key, job.value, 3).await?;
+        }
         Ok(())
     }
 }

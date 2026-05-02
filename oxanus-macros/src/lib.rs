@@ -66,6 +66,7 @@ pub fn derive_job(input: TokenStream) -> TokenStream {
 /// ```ignore
 /// #[derive(oxanus::Worker)]
 /// #[oxanus(max_retries = 3)]
+/// #[oxanus(batch_size = 10, batch_timeout_ms = 500)]
 /// struct TestWorkerUniqueId;
 /// ```
 #[proc_macro_error]

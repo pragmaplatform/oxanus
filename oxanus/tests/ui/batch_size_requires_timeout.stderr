@@ -1,0 +1,5 @@
+error: batch_size requires batch_timeout_ms
+  --> tests/ui/batch_size_requires_timeout.rs:17:8
+   |
+17 | struct MissingTimeoutWorker;
+   |        ^^^^^^^^^^^^^^^^^^^^

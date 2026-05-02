@@ -1,0 +1,5 @@
+error: batch_size must be greater than zero
+  --> tests/ui/batch_size_zero.rs:17:8
+   |
+17 | struct ZeroBatchSizeWorker;
+   |        ^^^^^^^^^^^^^^^^^^^

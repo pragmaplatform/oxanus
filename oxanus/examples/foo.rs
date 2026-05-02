@@ -20,11 +20,7 @@ struct OneSecJob {
 struct OneSecWorker;
 
 impl OneSecWorker {
-    async fn process(
-        &self,
-        _job: &OneSecJob,
-        _ctx: &oxanus::JobContext,
-    ) -> Result<(), WorkerError> {
+    async fn process(&self, _job: OneSecJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
         Ok(())
     }
@@ -40,11 +36,7 @@ struct TwoSecJob {
 struct TwoSecWorker;
 
 impl TwoSecWorker {
-    async fn process(
-        &self,
-        _job: &TwoSecJob,
-        _ctx: &oxanus::JobContext,
-    ) -> Result<(), WorkerError> {
+    async fn process(&self, _job: TwoSecJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
         Ok(())
     }
@@ -59,7 +51,7 @@ struct InstantWorker;
 impl InstantWorker {
     async fn process(
         &self,
-        _job: &InstantJob,
+        _job: InstantJob,
         _ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
         Ok(())
@@ -75,7 +67,7 @@ struct Instant2Worker;
 impl Instant2Worker {
     async fn process(
         &self,
-        _job: &Instant2Job,
+        _job: Instant2Job,
         _ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
         Ok(())

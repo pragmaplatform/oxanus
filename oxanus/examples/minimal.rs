@@ -19,7 +19,7 @@ struct TestJob {
 struct TestWorker;
 
 impl TestWorker {
-    async fn process(&self, job: &TestJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+    async fn process(&self, job: TestJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_secs(job.sleep_s)).await;
         Ok(())
     }

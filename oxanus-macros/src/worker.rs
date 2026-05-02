@@ -13,6 +13,8 @@ struct OxanusArgs {
     registry: Option<Path>,
     max_retries: Option<MaxRetries>,
     retry_delay: Option<RetryDelay>,
+    batch_size: Option<usize>,
+    batch_timeout_ms: Option<u64>,
     cron: Option<Cron>,
 }
 
@@ -133,21 +135,40 @@ fn expand_worker_impl(
         None => quote!(),
     };
 
+    let batch_config = expand_batch_config(struct_ident, args);
+    let process = if batch_config.is_some() {
+        quote! {
+            async fn run_batch(&self, jobs: Vec<oxanus::BatchItem<#type_args>>) -> Result<(), Self::Error> {
+                self.process_batch(jobs).await
+            }
+        }
+    } else {
+        quote! {
+            async fn run_batch(&self, jobs: Vec<oxanus::BatchItem<#type_args>>) -> Result<(), Self::Error> {
+                for oxanus::BatchItem { job, ctx } in jobs {
+                    self.process(job, &ctx).await?;
+                }
+
+                Ok(())
+            }
+        }
+    };
+
     quote! {
         #[automatically_derived]
         #[async_trait::async_trait]
         impl oxanus::Worker<#type_args> for #struct_ident {
             type Error = #type_error;
 
-            async fn process(&self, job: &#type_args, ctx: &oxanus::JobContext) -> Result<(), Self::Error> {
-                self.process(job, ctx).await
-            }
+            #process
 
             #max_retries
 
             #retry_delay
 
             #cron
+
+            #batch_config
         }
     }
 }
@@ -221,6 +242,8 @@ fn expand_registry(
                         oxanus::ComponentDefinition::Worker(oxanus::WorkerConfig {
                             name: std::any::type_name::<#struct_ident>().to_owned(),
                             factory: oxanus::job_factory::<#struct_ident, #type_args, #type_context, #type_error>,
+                            batch_factory: oxanus::job_batch_factory::<#struct_ident, #type_args, #type_context, #type_error>,
+                            batch_config: <#struct_ident as oxanus::Worker<#type_args>>::batch_config(),
                             kind: <#struct_ident as oxanus::Worker<#type_args>>::to_config(),
                         })
                     }
@@ -267,6 +290,31 @@ fn expand_retry_delay(retry_delay: &RetryDelay, type_args: &TokenStream) -> Toke
                 }
             }
         }
+    }
+}
+
+fn expand_batch_config(struct_ident: &Ident, args: &OxanusArgs) -> Option<TokenStream> {
+    match (args.batch_size, args.batch_timeout_ms) {
+        (Some(size), Some(timeout_ms)) => {
+            if size == 0 {
+                abort!(struct_ident, "batch_size must be greater than zero");
+            }
+
+            Some(quote! {
+                fn batch_config() -> Option<oxanus::WorkerBatchConfig>
+                where
+                    Self: Sized,
+                {
+                    Some(oxanus::WorkerBatchConfig::new(
+                        #size,
+                        std::time::Duration::from_millis(#timeout_ms),
+                    ))
+                }
+            })
+        }
+        (None, None) => None,
+        (Some(_), None) => abort!(struct_ident, "batch_size requires batch_timeout_ms"),
+        (None, Some(_)) => abort!(struct_ident, "batch_timeout_ms requires batch_size"),
     }
 }
 

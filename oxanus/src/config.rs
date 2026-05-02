@@ -67,13 +67,15 @@ impl<DT, ET> Config<DT, ET> {
     pub fn register_worker<W, A>(mut self) -> Self
     where
         W: Worker<A, Error = ET> + FromContext<DT> + 'static,
-        A: Job + serde::de::DeserializeOwned + Send + Sync + 'static,
+        A: Job + serde::de::DeserializeOwned + Send + 'static,
         DT: Clone + Send + Sync + 'static,
         ET: std::error::Error + Send + Sync + 'static,
     {
         let name = A::worker_name().to_string();
         let factory = worker_registry::job_factory::<W, A, DT, ET>;
+        let batch_factory = worker_registry::job_batch_factory::<W, A, DT, ET>;
         let kind = <W as Worker<A>>::to_config();
+        let batch_config = W::batch_config();
 
         if let WorkerConfigKind::Cron { .. } = &kind {
             assert!(
@@ -90,6 +92,8 @@ impl<DT, ET> Config<DT, ET> {
         self.registry.register_worker_with(WorkerConfig {
             name,
             factory,
+            batch_factory,
+            batch_config,
             kind,
         });
         self

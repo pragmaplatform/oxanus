@@ -1,6 +1,6 @@
 [package]
 name = "oxanus"
-version = "1.1.1"
+version = "2.0.0"
 edition = "2024"
 license = "MIT"
 description = "A simple & fast job queue system."
@@ -47,6 +47,7 @@ dotenvy = "^0.15"
 rand = "^0.10"
 testresult = "^0.4"
 tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
+trybuild = "1.0"
 
 oxanus = { path = ".", default-features = false, features = ["registry"] }
 

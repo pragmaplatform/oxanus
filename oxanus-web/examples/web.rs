@@ -20,7 +20,7 @@ struct PingJob {
 struct PingWorker;
 
 impl PingWorker {
-    async fn process(&self, _job: &PingJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+    async fn process(&self, _job: PingJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
         Ok(())
     }
 }

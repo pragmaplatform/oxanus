@@ -368,6 +368,21 @@ impl StorageInternal {
         Ok(())
     }
 
+    pub async fn update_jobs(&self, envelopes: &[JobEnvelope]) -> Result<(), OxanusError> {
+        if envelopes.is_empty() {
+            return Ok(());
+        }
+
+        let items = envelopes
+            .iter()
+            .map(|envelope| Ok((envelope.id.as_str(), serde_json::to_string(envelope)?)))
+            .collect::<Result<Vec<_>, OxanusError>>()?;
+
+        let mut redis = self.connection().await?;
+        let _: () = redis.hset_multiple(&self.keys.jobs, &items).await?;
+        Ok(())
+    }
+
     pub async fn update_state(
         &self,
         id: &JobId,
@@ -385,6 +400,18 @@ impl StorageInternal {
     pub async fn set_started_at(&self, envelope: &mut JobEnvelope) -> Result<(), OxanusError> {
         envelope.meta.started_at = Some(chrono::Utc::now().timestamp_micros());
         self.update_job(envelope).await?;
+        Ok(())
+    }
+
+    pub async fn set_started_at_batch(
+        &self,
+        envelopes: &mut [JobEnvelope],
+    ) -> Result<(), OxanusError> {
+        let now = chrono::Utc::now().timestamp_micros();
+        for envelope in envelopes.iter_mut() {
+            envelope.meta.started_at = Some(now);
+        }
+        self.update_jobs(envelopes).await?;
         Ok(())
     }
 
@@ -431,6 +458,30 @@ impl StorageInternal {
             .lrem(self.current_processing_queue(), 1, &envelope.id)
             .query_async(&mut redis)
             .await?;
+        Ok(())
+    }
+
+    pub async fn finish_with_success_batch(
+        &self,
+        envelopes: &[JobEnvelope],
+    ) -> Result<(), OxanusError> {
+        if envelopes.is_empty() {
+            return Ok(());
+        }
+
+        let job_ids = envelopes
+            .iter()
+            .map(|envelope| envelope.id.as_str())
+            .collect::<Vec<_>>();
+        let processing_queue = self.current_processing_queue();
+        let mut pipe = redis::pipe();
+        pipe.hdel(&self.keys.jobs, &job_ids);
+        for job_id in job_ids {
+            pipe.lrem(&processing_queue, 1, job_id);
+        }
+
+        let mut redis = self.connection().await?;
+        let _: () = pipe.query_async(&mut redis).await?;
         Ok(())
     }
 
@@ -1701,6 +1752,86 @@ mod tests {
             .await?
             .expect("job should exist");
         assert_eq!(persisted.meta.started_at, Some(started_at));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_set_started_at_batch() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        let mut envelopes = vec![
+            JobEnvelope::new(queue.clone(), TestJob {})?,
+            JobEnvelope::new(queue.clone(), TestJob {})?,
+        ];
+        for envelope in &envelopes {
+            assert!(envelope.meta.started_at.is_none());
+            storage.enqueue(envelope.clone()).await?;
+        }
+
+        let before = chrono::Utc::now().timestamp_micros();
+        storage.set_started_at_batch(&mut envelopes).await?;
+        let after = chrono::Utc::now().timestamp_micros();
+
+        let started_at = envelopes
+            .first()
+            .expect("batch should contain an envelope")
+            .meta
+            .started_at
+            .expect("started_at should be set");
+        assert!(started_at >= before);
+        assert!(started_at <= after);
+
+        for envelope in &envelopes {
+            assert_eq!(envelope.meta.started_at, Some(started_at));
+            let persisted = storage
+                .get_job(&envelope.id)
+                .await?
+                .expect("job should exist");
+            assert_eq!(persisted.meta.started_at, Some(started_at));
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_finish_with_success_batch() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        let envelopes = vec![
+            JobEnvelope::new(queue.clone(), TestJob {})?,
+            JobEnvelope::new(queue.clone(), TestJob {})?,
+        ];
+        for envelope in &envelopes {
+            storage.enqueue(envelope.clone()).await?;
+        }
+
+        for envelope in &envelopes {
+            assert_eq!(storage.dequeue(&queue).await?, Some(envelope.id.clone()));
+        }
+
+        let mut redis = storage.connection().await?;
+        let processing_before: Vec<JobId> = (*redis)
+            .lrange(storage.current_processing_queue(), 0, -1)
+            .await?;
+        assert_eq!(processing_before.len(), 2);
+        drop(redis);
+
+        storage.finish_with_success_batch(&envelopes).await?;
+
+        for envelope in &envelopes {
+            assert!(storage.get_job(&envelope.id).await?.is_none());
+        }
+        assert_eq!(storage.enqueued_count(&queue).await?, 0);
+        assert_eq!(storage.jobs_count().await?, 0);
+
+        let mut redis = storage.connection().await?;
+        let processing_after: Vec<JobId> = (*redis)
+            .lrange(storage.current_processing_queue(), 0, -1)
+            .await?;
+        assert!(processing_after.is_empty());
 
         Ok(())
     }

@@ -37,12 +37,14 @@ impl oxanus::FromContext<WorkerState> for WorkerNoop {
 impl oxanus::Worker<WorkerNoopJob> for WorkerNoop {
     type Error = ServiceError;
 
-    async fn process(
+    async fn run_batch(
         &self,
-        job: &WorkerNoopJob,
-        _ctx: &oxanus::JobContext,
+        jobs: Vec<oxanus::BatchItem<WorkerNoopJob>>,
     ) -> Result<(), ServiceError> {
-        tokio::time::sleep(std::time::Duration::from_millis(job.sleep_ms)).await;
+        for item in jobs {
+            let job = item.job;
+            tokio::time::sleep(std::time::Duration::from_millis(job.sleep_ms)).await;
+        }
         Ok(())
     }
 }

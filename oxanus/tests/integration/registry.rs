@@ -24,7 +24,7 @@ pub struct WorkerCounter {
 impl WorkerCounter {
     async fn process(
         &self,
-        job: &WorkerCounterJob,
+        job: WorkerCounterJob,
         _ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
         let mut redis = self.ctx.redis.get().await?;
@@ -46,7 +46,7 @@ pub struct CronWorkerCounter {
 impl CronWorkerCounter {
     async fn process(
         &self,
-        _job: &CronWorkerCounterJob,
+        _job: CronWorkerCounterJob,
         _ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
         let mut redis = self.ctx.redis.get().await?;

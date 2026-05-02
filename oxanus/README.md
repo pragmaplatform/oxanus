@@ -58,7 +58,7 @@ struct MyJob {
 struct MyWorker;
 
 impl MyWorker {
-    async fn process(&self, job: &MyJob, _ctx: &oxanus::JobContext) -> Result<(), MyError> {
+    async fn process(&self, job: MyJob, _ctx: &oxanus::JobContext) -> Result<(), MyError> {
         println!("Processing: {}", job.data);
         Ok(())
     }
@@ -130,6 +130,7 @@ Jobs carry the data that gets enqueued and define enqueue-time metadata. Workers
 | `#[oxanus(throttle_cost = 2)]` - set per-job throttle cost | `#[oxanus(max_retries = 3)]` - set maximum retry attempts |
 |  | `#[oxanus(retry_delay = 5)]` - set retry delay in seconds |
 |  | `#[oxanus(cron(schedule = "*/5 * * * * *", queue = MyQueue))]` - schedule periodic jobs |
+|  | `#[oxanus(batch_size = 100, batch_timeout_ms = 500)]` - process jobs in batches |
 
 For job hooks, `Self::...` resolves to the job type. For worker hooks, `Self::...` resolves to the worker type.
 

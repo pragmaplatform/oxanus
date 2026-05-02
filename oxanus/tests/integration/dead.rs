@@ -24,10 +24,9 @@ impl oxanus::FromContext<()> for WorkerFail {
 impl oxanus::Worker<WorkerFailJob> for WorkerFail {
     type Error = WorkerError;
 
-    async fn process(
+    async fn run_batch(
         &self,
-        _job: &WorkerFailJob,
-        _ctx: &oxanus::JobContext,
+        _jobs: Vec<oxanus::BatchItem<WorkerFailJob>>,
     ) -> Result<(), WorkerError> {
         Err(WorkerError::Generic(
             "I have nothing to live for...".to_string(),
