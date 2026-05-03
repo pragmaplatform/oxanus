@@ -20,11 +20,7 @@ struct TwoSecJob {
 struct TwoSecWorker;
 
 impl TwoSecWorker {
-    async fn process(
-        &self,
-        _job: &TwoSecJob,
-        _ctx: &oxanus::JobContext,
-    ) -> Result<(), WorkerError> {
+    async fn process(&self, _job: TwoSecJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
         tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
         Ok(())
     }

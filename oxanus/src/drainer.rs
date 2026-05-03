@@ -80,7 +80,7 @@ where
         state: JobState::new(config.storage.clone(), job_id, envelope.meta.state.clone()),
     };
 
-    let job_result = job.process(&job_ctx).await;
+    let job_result = job.process(vec![job_ctx]).await;
 
     match job_result {
         Ok(()) => {

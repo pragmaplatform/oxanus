@@ -21,7 +21,7 @@ struct TestJob {}
 struct TestWorker;
 
 impl TestWorker {
-    async fn process(&self, _job: &TestJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+    async fn process(&self, _job: TestJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
         if rand::rng().random_bool(0.5) {
             Err(WorkerError::GenericError("foo".to_string()))
         } else {

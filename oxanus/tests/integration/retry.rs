@@ -31,19 +31,22 @@ impl oxanus::FromContext<WorkerState> for WorkerRedisSetWithRetry {
 impl oxanus::Worker<WorkerRedisSetWithRetryJob> for WorkerRedisSetWithRetry {
     type Error = WorkerError;
 
-    async fn process(
+    async fn run_batch(
         &self,
-        job: &WorkerRedisSetWithRetryJob,
-        _ctx: &oxanus::JobContext,
+        jobs: Vec<oxanus::BatchItem<WorkerRedisSetWithRetryJob>>,
     ) -> Result<(), WorkerError> {
         let mut redis = self.state.redis.get().await?;
-        let value: Option<String> = redis.get(&job.key).await?;
-        if value.is_some() {
-            let _: () = redis.set_ex(&job.key, job.value_second.clone(), 3).await?;
-            return Ok(());
+        for item in jobs {
+            let job = item.job;
+            let value: Option<String> = redis.get(&job.key).await?;
+            if value.is_some() {
+                let _: () = redis.set_ex(&job.key, job.value_second, 3).await?;
+                continue;
+            }
+            let _: () = redis.set_ex(&job.key, job.value_first, 3).await?;
+            return Err(WorkerError::Generic("Key not set".to_string()));
         }
-        let _: () = redis.set_ex(&job.key, job.value_first.clone(), 3).await?;
-        Err(WorkerError::Generic("Key not set".to_string()))
+        Ok(())
     }
 
     fn retry_delay(&self, _job: &WorkerRedisSetWithRetryJob, _retries: u32) -> u64 {

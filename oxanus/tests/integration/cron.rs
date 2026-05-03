@@ -27,13 +27,14 @@ impl oxanus::FromContext<WorkerState> for CronWorkerRedisCounter {
 impl oxanus::Worker<CronWorkerRedisCounterJob> for CronWorkerRedisCounter {
     type Error = WorkerError;
 
-    async fn process(
+    async fn run_batch(
         &self,
-        _job: &CronWorkerRedisCounterJob,
-        _ctx: &oxanus::JobContext,
+        jobs: Vec<oxanus::BatchItem<CronWorkerRedisCounterJob>>,
     ) -> Result<(), WorkerError> {
         let mut redis = self.state.redis.get().await?;
-        let _: () = redis.incr("cron:counter", 1).await?;
+        for _item in jobs {
+            let _: () = redis.incr("cron:counter", 1).await?;
+        }
         Ok(())
     }
 

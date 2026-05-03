@@ -20,7 +20,7 @@ struct TickJob {}
 struct TickWorker;
 
 impl TickWorker {
-    async fn process(&self, _job: &TickJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+    async fn process(&self, _job: TickJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
         println!("tick at {}", chrono::Utc::now().timestamp());
         Ok(())
     }

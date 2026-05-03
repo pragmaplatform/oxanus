@@ -25,7 +25,7 @@ struct ResumableTestWorker;
 impl ResumableTestWorker {
     async fn process(
         &self,
-        _job: &ResumableTestJob,
+        _job: ResumableTestJob,
         ctx: &oxanus::JobContext,
     ) -> Result<(), WorkerError> {
         let progress = ctx.state.get::<i32>().await?;

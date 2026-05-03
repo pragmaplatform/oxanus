@@ -21,7 +21,7 @@ struct TestJob {
 struct TestWorker;
 
 impl TestWorker {
-    async fn process(&self, job: &TestJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
+    async fn process(&self, job: TestJob, _ctx: &oxanus::JobContext) -> Result<(), WorkerError> {
         tracing::info!("Processing job: {}", job.label);
         Ok(())
     }

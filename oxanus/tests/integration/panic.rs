@@ -23,10 +23,9 @@ impl oxanus::FromContext<()> for WorkerPanic {
 impl oxanus::Worker<WorkerPanicJob> for WorkerPanic {
     type Error = std::io::Error;
 
-    async fn process(
+    async fn run_batch(
         &self,
-        _job: &WorkerPanicJob,
-        _ctx: &oxanus::JobContext,
+        _jobs: Vec<oxanus::BatchItem<WorkerPanicJob>>,
     ) -> Result<(), std::io::Error> {
         panic!("test panic");
     }

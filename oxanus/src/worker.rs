@@ -2,7 +2,28 @@ use crate::{
     QueueConfig, WorkerConfigKind, context::JobContext, job_envelope::JobConflictStrategy,
 };
 
-pub trait Job: Send + Sync + serde::Serialize {
+#[derive(Debug, Clone)]
+pub struct WorkerBatchConfig {
+    size: usize,
+    timeout: std::time::Duration,
+}
+
+impl WorkerBatchConfig {
+    pub fn new(size: usize, timeout: std::time::Duration) -> Self {
+        assert!(size > 0, "batch size must be greater than zero");
+        Self { size, timeout }
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    pub fn timeout(&self) -> std::time::Duration {
+        self.timeout
+    }
+}
+
+pub trait Job: Send + serde::Serialize {
     fn worker_name() -> &'static str
     where
         Self: Sized;
@@ -27,11 +48,17 @@ pub trait Job: Send + Sync + serde::Serialize {
     }
 }
 
+#[derive(Clone)]
+pub struct BatchItem<Args> {
+    pub job: Args,
+    pub ctx: JobContext,
+}
+
 #[async_trait::async_trait]
-pub trait Worker<Args: Send + Sync>: Send + Sync {
+pub trait Worker<Args: Send + 'static>: Send + Sync {
     type Error: std::error::Error + Send + Sync;
 
-    async fn process(&self, job: &Args, ctx: &JobContext) -> Result<(), Self::Error>;
+    async fn run_batch(&self, jobs: Vec<BatchItem<Args>>) -> Result<(), Self::Error>;
 
     fn max_retries(&self, _job: &Args) -> u32 {
         2
@@ -64,6 +91,13 @@ pub trait Worker<Args: Send + Sync>: Send + Sync {
         None
     }
 
+    fn batch_config() -> Option<WorkerBatchConfig>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
     fn to_config() -> WorkerConfigKind
     where
         Self: Sized,
@@ -90,12 +124,13 @@ pub trait FromContext<T> {
 }
 
 #[async_trait::async_trait]
-pub trait Processable: Send + Sync {
+pub trait Processable: Send {
     type Error: std::error::Error + Send + Sync;
 
-    async fn process(&self, ctx: &JobContext) -> Result<(), Self::Error>;
-    fn max_retries(&self) -> u32;
-    fn retry_delay(&self, retries: u32) -> u64;
+    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), Self::Error>;
+    fn len(&self) -> usize;
+    fn max_retries(&self, index: usize) -> u32;
+    fn retry_delay(&self, index: usize, retries: u32) -> u64;
 }
 
 pub type BoxedProcessable<ET> = Box<dyn Processable<Error = ET>>;
@@ -105,24 +140,80 @@ pub(crate) struct BoundJob<W, A> {
     pub job: A,
 }
 
+pub(crate) struct BoundBatchJob<W, A> {
+    pub worker: W,
+    pub jobs: Vec<A>,
+}
+
 #[async_trait::async_trait]
 impl<W, A> Processable for BoundJob<W, A>
 where
     W: Worker<A> + Send + Sync + 'static,
-    A: Send + Sync + 'static,
+    A: Send + 'static,
 {
     type Error = W::Error;
 
-    async fn process(&self, ctx: &JobContext) -> Result<(), Self::Error> {
-        self.worker.process(&self.job, ctx).await
+    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), Self::Error> {
+        assert_eq!(contexts.len(), 1, "single job must have one context");
+        let ctx = contexts
+            .into_iter()
+            .next()
+            .expect("single job context exists after length check");
+        self.worker
+            .run_batch(vec![BatchItem { job: self.job, ctx }])
+            .await
     }
 
-    fn max_retries(&self) -> u32 {
+    fn len(&self) -> usize {
+        1
+    }
+
+    fn max_retries(&self, index: usize) -> u32 {
+        assert_eq!(index, 0, "single job index must be zero");
         self.worker.max_retries(&self.job)
     }
 
-    fn retry_delay(&self, retries: u32) -> u64 {
+    fn retry_delay(&self, index: usize, retries: u32) -> u64 {
+        assert_eq!(index, 0, "single job index must be zero");
         self.worker.retry_delay(&self.job, retries)
+    }
+}
+
+#[async_trait::async_trait]
+impl<W, A> Processable for BoundBatchJob<W, A>
+where
+    W: Worker<A> + Send + Sync + 'static,
+    A: Send + 'static,
+{
+    type Error = W::Error;
+
+    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), Self::Error> {
+        assert_eq!(
+            self.jobs.len(),
+            contexts.len(),
+            "batch jobs and contexts must have the same length"
+        );
+        let items = self
+            .jobs
+            .into_iter()
+            .zip(contexts)
+            .map(|(job, ctx)| BatchItem { job, ctx })
+            .collect();
+        self.worker.run_batch(items).await
+    }
+
+    fn len(&self) -> usize {
+        self.jobs.len()
+    }
+
+    fn max_retries(&self, index: usize) -> u32 {
+        let job = self.jobs.get(index).expect("batch job index out of bounds");
+        self.worker.max_retries(job)
+    }
+
+    fn retry_delay(&self, index: usize, retries: u32) -> u64 {
+        let job = self.jobs.get(index).expect("batch job index out of bounds");
+        self.worker.retry_delay(job, retries)
     }
 }
 
@@ -156,7 +247,7 @@ mod tests {
         impl TestWorker {
             async fn process(
                 &self,
-                _job: &TestJob,
+                _job: TestJob,
                 _ctx: &oxanus::JobContext,
             ) -> Result<(), WorkerError> {
                 Ok(())
@@ -181,7 +272,7 @@ mod tests {
         impl TestWorkerCustomError {
             async fn process(
                 &self,
-                _job: &TestWorkerCustomErrorJob,
+                _job: TestWorkerCustomErrorJob,
                 _ctx: &oxanus::JobContext,
             ) -> Result<(), std::fmt::Error> {
                 use std::fmt::Write;
@@ -224,7 +315,7 @@ mod tests {
         impl TestWorkerUniqueId {
             async fn process(
                 &self,
-                _job: &TestWorkerUniqueIdJob,
+                _job: TestWorkerUniqueIdJob,
                 _ctx: &oxanus::JobContext,
             ) -> Result<(), WorkerError> {
                 Ok(())
@@ -266,7 +357,7 @@ mod tests {
         impl TestWorkerNestedUniqueId {
             async fn process(
                 &self,
-                _job: &TestWorkerNestedUniqueIdJob,
+                _job: TestWorkerNestedUniqueIdJob,
                 _ctx: &oxanus::JobContext,
             ) -> Result<(), WorkerError> {
                 Ok(())
@@ -320,7 +411,7 @@ mod tests {
         impl TestWorkerCustomUniqueId {
             async fn process(
                 &self,
-                _job: &TestWorkerCustomUniqueIdJob,
+                _job: TestWorkerCustomUniqueIdJob,
                 _ctx: &oxanus::JobContext,
             ) -> Result<(), WorkerError> {
                 Ok(())
@@ -408,7 +499,7 @@ mod tests {
         impl TestWorkerExplicitJobHooks {
             async fn process(
                 &self,
-                _job: &TestWorkerExplicitJobHooksJob,
+                _job: TestWorkerExplicitJobHooksJob,
                 _ctx: &oxanus::JobContext,
             ) -> Result<(), WorkerError> {
                 Ok(())
@@ -427,6 +518,33 @@ mod tests {
         )
         .expect("explicit job hook paths should still populate the envelope");
         assert_eq!(explicit_envelope.meta.throttle_cost, Some(11));
+
+        #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+        #[oxanus(worker = TestWorkerBatch)]
+        struct TestWorkerBatchJob {
+            value: u32,
+        }
+
+        #[derive(oxanus::Worker)]
+        #[oxanus(batch_size = 25, batch_timeout_ms = 150)]
+        struct TestWorkerBatch;
+
+        impl TestWorkerBatch {
+            async fn process_batch(
+                &self,
+                _jobs: Vec<oxanus::BatchItem<TestWorkerBatchJob>>,
+            ) -> Result<(), WorkerError> {
+                Ok(())
+            }
+        }
+
+        let batch_config = <TestWorkerBatch as oxanus::Worker<TestWorkerBatchJob>>::batch_config()
+            .expect("batch attributes should generate worker batch config");
+        assert_eq!(batch_config.size(), 25);
+        assert_eq!(
+            batch_config.timeout(),
+            std::time::Duration::from_millis(150)
+        );
     }
 
     #[tokio::test]
@@ -448,7 +566,7 @@ mod tests {
         impl TestCronWorker {
             async fn process(
                 &self,
-                _job: &TestCronJob,
+                _job: TestCronJob,
                 _ctx: &oxanus::JobContext,
             ) -> Result<(), WorkerError> {
                 Ok(())
@@ -481,7 +599,7 @@ mod tests {
         impl NoResurrectWorker {
             async fn process(
                 &self,
-                _job: &NoResurrectJob,
+                _job: NoResurrectJob,
                 _ctx: &oxanus::JobContext,
             ) -> Result<(), WorkerError> {
                 Ok(())
@@ -499,7 +617,7 @@ mod tests {
         impl DefaultResurrectWorker {
             async fn process(
                 &self,
-                _job: &DefaultResurrectJob,
+                _job: DefaultResurrectJob,
                 _ctx: &oxanus::JobContext,
             ) -> Result<(), WorkerError> {
                 Ok(())

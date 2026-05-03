@@ -58,7 +58,7 @@ struct MyJob {
 struct MyWorker;
 
 impl MyWorker {
-    async fn process(&self, job: &MyJob, _ctx: &oxanus::JobContext) -> Result<(), MyError> {
+    async fn process(&self, job: MyJob, _ctx: &oxanus::JobContext) -> Result<(), MyError> {
         println!("Processing: {}", job.data);
         Ok(())
     }
@@ -130,8 +130,11 @@ Jobs carry the data that gets enqueued and define enqueue-time metadata. Workers
 | `#[oxanus(throttle_cost = 2)]` - set per-job throttle cost | `#[oxanus(max_retries = 3)]` - set maximum retry attempts |
 |  | `#[oxanus(retry_delay = 5)]` - set retry delay in seconds |
 |  | `#[oxanus(cron(schedule = "*/5 * * * * *", queue = MyQueue))]` - schedule periodic jobs |
+|  | `#[oxanus(batch_size = 100, batch_timeout_ms = 500)]` - process jobs in batches |
 
 For job hooks, `Self::...` resolves to the job type. For worker hooks, `Self::...` resolves to the worker type.
+
+Batch workers use all-or-nothing result semantics: if `process_batch` returns `Ok(())`, every job in the batch is marked successful; if it returns an error or panics, every job in that batch follows the normal retry or failure path. Batch handlers should therefore be idempotent, or should only commit external side effects after the whole batch is ready to succeed.
 
 ### Queues
 

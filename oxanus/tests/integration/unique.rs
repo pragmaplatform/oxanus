@@ -37,13 +37,15 @@ impl oxanus::FromContext<WorkerState> for WorkerUniqueSkip {
 impl oxanus::Worker<WorkerUniqueSkipJob> for WorkerUniqueSkip {
     type Error = WorkerError;
 
-    async fn process(
+    async fn run_batch(
         &self,
-        job: &WorkerUniqueSkipJob,
-        _ctx: &oxanus::JobContext,
+        jobs: Vec<oxanus::BatchItem<WorkerUniqueSkipJob>>,
     ) -> Result<(), WorkerError> {
         let mut redis = self.state.redis.get().await?;
-        let _: () = redis.set_ex(&job.key, job.value.to_string(), 3).await?;
+        for item in jobs {
+            let job = item.job;
+            let _: () = redis.set_ex(&job.key, job.value.to_string(), 3).await?;
+        }
         Ok(())
     }
 
@@ -88,13 +90,15 @@ impl oxanus::FromContext<WorkerState> for WorkerUniqueReplace {
 impl oxanus::Worker<WorkerUniqueReplaceJob> for WorkerUniqueReplace {
     type Error = WorkerError;
 
-    async fn process(
+    async fn run_batch(
         &self,
-        job: &WorkerUniqueReplaceJob,
-        _ctx: &oxanus::JobContext,
+        jobs: Vec<oxanus::BatchItem<WorkerUniqueReplaceJob>>,
     ) -> Result<(), WorkerError> {
         let mut redis = self.state.redis.get().await?;
-        let _: () = redis.set_ex(&job.key, job.value.to_string(), 3).await?;
+        for item in jobs {
+            let job = item.job;
+            let _: () = redis.set_ex(&job.key, job.value.to_string(), 3).await?;
+        }
         Ok(())
     }
 
