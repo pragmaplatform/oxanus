@@ -86,7 +86,6 @@
                     <h2 class="text-lg font-semibold">Queue Lengths</h2>
                 </div>
                 <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div id="queue-length-chart-key" class="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-400"></div>
                     <div id="queue-length-chart" class="w-full h-[300px]"></div>
                 </div>
             </div>
@@ -95,7 +94,6 @@
                     <h2 class="text-lg font-semibold">Total Time</h2>
                 </div>
                 <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div id="execution-chart-key" class="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-400"></div>
                     <div id="execution-chart" class="w-full h-[300px]"></div>
                 </div>
             </div>
@@ -104,7 +102,6 @@
                     <h2 class="text-lg font-semibold">Total Processed</h2>
                 </div>
                 <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
-                    <div id="processed-chart-key" class="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-400"></div>
                     <div id="processed-chart" class="w-full h-[300px]"></div>
                 </div>
             </div>
@@ -190,28 +187,15 @@
                 return palette[index % palette.length];
             }
 
-            function buildChartKey(keyId, payload) {
-                var keyEl = document.getElementById(keyId);
-                if (!keyEl) {
-                    return;
-                }
-
-                payload.series.forEach(function (series, index) {
-                    var item = document.createElement('span');
-                    item.className = 'inline-flex min-w-0 items-center gap-2';
-                    item.title = series.fullLabel || series.label;
-
-                    var swatch = document.createElement('span');
-                    swatch.className = 'h-2 w-2 shrink-0 rounded-full';
-                    swatch.style.backgroundColor = seriesColor(index);
-
-                    var label = document.createElement('span');
-                    label.className = 'truncate';
-                    label.textContent = series.label;
-
-                    item.appendChild(swatch);
-                    item.appendChild(label);
-                    keyEl.appendChild(item);
+            function sortedSeriesRows(payload, idx) {
+                return payload.series.map(function (series, seriesIdx) {
+                    return {
+                        series: series,
+                        seriesIdx: seriesIdx,
+                        value: series.data[idx] || 0
+                    };
+                }).sort(function (a, b) {
+                    return (b.value - a.value) || (a.seriesIdx - b.seriesIdx);
                 });
             }
 
@@ -241,14 +225,14 @@
                     time.append(formatTime(payload.timestamps[idx]));
                     tooltip.appendChild(time);
 
-                    payload.series.forEach(function (series, seriesIdx) {
+                    sortedSeriesRows(payload, idx).forEach(function (entry) {
                         var row = document.createElement('div');
                         var label = document.createElement('span');
                         label.className = 'chart-tooltip-label';
-                        label.textContent = (series.fullLabel || series.label) + ': ';
-                        label.style.color = seriesColor(seriesIdx);
+                        label.textContent = (entry.series.fullLabel || entry.series.label) + ': ';
+                        label.style.color = seriesColor(entry.seriesIdx);
                         row.appendChild(label);
-                        row.append(formatter(series.data[idx] || 0));
+                        row.append(formatter(entry.value));
                         tooltip.appendChild(row);
                     });
 
@@ -265,12 +249,11 @@
                 };
             }
 
-            function renderChart(chartId, keyId, payload, valueFormatter) {
+            function renderChart(chartId, payload, valueFormatter) {
                 var chartEl = document.getElementById(chartId);
                 if (!chartEl) {
                     return;
                 }
-                buildChartKey(keyId, payload);
 
                 var data = [payload.timestamps].concat(payload.series.map(function (series) {
                     return series.data;
@@ -327,12 +310,11 @@
                 });
             }
 
-            function renderStackedProcessedChart(chartId, keyId, payload) {
+            function renderStackedProcessedChart(chartId, payload) {
                 var chartEl = document.getElementById(chartId);
                 if (!chartEl) {
                     return;
                 }
-                buildChartKey(keyId, payload);
 
                 var width = Math.max(chartEl.clientWidth, 320);
                 var height = 300;
@@ -448,14 +430,14 @@
                     time.append(formatTime(timestamps[idx]));
                     tooltip.appendChild(time);
 
-                    payload.series.forEach(function (series, seriesIdx) {
+                    sortedSeriesRows(payload, idx).forEach(function (entry) {
                         var row = document.createElement('div');
                         var label = document.createElement('span');
                         label.className = 'chart-tooltip-label';
-                        label.textContent = (series.fullLabel || series.label) + ': ';
-                        label.style.color = seriesColor(seriesIdx);
+                        label.textContent = (entry.series.fullLabel || entry.series.label) + ': ';
+                        label.style.color = seriesColor(entry.seriesIdx);
                         row.appendChild(label);
-                        row.append(formatCount(series.data[idx] || 0));
+                        row.append(formatCount(entry.value));
                         tooltip.appendChild(row);
                     });
 
@@ -485,19 +467,16 @@
 
             renderChart(
                 'queue-length-chart',
-                'queue-length-chart-key',
                 {{ self.queue_length_chart_data_json()|safe }},
                 formatCount
             );
             renderChart(
                 'execution-chart',
-                'execution-chart-key',
                 {{ self.execution_chart_data_json()|safe }},
                 formatSeconds
             );
             renderStackedProcessedChart(
                 'processed-chart',
-                'processed-chart-key',
                 {{ self.processed_chart_data_json()|safe }}
             );
         });
