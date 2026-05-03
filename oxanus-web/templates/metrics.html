@@ -83,6 +83,15 @@
         <section class="space-y-6 mb-10">
             <div>
                 <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold">Queue Lengths</h2>
+                </div>
+                <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
+                    <div id="queue-length-chart-key" class="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-400"></div>
+                    <div id="queue-length-chart" class="w-full h-[300px]"></div>
+                </div>
+            </div>
+            <div>
+                <div class="flex items-center justify-between mb-4">
                     <h2 class="text-lg font-semibold">Total Time</h2>
                 </div>
                 <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
@@ -474,6 +483,12 @@
                 });
             }
 
+            renderChart(
+                'queue-length-chart',
+                'queue-length-chart-key',
+                {{ self.queue_length_chart_data_json()|safe }},
+                formatCount
+            );
             renderChart(
                 'execution-chart',
                 'execution-chart-key',

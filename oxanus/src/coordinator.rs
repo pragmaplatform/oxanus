@@ -219,7 +219,6 @@ where
 
     let result = executor::run(Arc::clone(&config), job, &mut envelope).await?;
     drop(pending.permit);
-
     process_result(result_tx, result, envelope).await;
 
     Ok(())
@@ -532,7 +531,6 @@ where
 
     let outcome = executor::run_batch(Arc::clone(&config), job, &mut envelopes).await?;
     drop(permits);
-
     process_batch_result(result_tx, outcome, envelopes).await;
 
     Ok(())
