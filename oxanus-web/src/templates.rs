@@ -117,6 +117,7 @@ pub(crate) struct MetricsTemplate {
     pub base_path: String,
     pub active_tab: &'static str,
     pub metrics: oxanus::JobMetricsSnapshot,
+    pub queue_lengths: oxanus::QueueLengthMetricsSnapshot,
 }
 
 impl MetricsTemplate {
@@ -130,6 +131,35 @@ impl MetricsTemplate {
 
     pub fn processed_chart_data_json(&self) -> String {
         self.summary_chart_data_json(|point| point.processed as f64)
+    }
+
+    pub fn queue_length_chart_data_json(&self) -> String {
+        let timestamps: Vec<i64> = self.queue_lengths.queues.first().map_or_else(
+            || {
+                (0..self.queue_lengths.minutes)
+                    .map(|idx| self.queue_lengths.starts_at + i64::try_from(idx).unwrap_or(0) * 60)
+                    .collect()
+            },
+            |queue| queue.series.iter().map(|point| point.timestamp).collect(),
+        );
+        let series: Vec<serde_json::Value> = self
+            .queue_lengths
+            .queues
+            .iter()
+            .map(|queue| {
+                let data: Vec<u64> = queue.series.iter().map(|point| point.enqueued).collect();
+                serde_json::json!({
+                    "label": queue.queue.clone(),
+                    "data": data,
+                })
+            })
+            .collect();
+
+        serde_json::json!({
+            "timestamps": timestamps,
+            "series": series,
+        })
+        .to_string()
     }
 
     fn summary_chart_data_json(&self, value: impl Fn(&oxanus::JobMetricsPoint) -> f64) -> String {

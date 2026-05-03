@@ -294,6 +294,34 @@ pub struct JobMetricsDetail {
     pub histogram: Vec<JobMetricsHistogramBucket>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct QueueLengthMetricsPoint {
+    /// Start timestamp for this minute bucket.
+    pub timestamp: i64,
+    /// Jobs enqueued in this queue when the sample was recorded.
+    pub enqueued: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueLengthMetricsSeries {
+    /// Queue name.
+    pub queue: String,
+    /// Per-minute queue length samples.
+    pub series: Vec<QueueLengthMetricsPoint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueLengthMetricsSnapshot {
+    /// Inclusive start timestamp for the queried window.
+    pub starts_at: i64,
+    /// Inclusive end timestamp for the queried window.
+    pub ends_at: i64,
+    /// Number of minute buckets returned.
+    pub minutes: usize,
+    /// Per-queue length samples sorted by peak queue length descending.
+    pub queues: Vec<QueueLengthMetricsSeries>,
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct JobMetricsBuffer {
     entries: HashMap<(i64, MetricIdentity), PendingJobMetrics>,
@@ -462,6 +490,57 @@ pub(crate) fn aggregate_counter_hashes(
 }
 
 #[must_use]
+pub(crate) fn queue_length_series_from_hashes(
+    minutes: &[i64],
+    hashes: Vec<HashMap<String, i64>>,
+) -> Vec<QueueLengthMetricsSeries> {
+    let series_template: Vec<QueueLengthMetricsPoint> = minutes
+        .iter()
+        .map(|minute| QueueLengthMetricsPoint {
+            timestamp: minute * 60,
+            enqueued: 0,
+        })
+        .collect();
+    let mut queues: HashMap<String, Vec<QueueLengthMetricsPoint>> = HashMap::new();
+
+    for (idx, hash) in hashes.into_iter().enumerate() {
+        for (queue, raw_value) in hash {
+            let value = u64::try_from(raw_value).unwrap_or_default();
+            let series = queues
+                .entry(queue)
+                .or_insert_with(|| series_template.clone());
+            if let Some(point) = series.get_mut(idx) {
+                point.enqueued = value;
+            }
+        }
+    }
+
+    let mut queues: Vec<QueueLengthMetricsSeries> = queues
+        .into_iter()
+        .map(|(queue, series)| QueueLengthMetricsSeries { queue, series })
+        .collect();
+
+    queues.sort_by(|a, b| {
+        let a_peak = a
+            .series
+            .iter()
+            .map(|point| point.enqueued)
+            .max()
+            .unwrap_or_default();
+        let b_peak = b
+            .series
+            .iter()
+            .map(|point| point.enqueued)
+            .max()
+            .unwrap_or_default();
+
+        b_peak.cmp(&a_peak).then_with(|| a.queue.cmp(&b.queue))
+    });
+
+    queues
+}
+
+#[must_use]
 pub(crate) fn histogram_bucket_index(duration_ms: u64) -> usize {
     HISTOGRAM_BUCKET_INTERVALS_MS
         .iter()
@@ -551,8 +630,12 @@ mod tests {
     #[test]
     fn bitfield_increment_args_use_saturated_u16_counters() {
         let mut buckets = [0_u64; HISTOGRAM_BUCKET_COUNT];
-        buckets[0] = 2;
-        buckets[13] = 70_000;
+        *buckets
+            .first_mut()
+            .expect("histogram should include the first bucket") = 2;
+        *buckets
+            .get_mut(13)
+            .expect("histogram should include the last bucket") = 70_000;
 
         let args = histogram_bitfield_increment_args(&buckets);
 
@@ -658,6 +741,62 @@ mod tests {
         assert_eq!(
             MetricIdentity::from_field_key(&identity.field_key()),
             Some(identity)
+        );
+    }
+
+    #[test]
+    fn queue_length_series_aggregates_and_sorts_by_peak_length() {
+        let minutes = vec![10, 11, 12];
+        let mut hashes = vec![HashMap::new(); minutes.len()];
+        hashes
+            .first_mut()
+            .expect("query should include a first minute bucket")
+            .insert("default".to_string(), 2);
+        hashes
+            .get_mut(1)
+            .expect("query should include a second minute bucket")
+            .insert("critical".to_string(), 7);
+        let third_hash = hashes
+            .get_mut(2)
+            .expect("query should include a third minute bucket");
+        third_hash.insert("default".to_string(), 4);
+        third_hash.insert("critical".to_string(), 0);
+
+        let queues = queue_length_series_from_hashes(&minutes, hashes);
+
+        assert_eq!(queues.len(), 2);
+        let critical = queues
+            .first()
+            .expect("critical queue length series should exist");
+        assert_eq!(critical.queue, "critical");
+        assert_eq!(
+            critical
+                .series
+                .first()
+                .expect("critical series should include the first point")
+                .timestamp,
+            600
+        );
+        assert_eq!(
+            critical
+                .series
+                .iter()
+                .map(|point| point.enqueued)
+                .collect::<Vec<_>>(),
+            vec![0, 7, 0]
+        );
+
+        let default = queues
+            .get(1)
+            .expect("default queue length series should exist");
+        assert_eq!(default.queue, "default");
+        assert_eq!(
+            default
+                .series
+                .iter()
+                .map(|point| point.enqueued)
+                .collect::<Vec<_>>(),
+            vec![2, 0, 4]
         );
     }
 

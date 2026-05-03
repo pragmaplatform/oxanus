@@ -66,15 +66,15 @@ pub(crate) async fn metrics(
     Extension(state): Extension<OxanusWebState>,
     Query(params): Query<MetricsParams>,
 ) -> Result<MetricsTemplate, OxanusWebError> {
-    let metrics = state
-        .storage
-        .job_metrics(oxanus::JobMetricsQuery::new(params.minutes.unwrap_or(0)))
-        .await?;
+    let query = oxanus::JobMetricsQuery::new(params.minutes.unwrap_or(0));
+    let metrics = state.storage.job_metrics(query).await?;
+    let queue_lengths = state.storage.queue_length_metrics(query).await?;
 
     Ok(MetricsTemplate {
         base_path: state.base_path,
         active_tab: "/metrics",
         metrics,
+        queue_lengths,
     })
 }
 

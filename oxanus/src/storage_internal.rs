@@ -16,10 +16,11 @@ use crate::{
         JobMetricsSnapshot, METRIC_EXECUTION_MS, METRIC_FAILED_EXECUTIONS, METRIC_FAILED_JOBS,
         METRIC_PANICKED_EXECUTIONS, METRIC_PANICKED_JOBS, METRIC_PROCESSED_JOBS,
         METRIC_SUCCESSFUL_EXECUTIONS, METRICS_RETENTION_SECS, MetricIdentity,
-        aggregate_counter_hashes, histogram_bitfield_fetch_args, histogram_bitfield_increment_args,
-        histogram_buckets_from_counts, metric_minutes,
+        QueueLengthMetricsSnapshot, aggregate_counter_hashes, histogram_bitfield_fetch_args,
+        histogram_bitfield_increment_args, histogram_buckets_from_counts, metric_minutes,
+        queue_length_series_from_hashes,
     },
-    result_collector::{WorkerResult, WorkerResultKind},
+    result_collector::QueueResultStats,
     stats::{DynamicQueueStats, Process, QueueStats, Stats, StatsGlobal, StatsProcessing},
     storage_keys::StorageKeys,
     storage_types::QueueListOpts,
@@ -30,6 +31,7 @@ const JOB_EXPIRE_TIME: i64 = 7 * 24 * 3600; // 7 days
 const RESURRECT_THRESHOLD_SECS: i64 = 5;
 const MAX_CONSECUTIVE_REDIS_FAILURES: u32 = 30;
 const SCAN_BATCH_SIZE: usize = 500;
+const QUEUE_LENGTH_SNAPSHOT_TTL_SECS: i64 = 120;
 
 #[derive(Clone)]
 pub(crate) struct StorageInternal {
@@ -43,6 +45,12 @@ enum JobEnqueueAction {
     Default,
     Skip,
     Replace,
+}
+
+#[derive(Default)]
+struct QueueLengthSnapshot {
+    enqueued: Option<i64>,
+    refreshed_at: Option<i64>,
 }
 
 impl StorageInternal {
@@ -798,52 +806,50 @@ impl StorageInternal {
         filter: bool,
     ) -> Result<Vec<QueueStats>, OxanusError> {
         let list: HashMap<String, i64> = (*redis).hgetall(&self.keys.stats).await?;
+        let now = chrono::Utc::now().timestamp();
 
         let mut map = HashMap::new();
         let mut queue_values: Vec<(String, String, i64)> = Vec::new();
+        let mut queue_length_snapshots: HashMap<String, QueueLengthSnapshot> = HashMap::new();
 
         for queue in queues {
             queue_values.push((queue.clone(), "processed".to_string(), 0));
         }
 
         for (key, value) in list {
-            let parts: Vec<&str> = key.rsplitn(2, ':').collect();
-            let mut parts_iter = parts.into_iter();
-            let stat_key = match parts_iter.next() {
-                Some(stat_key) => stat_key,
-                None => continue,
-            };
-            let queue_full_key = match parts_iter.next() {
-                Some(queue_key) => queue_key,
+            let (queue_full_key, stat_key) = match Self::stats_key_parts(&key) {
+                Some(parts) => parts,
                 None => continue,
             };
 
-            if filter {
-                let base_key = queue_full_key
-                    .split_once('#')
-                    .map_or(queue_full_key, |(base, _)| base);
-                let matches = queues.iter().any(|q| {
-                    let q_base = q.split_once('#').map_or(q.as_str(), |(base, _)| base);
-                    q_base == base_key || q == queue_full_key
-                });
-                if !matches {
-                    continue;
-                }
+            if filter && !Self::stats_key_matches_filter(queue_full_key, queues) {
+                continue;
             }
 
-            queue_values.push((queue_full_key.to_string(), stat_key.to_string(), value));
+            match stat_key {
+                "enqueued" => {
+                    queue_length_snapshots
+                        .entry(queue_full_key.to_string())
+                        .or_default()
+                        .enqueued = Some(value);
+                }
+                "enqueued_at" => {
+                    queue_length_snapshots
+                        .entry(queue_full_key.to_string())
+                        .or_default()
+                        .refreshed_at = Some(value);
+                }
+                _ => {
+                    queue_values.push((queue_full_key.to_string(), stat_key.to_string(), value));
+                }
+            }
         }
 
         for (queue_full_key, stat_key, value) in queue_values {
-            let queue_key_parts: Vec<&str> = queue_full_key.splitn(2, '#').collect();
-            let mut queue_key_parts_iter = queue_key_parts.into_iter();
-
-            let queue_key = match queue_key_parts_iter.next() {
-                Some(queue_key) => queue_key,
-                None => continue,
+            let Some((queue_key, queue_dynamic_key)) = Self::split_queue_stats_key(&queue_full_key)
+            else {
+                continue;
             };
-
-            let queue_dynamic_key = queue_key_parts_iter.next();
 
             let queue_stats = map
                 .entry(queue_key.to_string())
@@ -899,18 +905,41 @@ impl StorageInternal {
             }
         }
 
+        for queue_full_key in queue_length_snapshots.keys() {
+            if Self::fresh_queue_length_snapshot(&queue_length_snapshots, queue_full_key, now)
+                .is_some_and(|enqueued| enqueued > 0)
+            {
+                Self::ensure_queue_stats_entry(&mut map, queue_full_key);
+            }
+        }
+
         let mut values: Vec<QueueStats> = map.into_values().collect();
 
         for value in values.iter_mut() {
             if value.queues.is_empty() {
-                value.enqueued = self.enqueued_count_w_conn(redis, &value.key).await?;
+                value.enqueued = match Self::fresh_queue_length_snapshot(
+                    &queue_length_snapshots,
+                    &value.key,
+                    now,
+                ) {
+                    Some(enqueued) => enqueued,
+                    None => self.enqueued_count_w_conn(redis, &value.key).await?,
+                };
                 value.latency_s = self.latency_s_w_conn(redis, &value.key).await?;
             } else {
                 for dynamic_queue in value.queues.iter_mut() {
                     let dynamic_queue_key = format!("{}#{}", value.key, dynamic_queue.suffix);
-                    let enqueued = self
-                        .enqueued_count_w_conn(redis, &dynamic_queue_key)
-                        .await?;
+                    let enqueued = match Self::fresh_queue_length_snapshot(
+                        &queue_length_snapshots,
+                        &dynamic_queue_key,
+                        now,
+                    ) {
+                        Some(enqueued) => enqueued,
+                        None => {
+                            self.enqueued_count_w_conn(redis, &dynamic_queue_key)
+                                .await?
+                        }
+                    };
                     let latency_s = self.latency_s_w_conn(redis, &dynamic_queue_key).await?;
 
                     dynamic_queue.enqueued = enqueued;
@@ -931,34 +960,171 @@ impl StorageInternal {
         Ok(values)
     }
 
-    pub async fn update_stats(&self, result: &WorkerResult) -> Result<(), OxanusError> {
+    fn stats_key_parts(key: &str) -> Option<(&str, &str)> {
+        key.rsplit_once(':')
+    }
+
+    fn split_queue_stats_key(queue_full_key: &str) -> Option<(&str, Option<&str>)> {
+        let mut queue_key_parts = queue_full_key.splitn(2, '#');
+        let queue_key = queue_key_parts.next()?;
+        Some((queue_key, queue_key_parts.next()))
+    }
+
+    fn ensure_queue_stats_entry(map: &mut HashMap<String, QueueStats>, queue_full_key: &str) {
+        let Some((queue_key, queue_dynamic_key)) = Self::split_queue_stats_key(queue_full_key)
+        else {
+            return;
+        };
+
+        let queue_stats = map
+            .entry(queue_key.to_string())
+            .or_insert_with(|| QueueStats {
+                key: queue_key.to_string(),
+                enqueued: 0,
+                processed: 0,
+                succeeded: 0,
+                panicked: 0,
+                failed: 0,
+                latency_s: 0.0,
+                queues: vec![],
+            });
+
+        if let Some(queue_dynamic_key) = queue_dynamic_key
+            && !queue_stats
+                .queues
+                .iter()
+                .any(|q| q.suffix == queue_dynamic_key)
+        {
+            queue_stats.queues.push(DynamicQueueStats {
+                suffix: queue_dynamic_key.to_string(),
+                enqueued: 0,
+                processed: 0,
+                succeeded: 0,
+                panicked: 0,
+                failed: 0,
+                latency_s: 0.0,
+            });
+        }
+    }
+
+    fn stats_key_matches_filter(queue_full_key: &str, queues: &[String]) -> bool {
+        let base_key = queue_full_key
+            .split_once('#')
+            .map_or(queue_full_key, |(base, _)| base);
+
+        queues.iter().any(|queue| {
+            let queue_base = queue
+                .split_once('#')
+                .map_or(queue.as_str(), |(base, _)| base);
+            queue_base == base_key || queue.as_str() == queue_full_key
+        })
+    }
+
+    fn fresh_queue_length_snapshot(
+        queue_length_snapshots: &HashMap<String, QueueLengthSnapshot>,
+        queue: &str,
+        now: i64,
+    ) -> Option<usize> {
+        let snapshot = queue_length_snapshots.get(queue)?;
+        let refreshed_at = snapshot.refreshed_at?;
+        if now.saturating_sub(refreshed_at) > QUEUE_LENGTH_SNAPSHOT_TTL_SECS {
+            return None;
+        }
+
+        usize::try_from(snapshot.enqueued?).ok()
+    }
+
+    pub(crate) async fn flush_result_stats(
+        &self,
+        stats: &HashMap<String, QueueResultStats>,
+    ) -> Result<(), OxanusError> {
+        if stats.is_empty() {
+            return Ok(());
+        }
+
         let mut redis = self.connection().await?;
-        let queue = result.queue.clone();
-
-        let count = redis_metric_increment(result.job_count);
-        let processed_key = format!("{queue}:processed");
-        let succeeded_key = format!("{queue}:succeeded");
-        let failed_key = format!("{queue}:failed");
-        let panicked_key = format!("{queue}:panicked");
-
         let mut pipe = redis::pipe();
-        pipe.hincr(&self.keys.stats, processed_key, count);
-        match result.kind {
-            WorkerResultKind::Success => {
-                pipe.hincr(&self.keys.stats, succeeded_key, count);
+        let mut has_commands = false;
+
+        for (queue, queue_stats) in stats {
+            if queue_stats.processed > 0 {
+                pipe.hincr(
+                    &self.keys.stats,
+                    format!("{queue}:processed"),
+                    queue_stats.processed,
+                );
+                has_commands = true;
             }
-            WorkerResultKind::Panicked => {
-                pipe.hincr(&self.keys.stats, failed_key, count);
-                pipe.hincr(&self.keys.stats, panicked_key, count);
+            if queue_stats.succeeded > 0 {
+                pipe.hincr(
+                    &self.keys.stats,
+                    format!("{queue}:succeeded"),
+                    queue_stats.succeeded,
+                );
+                has_commands = true;
             }
-            WorkerResultKind::Failed => {
-                pipe.hincr(&self.keys.stats, failed_key, count);
+            if queue_stats.panicked > 0 {
+                pipe.hincr(
+                    &self.keys.stats,
+                    format!("{queue}:panicked"),
+                    queue_stats.panicked,
+                );
+                has_commands = true;
+            }
+            if queue_stats.failed > 0 {
+                pipe.hincr(
+                    &self.keys.stats,
+                    format!("{queue}:failed"),
+                    queue_stats.failed,
+                );
+                has_commands = true;
             }
         }
 
-        let _: () = pipe.query_async(&mut redis).await?;
+        if has_commands {
+            let _: () = pipe.query_async(&mut redis).await?;
+        }
 
         Ok(())
+    }
+
+    pub(crate) async fn refresh_queue_length_stats(
+        &self,
+        queues: &[String],
+    ) -> Result<HashMap<String, i64>, OxanusError> {
+        if queues.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut redis = self.connection().await?;
+        let mut queues = queues.to_vec();
+        queues.sort();
+        queues.dedup();
+        let mut lengths = HashMap::with_capacity(queues.len());
+
+        for queue in &queues {
+            let count: i64 = (*redis).llen(self.namespace_queue(queue)).await?;
+            lengths.insert(queue.clone(), count);
+        }
+
+        let refreshed_at = chrono::Utc::now().timestamp();
+        let queue_length_key = self.metrics_queue_length_key(refreshed_at.div_euclid(60));
+        let mut pipe = redis::pipe();
+
+        for (queue, count) in &lengths {
+            pipe.hset(&self.keys.stats, format!("{queue}:enqueued"), *count)
+                .hset(
+                    &self.keys.stats,
+                    format!("{queue}:enqueued_at"),
+                    refreshed_at,
+                )
+                .hset(&queue_length_key, queue, *count);
+        }
+        pipe.expire(queue_length_key, METRICS_RETENTION_SECS);
+
+        let _: () = pipe.query_async(&mut redis).await?;
+
+        Ok(lengths)
     }
 
     pub async fn flush_job_metrics(&self, buffer: &JobMetricsBuffer) -> Result<(), OxanusError> {
@@ -1094,6 +1260,26 @@ impl StorageInternal {
             totals: aggregation.totals,
             series: aggregation.series,
             histogram: histogram_buckets_from_counts(&histogram),
+        })
+    }
+
+    pub async fn queue_length_metrics(
+        &self,
+        query: JobMetricsQuery,
+    ) -> Result<QueueLengthMetricsSnapshot, OxanusError> {
+        let mut redis = self.connection().await?;
+        let minutes = metric_minutes(chrono::Utc::now().timestamp(), query);
+        let hashes = self
+            .queue_length_metric_hashes(&mut redis, &minutes)
+            .await?;
+        let starts_at = minutes.first().copied().unwrap_or_default() * 60;
+        let ends_at = minutes.last().copied().unwrap_or_default() * 60;
+
+        Ok(QueueLengthMetricsSnapshot {
+            starts_at,
+            ends_at,
+            minutes: minutes.len(),
+            queues: queue_length_series_from_hashes(&minutes, hashes),
         })
     }
 
@@ -1449,6 +1635,10 @@ impl StorageInternal {
         format!("{}:j:{minute}", self.keys.metrics_prefix)
     }
 
+    fn metrics_queue_length_key(&self, minute: i64) -> String {
+        format!("{}:q:{minute}", self.keys.metrics_prefix)
+    }
+
     fn metrics_histogram_key(&self, identity: &MetricIdentity, minute: i64) -> String {
         format!(
             "{}:h:{}:{minute}",
@@ -1469,6 +1659,22 @@ impl StorageInternal {
         let mut pipe = redis::pipe();
         for minute in minutes {
             pipe.hgetall(self.metrics_counter_key(*minute));
+        }
+        Ok(pipe.query_async(redis).await?)
+    }
+
+    async fn queue_length_metric_hashes(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        minutes: &[i64],
+    ) -> Result<Vec<HashMap<String, i64>>, OxanusError> {
+        if minutes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut pipe = redis::pipe();
+        for minute in minutes {
+            pipe.hgetall(self.metrics_queue_length_key(*minute));
         }
         Ok(pipe.query_async(redis).await?)
     }
@@ -1891,6 +2097,314 @@ mod tests {
                 "prefix-a".to_string(),
             ]
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_flush_result_stats_batches_counts() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let static_queue = random_string();
+        let dynamic_prefix = random_string();
+        let dynamic_queue = format!("{dynamic_prefix}#fast");
+
+        let mut updates = HashMap::new();
+        updates.insert(
+            static_queue.clone(),
+            QueueResultStats {
+                processed: 3,
+                succeeded: 1,
+                panicked: 1,
+                failed: 2,
+            },
+        );
+        updates.insert(
+            dynamic_queue,
+            QueueResultStats {
+                processed: 2,
+                succeeded: 2,
+                panicked: 0,
+                failed: 0,
+            },
+        );
+
+        storage.flush_result_stats(&updates).await?;
+
+        let stats = storage.stats().await?;
+        let static_stats = stats
+            .queues
+            .iter()
+            .find(|queue| queue.key == static_queue)
+            .expect("static queue stats should exist");
+        assert_eq!(static_stats.processed, 3);
+        assert_eq!(static_stats.succeeded, 1);
+        assert_eq!(static_stats.panicked, 1);
+        assert_eq!(static_stats.failed, 2);
+
+        let dynamic_stats = stats
+            .queues
+            .iter()
+            .find(|queue| queue.key == dynamic_prefix)
+            .expect("dynamic queue stats should exist");
+        assert_eq!(dynamic_stats.processed, 2);
+        assert_eq!(dynamic_stats.succeeded, 2);
+        assert_eq!(dynamic_stats.panicked, 0);
+        assert_eq!(dynamic_stats.failed, 0);
+        assert_eq!(dynamic_stats.queues.len(), 1);
+        let dynamic_queue_stats = dynamic_stats
+            .queues
+            .first()
+            .expect("fast dynamic queue stats should exist");
+        assert_eq!(dynamic_queue_stats.suffix, "fast");
+        assert_eq!(dynamic_queue_stats.processed, 2);
+        assert_eq!(dynamic_queue_stats.succeeded, 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_refresh_queue_length_stats_reports_llen() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let static_queue = random_string();
+        let dynamic_prefix = random_string();
+        let dynamic_queue = format!("{dynamic_prefix}#fast");
+
+        storage
+            .enqueue(JobEnvelope::new(static_queue.clone(), TestJob {})?)
+            .await?;
+        storage
+            .enqueue(JobEnvelope::new(static_queue.clone(), TestJob {})?)
+            .await?;
+        storage
+            .enqueue(JobEnvelope::new(dynamic_queue.clone(), TestJob {})?)
+            .await?;
+        storage
+            .enqueue(JobEnvelope::new(dynamic_queue.clone(), TestJob {})?)
+            .await?;
+        storage
+            .enqueue(JobEnvelope::new(dynamic_queue.clone(), TestJob {})?)
+            .await?;
+
+        let reported_lengths = storage
+            .refresh_queue_length_stats(&[static_queue.clone(), dynamic_queue.clone()])
+            .await?;
+        assert_eq!(reported_lengths.get(&static_queue), Some(&2));
+        assert_eq!(reported_lengths.get(&dynamic_queue), Some(&3));
+
+        let mut redis = storage.connection().await?;
+        let static_enqueued: i64 = (*redis)
+            .hget(&storage.keys.stats, format!("{static_queue}:enqueued"))
+            .await?;
+        let static_refreshed_at: i64 = (*redis)
+            .hget(&storage.keys.stats, format!("{static_queue}:enqueued_at"))
+            .await?;
+        assert_eq!(static_enqueued, 2);
+        assert!(static_refreshed_at >= chrono::Utc::now().timestamp() - 3);
+
+        let stats = storage.stats().await?;
+        let static_stats = stats
+            .queues
+            .iter()
+            .find(|queue| queue.key == static_queue)
+            .expect("static queue stats should exist");
+        assert_eq!(static_stats.enqueued, 2);
+
+        let dynamic_stats = stats
+            .queues
+            .iter()
+            .find(|queue| queue.key == dynamic_prefix)
+            .expect("dynamic queue stats should exist");
+        assert_eq!(dynamic_stats.enqueued, 3);
+        assert_eq!(dynamic_stats.queues.len(), 1);
+        let dynamic_queue_stats = dynamic_stats
+            .queues
+            .first()
+            .expect("fast dynamic queue stats should exist");
+        assert_eq!(dynamic_queue_stats.suffix, "fast");
+        assert_eq!(dynamic_queue_stats.enqueued, 3);
+
+        let queue_lengths = storage
+            .queue_length_metrics(JobMetricsQuery::new(2))
+            .await?;
+        let static_series = queue_lengths
+            .queues
+            .iter()
+            .find(|series| series.queue == static_queue)
+            .expect("static queue length series should exist");
+        assert_eq!(
+            static_series
+                .series
+                .iter()
+                .map(|point| point.enqueued)
+                .max(),
+            Some(2)
+        );
+        let dynamic_series = queue_lengths
+            .queues
+            .iter()
+            .find(|series| series.queue == dynamic_queue)
+            .expect("dynamic queue length series should exist");
+        assert_eq!(
+            dynamic_series
+                .series
+                .iter()
+                .map(|point| point.enqueued)
+                .max(),
+            Some(3)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_stats_use_fresh_queue_length_snapshots() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let static_queue = random_string();
+        let dynamic_prefix = random_string();
+        let dynamic_queue_a = format!("{dynamic_prefix}#a");
+        let dynamic_queue_b = format!("{dynamic_prefix}#b");
+        let refreshed_at = chrono::Utc::now().timestamp();
+
+        let mut redis = storage.connection().await?;
+        let _: () = redis::pipe()
+            .hset(&storage.keys.stats, format!("{static_queue}:enqueued"), 42)
+            .hset(
+                &storage.keys.stats,
+                format!("{static_queue}:enqueued_at"),
+                refreshed_at,
+            )
+            .hset(
+                &storage.keys.stats,
+                format!("{dynamic_queue_a}:enqueued"),
+                3,
+            )
+            .hset(
+                &storage.keys.stats,
+                format!("{dynamic_queue_a}:enqueued_at"),
+                refreshed_at,
+            )
+            .hset(
+                &storage.keys.stats,
+                format!("{dynamic_queue_b}:enqueued"),
+                4,
+            )
+            .hset(
+                &storage.keys.stats,
+                format!("{dynamic_queue_b}:enqueued_at"),
+                refreshed_at,
+            )
+            .query_async(&mut redis)
+            .await?;
+
+        let stats = storage.stats().await?;
+        assert_eq!(stats.global.enqueued, 49);
+
+        let static_stats = stats
+            .queues
+            .iter()
+            .find(|queue| queue.key == static_queue)
+            .expect("static queue stats should exist");
+        assert_eq!(static_stats.enqueued, 42);
+
+        let dynamic_stats = stats
+            .queues
+            .iter()
+            .find(|queue| queue.key == dynamic_prefix)
+            .expect("dynamic queue stats should exist");
+        assert_eq!(dynamic_stats.enqueued, 7);
+        assert_eq!(dynamic_stats.queues.len(), 2);
+        let first_dynamic_queue = dynamic_stats
+            .queues
+            .first()
+            .expect("first dynamic queue stats should exist");
+        assert_eq!(first_dynamic_queue.suffix, "a");
+        assert_eq!(first_dynamic_queue.enqueued, 3);
+        let second_dynamic_queue = dynamic_stats
+            .queues
+            .get(1)
+            .expect("second dynamic queue stats should exist");
+        assert_eq!(second_dynamic_queue.suffix, "b");
+        assert_eq!(second_dynamic_queue.enqueued, 4);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_stats_ignore_zero_queue_length_snapshots_without_other_stats() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let static_queue = random_string();
+        let dynamic_prefix = random_string();
+        let dynamic_queue = format!("{dynamic_prefix}#empty");
+        let refreshed_at = chrono::Utc::now().timestamp();
+
+        let mut redis = storage.connection().await?;
+        let _: () = redis::pipe()
+            .hset(&storage.keys.stats, format!("{static_queue}:enqueued"), 0)
+            .hset(
+                &storage.keys.stats,
+                format!("{static_queue}:enqueued_at"),
+                refreshed_at,
+            )
+            .hset(&storage.keys.stats, format!("{dynamic_queue}:enqueued"), 0)
+            .hset(
+                &storage.keys.stats,
+                format!("{dynamic_queue}:enqueued_at"),
+                refreshed_at,
+            )
+            .query_async(&mut redis)
+            .await?;
+
+        let stats = storage.stats().await?;
+
+        assert_eq!(stats.global.enqueued, 0);
+        assert!(
+            !stats
+                .queues
+                .iter()
+                .any(|queue_stats| queue_stats.key == static_queue)
+        );
+        assert!(
+            !stats
+                .queues
+                .iter()
+                .any(|queue_stats| queue_stats.key == dynamic_prefix)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_stats_use_live_llen_when_queue_length_snapshot_is_stale() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        storage
+            .enqueue(JobEnvelope::new(queue.clone(), TestJob {})?)
+            .await?;
+        storage
+            .enqueue(JobEnvelope::new(queue.clone(), TestJob {})?)
+            .await?;
+
+        let stale_refreshed_at =
+            chrono::Utc::now().timestamp() - QUEUE_LENGTH_SNAPSHOT_TTL_SECS - 1;
+        let mut redis = storage.connection().await?;
+        let _: () = redis::pipe()
+            .hset(&storage.keys.stats, format!("{queue}:enqueued"), 42)
+            .hset(
+                &storage.keys.stats,
+                format!("{queue}:enqueued_at"),
+                stale_refreshed_at,
+            )
+            .query_async(&mut redis)
+            .await?;
+
+        let stats = storage.stats().await?;
+        let queue_stats = stats
+            .queues
+            .iter()
+            .find(|queue_stats| queue_stats.key == queue)
+            .expect("queue stats should exist");
+        assert_eq!(queue_stats.enqueued, 2);
 
         Ok(())
     }

@@ -8,9 +8,11 @@ All notable changes to this project will be documented in this file.
 
 - Add `#[derive(oxanus::Job)]` for defining enqueue-time job metadata, including unique IDs, conflict strategy, resurrection behavior, throttle cost, and worker binding.
 - Add optional batch workers with the derive-macro `process_batch` hook, `BatchItem`, `WorkerBatchConfig`, and `#[oxanus(batch_size = ..., batch_timeout_ms = ...)]` worker macro attributes.
+- Add queue length history metrics and a Queue Lengths chart to the web metrics dashboard.
 
 ### Changed
 
+- Batch result stats writes and active queue length snapshots to reduce Redis calls during job completion and dashboard stats reads.
 - Replace runtime Redis `KEYS` calls with cursor-based `SCAN` for queue discovery and orphaned processing queue recovery.
 - Move job-specific derive attributes (`unique_id`, `on_conflict`, `resurrect`, and `throttle_cost`) from `#[derive(oxanus::Worker)]` to `#[derive(oxanus::Job)]`; `Self::...` in job hooks now resolves to the job type.
 - Change worker execution to own job values and route all worker execution through the batched runtime path; job types no longer need `Sync`.

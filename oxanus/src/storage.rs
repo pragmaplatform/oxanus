@@ -3,7 +3,10 @@ use chrono::{DateTime, Utc};
 use crate::{
     error::OxanusError,
     job_envelope::{JobEnvelope, JobId},
-    metrics::{JobMetricsDetail, JobMetricsQuery, JobMetricsSnapshot, MetricIdentity},
+    metrics::{
+        JobMetricsDetail, JobMetricsQuery, JobMetricsSnapshot, MetricIdentity,
+        QueueLengthMetricsSnapshot,
+    },
     queue::Queue,
     stats::{Process, QueueStats, Stats},
     storage_builder::StorageBuilder,
@@ -295,6 +298,17 @@ impl Storage {
         query: JobMetricsQuery,
     ) -> Result<JobMetricsDetail, OxanusError> {
         self.internal.job_metrics_for(identity, query).await
+    }
+
+    /// Returns per-minute queue length samples for active queues.
+    ///
+    /// Samples are recorded by workers during their periodic queue length refresh
+    /// and retained for the same window as job execution metrics.
+    pub async fn queue_length_metrics(
+        &self,
+        query: JobMetricsQuery,
+    ) -> Result<QueueLengthMetricsSnapshot, OxanusError> {
+        self.internal.queue_length_metrics(query).await
     }
 
     /// Returns the list of processes that are currently running.
