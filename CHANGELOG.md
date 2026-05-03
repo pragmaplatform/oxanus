@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Add `#[derive(oxanus::Job)]` for defining enqueue-time job metadata, including unique IDs, conflict strategy, resurrection behavior, throttle cost, and worker binding.
 - Add optional batch workers with the derive-macro `process_batch` hook, `BatchItem`, `WorkerBatchConfig`, and `#[oxanus(batch_size = ..., batch_timeout_ms = ...)]` worker macro attributes.
 - Add queue length history metrics and a Queue Lengths chart to the web metrics dashboard.
+- Add per-queue processing rate, growth rate, and ETA stats with web dashboard display.
 
 ### Changed
 

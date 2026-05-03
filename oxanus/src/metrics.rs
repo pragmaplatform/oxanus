@@ -8,6 +8,7 @@ use crate::result_collector::{WorkerResult, WorkerResultKind};
 pub(crate) const METRICS_RETENTION_SECS: i64 = 8 * 60 * 60;
 pub(crate) const DEFAULT_METRIC_MINUTES: usize = 60;
 pub(crate) const MAX_METRIC_MINUTES: usize = 8 * 60;
+pub(crate) const QUEUE_RATE_WINDOW_MINUTES: usize = 10;
 pub(crate) const HISTOGRAM_BUCKET_COUNT: usize = 14;
 
 /// Maximum execution time represented by each histogram bucket.
@@ -41,6 +42,9 @@ pub(crate) const METRIC_SUCCESSFUL_EXECUTIONS: &str = "xs";
 pub(crate) const METRIC_FAILED_EXECUTIONS: &str = "xf";
 pub(crate) const METRIC_PANICKED_EXECUTIONS: &str = "xpn";
 pub(crate) const METRIC_EXECUTION_MS: &str = "ms";
+pub(crate) const QUEUE_METRIC_PROCESSED_JOBS: &str = "p";
+pub(crate) const QUEUE_METRIC_SUCCEEDED_JOBS: &str = "s";
+pub(crate) const QUEUE_METRIC_FAILED_JOBS: &str = "f";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MetricIdentity {
@@ -322,31 +326,63 @@ pub struct QueueLengthMetricsSnapshot {
     pub queues: Vec<QueueLengthMetricsSeries>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct QueueCounterTotals {
+    pub(crate) processed: u64,
+    pub(crate) succeeded: u64,
+    pub(crate) failed: u64,
+}
+
+impl QueueCounterTotals {
+    fn add_metric(&mut self, metric: &str, value: u64) {
+        match metric {
+            QUEUE_METRIC_PROCESSED_JOBS => {
+                self.processed = self.processed.saturating_add(value);
+            }
+            QUEUE_METRIC_SUCCEEDED_JOBS => {
+                self.succeeded = self.succeeded.saturating_add(value);
+            }
+            QUEUE_METRIC_FAILED_JOBS => {
+                self.failed = self.failed.saturating_add(value);
+            }
+            _ => {}
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct JobMetricsBuffer {
     entries: HashMap<(i64, MetricIdentity), PendingJobMetrics>,
+    queue_entries: HashMap<(i64, String), QueueCounterTotals>,
 }
 
 impl JobMetricsBuffer {
     pub(crate) fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.is_empty() && self.queue_entries.is_empty()
     }
 
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
+        self.queue_entries.clear();
     }
 
     pub(crate) fn record(&mut self, result: &WorkerResult) {
         let minute = chrono::Utc::now().timestamp().div_euclid(60);
         let identity = MetricIdentity::from_worker_result(result);
         let metrics = self.entries.entry((minute, identity)).or_default();
+        let queue_metrics = self
+            .queue_entries
+            .entry((minute, result.queue.clone()))
+            .or_default();
 
         metrics.processed = metrics.processed.saturating_add(result.job_count);
+        queue_metrics.processed = queue_metrics.processed.saturating_add(result.job_count);
 
         match result.kind {
             WorkerResultKind::Success => {
                 metrics.successful_executions = metrics.successful_executions.saturating_add(1);
                 metrics.execution_ms = metrics.execution_ms.saturating_add(result.execution_ms);
+                queue_metrics.succeeded = queue_metrics.succeeded.saturating_add(result.job_count);
                 let bucket = histogram_bucket_index(result.execution_ms);
                 if let Some(count) = metrics.histogram.get_mut(bucket) {
                     *count = count.saturating_add(1);
@@ -357,10 +393,12 @@ impl JobMetricsBuffer {
                 metrics.panicked = metrics.panicked.saturating_add(result.job_count);
                 metrics.failed_executions = metrics.failed_executions.saturating_add(1);
                 metrics.panicked_executions = metrics.panicked_executions.saturating_add(1);
+                queue_metrics.failed = queue_metrics.failed.saturating_add(result.job_count);
             }
             WorkerResultKind::Failed => {
                 metrics.failed = metrics.failed.saturating_add(result.job_count);
                 metrics.failed_executions = metrics.failed_executions.saturating_add(1);
+                queue_metrics.failed = queue_metrics.failed.saturating_add(result.job_count);
             }
         }
     }
@@ -371,6 +409,12 @@ impl JobMetricsBuffer {
         self.entries
             .iter()
             .map(|((minute, identity), metrics)| (*minute, identity, metrics))
+    }
+
+    pub(crate) fn queue_records(&self) -> impl Iterator<Item = (i64, &str, &QueueCounterTotals)> {
+        self.queue_entries
+            .iter()
+            .map(|((minute, queue), metrics)| (*minute, queue.as_str(), metrics))
     }
 }
 
@@ -490,6 +534,33 @@ pub(crate) fn aggregate_counter_hashes(
 }
 
 #[must_use]
+pub(crate) fn queue_metric_field(queue: &str, metric: &str) -> String {
+    format!("{}:{queue}|{metric}", queue.len())
+}
+
+#[must_use]
+pub(crate) fn aggregate_queue_counter_hashes(
+    hashes: Vec<HashMap<String, i64>>,
+) -> HashMap<String, QueueCounterTotals> {
+    let mut queues = HashMap::new();
+
+    for hash in hashes {
+        for (field, raw_value) in hash {
+            let Some((queue, metric)) = split_queue_metric_field(&field) else {
+                continue;
+            };
+            let value = u64::try_from(raw_value).unwrap_or_default();
+            queues
+                .entry(queue)
+                .or_insert_with(QueueCounterTotals::default)
+                .add_metric(metric, value);
+        }
+    }
+
+    queues
+}
+
+#[must_use]
 pub(crate) fn queue_length_series_from_hashes(
     minutes: &[i64],
     hashes: Vec<HashMap<String, i64>>,
@@ -605,6 +676,23 @@ fn split_metric_field(field: &str) -> Option<(MetricIdentity, &str)> {
         | METRIC_PANICKED_EXECUTIONS
         | METRIC_EXECUTION_MS => {
             MetricIdentity::from_field_key(identity_key).map(|id| (id, metric))
+        }
+        _ => None,
+    }
+}
+
+fn split_queue_metric_field(field: &str) -> Option<(String, &str)> {
+    let (queue_key, metric) = field.rsplit_once('|')?;
+    match metric {
+        QUEUE_METRIC_PROCESSED_JOBS | QUEUE_METRIC_SUCCEEDED_JOBS | QUEUE_METRIC_FAILED_JOBS => {
+            let (queue_len, queue) = queue_key.split_once(':')?;
+            let queue_len = queue_len.parse::<usize>().ok()?;
+
+            if queue.len() != queue_len || !queue.is_char_boundary(queue_len) {
+                return None;
+            }
+
+            Some((queue.to_string(), metric))
         }
         _ => None,
     }
@@ -742,6 +830,56 @@ mod tests {
             MetricIdentity::from_field_key(&identity.field_key()),
             Some(identity)
         );
+    }
+
+    #[test]
+    fn queue_counter_hashes_aggregate_with_missing_fields_as_zero() {
+        let queue = "critical:tenant|fast";
+        let mut hashes = vec![HashMap::new(), HashMap::new()];
+        let second_hash = hashes
+            .get_mut(1)
+            .expect("query should include a second minute bucket");
+        second_hash.insert(queue_metric_field(queue, QUEUE_METRIC_PROCESSED_JOBS), 5);
+        second_hash.insert(queue_metric_field(queue, QUEUE_METRIC_FAILED_JOBS), 2);
+
+        let counters = aggregate_queue_counter_hashes(hashes);
+        let totals = counters
+            .get(queue)
+            .expect("queue counters should be aggregated");
+
+        assert_eq!(totals.processed, 5);
+        assert_eq!(totals.succeeded, 0);
+        assert_eq!(totals.failed, 2);
+    }
+
+    #[test]
+    fn job_metrics_buffer_records_queue_counters() {
+        let mut buffer = JobMetricsBuffer::default();
+
+        buffer.record(&WorkerResult {
+            kind: WorkerResultKind::Success,
+            worker_name: "Worker".to_string(),
+            queue: "default".to_string(),
+            execution_ms: 10,
+            job_count: 3,
+        });
+        buffer.record(&WorkerResult {
+            kind: WorkerResultKind::Panicked,
+            worker_name: "Worker".to_string(),
+            queue: "default".to_string(),
+            execution_ms: 10,
+            job_count: 1,
+        });
+
+        let queue_records = buffer.queue_records().collect::<Vec<_>>();
+        assert_eq!(queue_records.len(), 1);
+        let (_, queue, counters) = queue_records
+            .first()
+            .expect("queue counter record should exist");
+        assert_eq!(*queue, "default");
+        assert_eq!(counters.processed, 4);
+        assert_eq!(counters.succeeded, 3);
+        assert_eq!(counters.failed, 1);
     }
 
     #[test]

@@ -212,6 +212,7 @@ pub(crate) async fn queue_detail(
                 panicked: dq.panicked,
                 failed: dq.failed,
                 latency_s: dq.latency_s,
+                rate: dq.rate,
                 queues: Vec::new(),
             })
         });
@@ -386,25 +387,46 @@ fn sort_queues(
     desc: bool,
 ) {
     queues.sort_by(|a, b| {
-        let cmp = match sort {
-            "enqueued" => a.enqueued.cmp(&b.enqueued),
-            "processed" => a.processed.cmp(&b.processed),
-            "succeeded" => a.succeeded.cmp(&b.succeeded),
-            "failed" => a.failed.cmp(&b.failed),
-            "panicked" => a.panicked.cmp(&b.panicked),
-            "concurrency" => {
-                let ca = concurrency_map.get(&a.key).copied().unwrap_or(0);
-                let cb = concurrency_map.get(&b.key).copied().unwrap_or(0);
-                ca.cmp(&cb)
-            }
-            "latency" => a
-                .latency_s
-                .partial_cmp(&b.latency_s)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            _ => a.key.cmp(&b.key),
-        };
-        if desc { cmp.reverse() } else { cmp }
+        if sort == "eta" {
+            compare_eta(a.rate.eta_s, b.rate.eta_s, desc)
+        } else {
+            let cmp = match sort {
+                "enqueued" => a.enqueued.cmp(&b.enqueued),
+                "processed" => a.processed.cmp(&b.processed),
+                "succeeded" => a.succeeded.cmp(&b.succeeded),
+                "failed" => a.failed.cmp(&b.failed),
+                "panicked" => a.panicked.cmp(&b.panicked),
+                "rate" => a
+                    .rate
+                    .processed_per_minute
+                    .partial_cmp(&b.rate.processed_per_minute)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                "concurrency" => {
+                    let ca = concurrency_map.get(&a.key).copied().unwrap_or(0);
+                    let cb = concurrency_map.get(&b.key).copied().unwrap_or(0);
+                    ca.cmp(&cb)
+                }
+                "latency" => a
+                    .latency_s
+                    .partial_cmp(&b.latency_s)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                _ => a.key.cmp(&b.key),
+            };
+            if desc { cmp.reverse() } else { cmp }
+        }
     });
+}
+
+fn compare_eta(a: Option<f64>, b: Option<f64>, desc: bool) -> std::cmp::Ordering {
+    match (a, b) {
+        (Some(a), Some(b)) => {
+            let cmp = a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal);
+            if desc { cmp.reverse() } else { cmp }
+        }
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
 }
 
 fn build_cron_rows(
