@@ -120,6 +120,10 @@ pub(crate) struct MetricsTemplate {
 }
 
 impl MetricsTemplate {
+    pub fn metric_identity_label(&self, identity: &oxanus::MetricIdentity) -> String {
+        metric_identity_label(identity)
+    }
+
     pub fn execution_chart_data_json(&self) -> String {
         self.summary_chart_data_json(|point| point.execution_ms as f64 / 1000.0)
     }
@@ -143,6 +147,7 @@ impl MetricsTemplate {
                 let data: Vec<f64> = worker.series.iter().map(&value).collect();
                 serde_json::json!({
                     "label": metric_identity_label(&worker.identity),
+                    "fullLabel": worker.identity.worker,
                     "data": data,
                 })
             })

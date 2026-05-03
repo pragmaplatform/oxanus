@@ -59,23 +59,23 @@
 
         <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-8">
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Processed Jobs</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Processed</div>
                 <div class="text-2xl font-semibold text-green-400">{{ metrics.totals.processed|format_number_u64 }}</div>
             </div>
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Failed Jobs</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Failed</div>
                 <div class="text-2xl font-semibold text-red-400">{{ metrics.totals.failed|format_number_u64 }}</div>
             </div>
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Succeeded Jobs</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Succeeded</div>
                 <div class="text-2xl font-semibold text-emerald-400">{{ metrics.totals.succeeded|format_number_u64 }}</div>
             </div>
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Execution Time</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Time</div>
                 <div class="text-2xl font-semibold text-blue-400">{{ metrics.totals.execution_ms|format_duration_ms }}</div>
             </div>
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Avg Execution Time</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Avg Time</div>
                 <div class="text-2xl font-semibold text-purple-400">{{ metrics.totals.average_execution_ms()|format_duration_ms_f64 }}</div>
             </div>
         </div>
@@ -83,7 +83,7 @@
         <section class="space-y-6 mb-10">
             <div>
                 <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-lg font-semibold">Total Execution Time</h2>
+                    <h2 class="text-lg font-semibold">Total Time</h2>
                 </div>
                 <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
                     <div id="execution-chart-key" class="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-400"></div>
@@ -92,7 +92,7 @@
             </div>
             <div>
                 <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-lg font-semibold">Total Processed Jobs</h2>
+                    <h2 class="text-lg font-semibold">Total Processed</h2>
                 </div>
                 <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
                     <div id="processed-chart-key" class="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-400"></div>
@@ -113,18 +113,18 @@
                     <thead>
                         <tr class="border-b border-gray-800 text-left text-xs text-gray-400 uppercase tracking-wide">
                             <th class="pb-3 pr-4">Worker</th>
-                            <th class="pb-3 pr-4 text-right">Processed Jobs</th>
-                            <th class="pb-3 pr-4 text-right">Succeeded Jobs</th>
-                            <th class="pb-3 pr-4 text-right">Failed Jobs</th>
-                            <th class="pb-3 pr-4 text-right">Total Execution Time</th>
-                            <th class="pb-3 text-right">Avg Execution Time</th>
+                            <th class="pb-3 pr-4 text-right">Processed</th>
+                            <th class="pb-3 pr-4 text-right">Succeeded</th>
+                            <th class="pb-3 pr-4 text-right">Failed</th>
+                            <th class="pb-3 pr-4 text-right">Total Time</th>
+                            <th class="pb-3 text-right">Avg Time</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in &metrics.workers %}
                         <tr class="border-b border-gray-800/50 hover:bg-gray-900/50">
                             <td class="py-3 pr-4 font-mono text-sm">
-                                <a href="{{ base_path }}/metrics/job?worker={{ row.identity.worker|urlencode }}&amp;minutes={{ metrics.minutes }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ row.identity.worker }}</a>
+                                <a href="{{ base_path }}/metrics/job?worker={{ row.identity.worker|urlencode }}&amp;minutes={{ metrics.minutes }}" title="{{ row.identity.worker }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ self.metric_identity_label(&row.identity) }}</a>
                             </td>
                             <td class="py-3 pr-4 text-right text-green-400">{{ row.totals.processed|format_number_u64 }}</td>
                             <td class="py-3 pr-4 text-right text-emerald-400">{{ row.totals.succeeded|format_number_u64 }}</td>
@@ -190,6 +190,7 @@
                 payload.series.forEach(function (series, index) {
                     var item = document.createElement('span');
                     item.className = 'inline-flex min-w-0 items-center gap-2';
+                    item.title = series.fullLabel || series.label;
 
                     var swatch = document.createElement('span');
                     swatch.className = 'h-2 w-2 shrink-0 rounded-full';
@@ -235,7 +236,7 @@
                         var row = document.createElement('div');
                         var label = document.createElement('span');
                         label.className = 'chart-tooltip-label';
-                        label.textContent = series.label + ': ';
+                        label.textContent = (series.fullLabel || series.label) + ': ';
                         label.style.color = seriesColor(seriesIdx);
                         row.appendChild(label);
                         row.append(formatter(series.data[idx] || 0));
@@ -351,7 +352,7 @@
                 svg.setAttribute('width', '100%');
                 svg.setAttribute('height', height.toString());
                 svg.setAttribute('role', 'img');
-                svg.setAttribute('aria-label', 'Total processed jobs by worker');
+                svg.setAttribute('aria-label', 'Total processed by worker');
                 chartEl.appendChild(svg);
 
                 for (var tick = 0; tick <= 4; tick += 1) {
@@ -442,7 +443,7 @@
                         var row = document.createElement('div');
                         var label = document.createElement('span');
                         label.className = 'chart-tooltip-label';
-                        label.textContent = series.label + ': ';
+                        label.textContent = (series.fullLabel || series.label) + ': ';
                         label.style.color = seriesColor(seriesIdx);
                         row.appendChild(label);
                         row.append(formatCount(series.data[idx] || 0));

@@ -63,30 +63,30 @@
 
         <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-8">
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Processed Jobs</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Processed</div>
                 <div class="text-2xl font-semibold text-green-400">{{ metrics.totals.processed|format_number_u64 }}</div>
             </div>
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Failed Jobs</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Failed</div>
                 <div class="text-2xl font-semibold text-red-400">{{ metrics.totals.failed|format_number_u64 }}</div>
             </div>
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Succeeded Jobs</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Succeeded</div>
                 <div class="text-2xl font-semibold text-emerald-400">{{ metrics.totals.succeeded|format_number_u64 }}</div>
             </div>
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Execution Time</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Time</div>
                 <div class="text-2xl font-semibold text-blue-400">{{ metrics.totals.execution_ms|format_duration_ms }}</div>
             </div>
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
-                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Avg Execution Time</div>
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Avg Time</div>
                 <div class="text-2xl font-semibold text-purple-400">{{ metrics.totals.average_execution_ms()|format_duration_ms_f64 }}</div>
             </div>
         </div>
 
         <section class="space-y-6 mb-10">
             <div>
-                <h2 class="text-lg font-semibold mb-4">Average Execution Time</h2>
+                <h2 class="text-lg font-semibold mb-4">Average Time</h2>
                 <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
                     <div id="average-chart" class="w-full h-[300px]"></div>
                 </div>
