@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use crate::{
     error::OxanusError,
     job_envelope::{JobEnvelope, JobId},
+    metrics::{JobMetricsDetail, JobMetricsQuery, JobMetricsSnapshot, MetricIdentity},
     queue::Queue,
     stats::{Process, QueueStats, Stats},
     storage_builder::StorageBuilder,
@@ -270,6 +271,30 @@ impl Storage {
     /// The full stats, or an [`OxanusError`] if the operation fails.
     pub async fn stats(&self) -> Result<Stats, OxanusError> {
         self.internal.stats().await
+    }
+
+    /// Returns Sidekiq-style job execution metrics for all workers.
+    ///
+    /// Metrics are retained for up to 8 hours. The query defaults to 60 minutes
+    /// and is clamped to 480 minutes.
+    pub async fn job_metrics(
+        &self,
+        query: JobMetricsQuery,
+    ) -> Result<JobMetricsSnapshot, OxanusError> {
+        self.internal.job_metrics(query).await
+    }
+
+    /// Returns Sidekiq-style job execution metrics for a single worker.
+    ///
+    /// Job counters count every job. Execution counters, execution time, and
+    /// histogram data count each worker execution once, so a batch worker
+    /// contributes one execution sample for the whole batch.
+    pub async fn job_metrics_for(
+        &self,
+        identity: &MetricIdentity,
+        query: JobMetricsQuery,
+    ) -> Result<JobMetricsDetail, OxanusError> {
+        self.internal.job_metrics_for(identity, query).await
     }
 
     /// Returns the list of processes that are currently running.

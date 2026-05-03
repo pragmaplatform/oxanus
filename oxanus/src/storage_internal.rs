@@ -11,7 +11,15 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     OxanusError,
     job_envelope::{JobConflictStrategy, JobEnvelope, JobId},
-    result_collector::{JobResult, JobResultKind},
+    metrics::{
+        HISTOGRAM_BUCKET_COUNT, JobMetricsBuffer, JobMetricsDetail, JobMetricsQuery,
+        JobMetricsSnapshot, METRIC_EXECUTION_MS, METRIC_FAILED_EXECUTIONS, METRIC_FAILED_JOBS,
+        METRIC_PANICKED_EXECUTIONS, METRIC_PANICKED_JOBS, METRIC_PROCESSED_JOBS,
+        METRIC_SUCCESSFUL_EXECUTIONS, METRICS_RETENTION_SECS, MetricIdentity,
+        aggregate_counter_hashes, histogram_bitfield_fetch_args, histogram_bitfield_increment_args,
+        histogram_buckets_from_counts, metric_minutes,
+    },
+    result_collector::{WorkerResult, WorkerResultKind},
     stats::{DynamicQueueStats, Process, QueueStats, Stats, StatsGlobal, StatsProcessing},
     storage_keys::StorageKeys,
     storage_types::QueueListOpts,
@@ -923,24 +931,170 @@ impl StorageInternal {
         Ok(values)
     }
 
-    pub async fn update_stats(&self, result: JobResult) -> Result<(), OxanusError> {
+    pub async fn update_stats(&self, result: &WorkerResult) -> Result<(), OxanusError> {
         let mut redis = self.connection().await?;
-        let queue = result.envelope.queue.clone();
+        let queue = result.queue.clone();
 
+        let count = redis_metric_increment(result.job_count);
         let processed_key = format!("{queue}:processed");
-        let status_key = match result.kind {
-            JobResultKind::Success => format!("{queue}:succeeded"),
-            JobResultKind::Panicked => format!("{queue}:panicked"),
-            JobResultKind::Failed => format!("{queue}:failed"),
-        };
+        let succeeded_key = format!("{queue}:succeeded");
+        let failed_key = format!("{queue}:failed");
+        let panicked_key = format!("{queue}:panicked");
 
-        let _: () = redis::pipe()
-            .hincr(&self.keys.stats, processed_key, 1)
-            .hincr(&self.keys.stats, status_key, 1)
-            .query_async(&mut redis)
-            .await?;
+        let mut pipe = redis::pipe();
+        pipe.hincr(&self.keys.stats, processed_key, count);
+        match result.kind {
+            WorkerResultKind::Success => {
+                pipe.hincr(&self.keys.stats, succeeded_key, count);
+            }
+            WorkerResultKind::Panicked => {
+                pipe.hincr(&self.keys.stats, failed_key, count);
+                pipe.hincr(&self.keys.stats, panicked_key, count);
+            }
+            WorkerResultKind::Failed => {
+                pipe.hincr(&self.keys.stats, failed_key, count);
+            }
+        }
+
+        let _: () = pipe.query_async(&mut redis).await?;
 
         Ok(())
+    }
+
+    pub async fn flush_job_metrics(&self, buffer: &JobMetricsBuffer) -> Result<(), OxanusError> {
+        if buffer.is_empty() {
+            return Ok(());
+        }
+
+        let mut redis = self.connection().await?;
+        let mut pipe = redis::pipe();
+
+        for (minute, identity, metrics) in buffer.records() {
+            let counter_key = self.metrics_counter_key(minute);
+            let processed_field = identity.metric_field(METRIC_PROCESSED_JOBS);
+            let failed_field = identity.metric_field(METRIC_FAILED_JOBS);
+            let panicked_field = identity.metric_field(METRIC_PANICKED_JOBS);
+            let successful_executions_field = identity.metric_field(METRIC_SUCCESSFUL_EXECUTIONS);
+            let failed_executions_field = identity.metric_field(METRIC_FAILED_EXECUTIONS);
+            let panicked_executions_field = identity.metric_field(METRIC_PANICKED_EXECUTIONS);
+            let execution_ms_field = identity.metric_field(METRIC_EXECUTION_MS);
+
+            if metrics.processed > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    processed_field,
+                    redis_metric_increment(metrics.processed),
+                );
+            }
+            if metrics.failed > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    failed_field,
+                    redis_metric_increment(metrics.failed),
+                );
+            }
+            if metrics.panicked > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    panicked_field,
+                    redis_metric_increment(metrics.panicked),
+                );
+            }
+            if metrics.successful_executions > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    successful_executions_field,
+                    redis_metric_increment(metrics.successful_executions),
+                );
+            }
+            if metrics.failed_executions > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    failed_executions_field,
+                    redis_metric_increment(metrics.failed_executions),
+                );
+            }
+            if metrics.panicked_executions > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    panicked_executions_field,
+                    redis_metric_increment(metrics.panicked_executions),
+                );
+            }
+            if metrics.execution_ms > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    execution_ms_field,
+                    redis_metric_increment(metrics.execution_ms),
+                );
+            }
+            pipe.expire(&counter_key, METRICS_RETENTION_SECS);
+
+            let histogram_args = histogram_bitfield_increment_args(&metrics.histogram);
+            if histogram_args.len() > 2 {
+                let histogram_key = self.metrics_histogram_key(identity, minute);
+                let mut cmd = redis::cmd("BITFIELD");
+                cmd.arg(&histogram_key);
+                for arg in histogram_args {
+                    cmd.arg(arg);
+                }
+                pipe.add_command(cmd).ignore();
+                pipe.expire(histogram_key, METRICS_RETENTION_SECS);
+            }
+        }
+
+        let _: () = pipe.query_async(&mut redis).await?;
+
+        Ok(())
+    }
+
+    pub async fn job_metrics(
+        &self,
+        query: JobMetricsQuery,
+    ) -> Result<JobMetricsSnapshot, OxanusError> {
+        let mut redis = self.connection().await?;
+        let minutes = metric_minutes(chrono::Utc::now().timestamp(), query);
+        let hashes = self.metrics_counter_hashes(&mut redis, &minutes).await?;
+        let aggregation = aggregate_counter_hashes(&minutes, hashes, None);
+        let starts_at = minutes.first().copied().unwrap_or_default() * 60;
+        let ends_at = minutes.last().copied().unwrap_or_default() * 60;
+
+        Ok(JobMetricsSnapshot {
+            starts_at,
+            ends_at,
+            minutes: minutes.len(),
+            totals: aggregation.totals,
+            series: aggregation.series,
+            workers: aggregation.workers,
+        })
+    }
+
+    pub async fn job_metrics_for(
+        &self,
+        identity: &MetricIdentity,
+        query: JobMetricsQuery,
+    ) -> Result<JobMetricsDetail, OxanusError> {
+        let mut redis = self.connection().await?;
+        let minutes = metric_minutes(chrono::Utc::now().timestamp(), query);
+        let hashes = self
+            .metrics_counter_hashes_for(&mut redis, &minutes, identity)
+            .await?;
+        let aggregation = aggregate_counter_hashes(&minutes, hashes, Some(identity));
+        let histogram = self
+            .metrics_histogram_counts_for(&mut redis, &minutes, identity)
+            .await?;
+        let starts_at = minutes.first().copied().unwrap_or_default() * 60;
+        let ends_at = minutes.last().copied().unwrap_or_default() * 60;
+
+        Ok(JobMetricsDetail {
+            identity: identity.clone(),
+            starts_at,
+            ends_at,
+            minutes: minutes.len(),
+            totals: aggregation.totals,
+            series: aggregation.series,
+            histogram: histogram_buckets_from_counts(&histogram),
+        })
     }
 
     pub async fn retry_loop(&self, cancel_token: CancellationToken) -> Result<(), OxanusError> {
@@ -1291,6 +1445,114 @@ impl StorageInternal {
         }
     }
 
+    fn metrics_counter_key(&self, minute: i64) -> String {
+        format!("{}:j:{minute}", self.keys.metrics_prefix)
+    }
+
+    fn metrics_histogram_key(&self, identity: &MetricIdentity, minute: i64) -> String {
+        format!(
+            "{}:h:{}:{minute}",
+            self.keys.metrics_prefix,
+            identity.field_key()
+        )
+    }
+
+    async fn metrics_counter_hashes(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        minutes: &[i64],
+    ) -> Result<Vec<HashMap<String, i64>>, OxanusError> {
+        if minutes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut pipe = redis::pipe();
+        for minute in minutes {
+            pipe.hgetall(self.metrics_counter_key(*minute));
+        }
+        Ok(pipe.query_async(redis).await?)
+    }
+
+    async fn metrics_counter_hashes_for(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        minutes: &[i64],
+        identity: &MetricIdentity,
+    ) -> Result<Vec<HashMap<String, i64>>, OxanusError> {
+        if minutes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let fields = [
+            identity.metric_field(METRIC_PROCESSED_JOBS),
+            identity.metric_field(METRIC_FAILED_JOBS),
+            identity.metric_field(METRIC_PANICKED_JOBS),
+            identity.metric_field(METRIC_SUCCESSFUL_EXECUTIONS),
+            identity.metric_field(METRIC_FAILED_EXECUTIONS),
+            identity.metric_field(METRIC_PANICKED_EXECUTIONS),
+            identity.metric_field(METRIC_EXECUTION_MS),
+        ];
+        let mut pipe = redis::pipe();
+        for minute in minutes {
+            let counter_key = self.metrics_counter_key(*minute);
+            for field in &fields {
+                pipe.hget(&counter_key, field);
+            }
+        }
+
+        let values: Vec<Option<i64>> = pipe.query_async(redis).await?;
+        let mut hashes = vec![HashMap::new(); minutes.len()];
+
+        for (idx, values) in values.chunks(fields.len()).enumerate() {
+            let Some(hash) = hashes.get_mut(idx) else {
+                continue;
+            };
+            for (field, value) in fields.iter().zip(values.iter()) {
+                if let Some(value) = value {
+                    hash.insert(field.clone(), *value);
+                }
+            }
+        }
+
+        Ok(hashes)
+    }
+
+    async fn metrics_histogram_counts_for(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        minutes: &[i64],
+        identity: &MetricIdentity,
+    ) -> Result<[u64; HISTOGRAM_BUCKET_COUNT], OxanusError> {
+        if minutes.is_empty() {
+            return Ok([0; HISTOGRAM_BUCKET_COUNT]);
+        }
+
+        let fetch_args = histogram_bitfield_fetch_args();
+        let mut pipe = redis::pipe();
+        for minute in minutes {
+            let mut cmd = redis::cmd("BITFIELD");
+            cmd.arg(self.metrics_histogram_key(identity, *minute));
+            for arg in &fetch_args {
+                cmd.arg(arg);
+            }
+            pipe.add_command(cmd);
+        }
+
+        let values: Vec<Vec<Option<u64>>> = pipe.query_async(redis).await?;
+        let mut totals = [0_u64; HISTOGRAM_BUCKET_COUNT];
+
+        for bucket_values in values {
+            for (idx, value) in bucket_values.into_iter().enumerate() {
+                let Some(total) = totals.get_mut(idx) else {
+                    continue;
+                };
+                *total = total.saturating_add(value.unwrap_or_default());
+            }
+        }
+
+        Ok(totals)
+    }
+
     async fn dead_process_ids(
         &self,
         redis: &mut deadpool_redis::Connection,
@@ -1328,6 +1590,10 @@ impl StorageInternal {
 
         Ok(dead_process_ids)
     }
+}
+
+fn redis_metric_increment(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]

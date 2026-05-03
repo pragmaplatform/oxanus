@@ -111,6 +111,134 @@ impl QueuesTemplate {
     }
 }
 
+#[derive(Template, WebTemplate)]
+#[template(path = "metrics.html")]
+pub(crate) struct MetricsTemplate {
+    pub base_path: String,
+    pub active_tab: &'static str,
+    pub metrics: oxanus::JobMetricsSnapshot,
+}
+
+impl MetricsTemplate {
+    pub fn execution_chart_data_json(&self) -> String {
+        self.summary_chart_data_json(|point| point.execution_ms as f64 / 1000.0)
+    }
+
+    pub fn processed_chart_data_json(&self) -> String {
+        self.summary_chart_data_json(|point| point.processed as f64)
+    }
+
+    fn summary_chart_data_json(&self, value: impl Fn(&oxanus::JobMetricsPoint) -> f64) -> String {
+        let timestamps: Vec<i64> = self
+            .metrics
+            .series
+            .iter()
+            .map(|point| point.timestamp)
+            .collect();
+        let series: Vec<serde_json::Value> = self
+            .metrics
+            .workers
+            .iter()
+            .map(|worker| {
+                let data: Vec<f64> = worker.series.iter().map(&value).collect();
+                serde_json::json!({
+                    "label": metric_identity_label(&worker.identity),
+                    "data": data,
+                })
+            })
+            .collect();
+
+        serde_json::json!({
+            "timestamps": timestamps,
+            "series": series,
+        })
+        .to_string()
+    }
+}
+
+fn metric_identity_label(identity: &oxanus::MetricIdentity) -> String {
+    identity
+        .worker
+        .rsplit("::")
+        .next()
+        .unwrap_or(&identity.worker)
+        .to_string()
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "metric_detail.html")]
+pub(crate) struct MetricDetailTemplate {
+    pub base_path: String,
+    pub active_tab: &'static str,
+    pub metrics: oxanus::JobMetricsDetail,
+}
+
+impl MetricDetailTemplate {
+    pub fn detail_average_chart_data_json(&self) -> String {
+        let timestamps: Vec<i64> = self
+            .metrics
+            .series
+            .iter()
+            .map(|point| point.timestamp)
+            .collect();
+        let average_ms: Vec<f64> = self
+            .metrics
+            .series
+            .iter()
+            .map(oxanus::JobMetricsPoint::average_execution_ms)
+            .collect();
+
+        serde_json::json!([timestamps, average_ms]).to_string()
+    }
+
+    pub fn detail_total_chart_data_json(&self) -> String {
+        let timestamps: Vec<i64> = self
+            .metrics
+            .series
+            .iter()
+            .map(|point| point.timestamp)
+            .collect();
+        let succeeded: Vec<u64> = self
+            .metrics
+            .series
+            .iter()
+            .map(|point| point.successful_executions)
+            .collect();
+        let failed_without_panics: Vec<u64> = self
+            .metrics
+            .series
+            .iter()
+            .map(oxanus::JobMetricsPoint::failed_executions_without_panics)
+            .collect();
+        let panicked: Vec<u64> = self
+            .metrics
+            .series
+            .iter()
+            .map(|point| point.panicked_executions)
+            .collect();
+
+        serde_json::json!([timestamps, succeeded, failed_without_panics, panicked]).to_string()
+    }
+
+    pub fn max_histogram_count(&self) -> u64 {
+        self.metrics
+            .histogram
+            .iter()
+            .map(|bucket| bucket.count)
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn histogram_width(&self, count: &u64) -> String {
+        let max = self.max_histogram_count();
+        if max == 0 {
+            "0%".to_string()
+        } else {
+            format!("{:.1}%", (*count as f64 / max as f64) * 100.0)
+        }
+    }
+}
+
 pub(crate) enum CronRow {
     Group { name: String, depth: usize },
     Worker { view: CronWorkerView, depth: usize },

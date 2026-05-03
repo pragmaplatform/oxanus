@@ -11,7 +11,7 @@ use crate::OxanusWebState;
 use crate::error::OxanusWebError;
 use crate::templates::{
     BusyTemplate, CronRow, CronTemplate, CronWorkerView, DashboardTemplate, GlobalJobsTemplate,
-    JobListKind, QueueDetailTemplate, QueuesTemplate,
+    JobListKind, MetricDetailTemplate, MetricsTemplate, QueueDetailTemplate, QueuesTemplate,
 };
 
 pub(crate) async fn dashboard(
@@ -59,6 +59,44 @@ pub(crate) async fn queues_list(
         concurrency_map: state.concurrency_map,
         sort: sort.to_string(),
         dir: dir.to_string(),
+    })
+}
+
+pub(crate) async fn metrics(
+    Extension(state): Extension<OxanusWebState>,
+    Query(params): Query<MetricsParams>,
+) -> Result<MetricsTemplate, OxanusWebError> {
+    let metrics = state
+        .storage
+        .job_metrics(oxanus::JobMetricsQuery::new(params.minutes.unwrap_or(0)))
+        .await?;
+
+    Ok(MetricsTemplate {
+        base_path: state.base_path,
+        active_tab: "/metrics",
+        metrics,
+    })
+}
+
+pub(crate) async fn metric_detail(
+    Extension(state): Extension<OxanusWebState>,
+    Query(params): Query<MetricDetailParams>,
+) -> Result<MetricDetailTemplate, OxanusWebError> {
+    let identity = oxanus::MetricIdentity {
+        worker: params.worker,
+    };
+    let metrics = state
+        .storage
+        .job_metrics_for(
+            &identity,
+            oxanus::JobMetricsQuery::new(params.minutes.unwrap_or(0)),
+        )
+        .await?;
+
+    Ok(MetricDetailTemplate {
+        base_path: state.base_path,
+        active_tab: "/metrics",
+        metrics,
     })
 }
 
@@ -308,6 +346,19 @@ pub(crate) struct QueuesParams {
     sort: Option<String>,
     #[serde(default)]
     dir: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MetricsParams {
+    #[serde(default)]
+    minutes: Option<usize>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct MetricDetailParams {
+    worker: String,
+    #[serde(default)]
+    minutes: Option<usize>,
 }
 
 #[derive(Deserialize)]

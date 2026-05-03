@@ -18,11 +18,16 @@ pub(crate) enum ExecutionError<ET> {
     Panic(),
 }
 
+pub(crate) struct ExecutionOutcome<ET> {
+    pub(crate) result: Result<(), ExecutionError<ET>>,
+    pub(crate) duration_ms: u64,
+}
+
 pub async fn run<DT, ET>(
     config: Arc<Config<DT, ET>>,
     worker: BoxedProcessable<ET>,
     envelope: &mut JobEnvelope,
-) -> Result<Result<(), ExecutionError<ET>>, OxanusError>
+) -> Result<ExecutionOutcome<ET>, OxanusError>
 where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
@@ -43,31 +48,39 @@ where
     let result = run_process(worker, job_contexts, envelope).await;
 
     let duration = start.elapsed();
+    let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
     let is_err = !matches!(result, ExecutionResult::NotPanic(Ok(_)));
     tracing::info!(
         job_id = envelope.id,
         queue = envelope.queue,
         job = envelope.job.name,
         success = !is_err,
-        duration = duration.as_millis(),
+        duration = duration_ms,
         retries = envelope.meta.retries,
         "Job finished"
     );
 
-    Ok(finish_job_result(config.as_ref(), result, envelope, &policy).await)
+    let result = finish_job_result(config.as_ref(), result, envelope, &policy).await;
+    Ok(ExecutionOutcome {
+        result,
+        duration_ms,
+    })
 }
 
 pub async fn run_batch<DT, ET>(
     config: Arc<Config<DT, ET>>,
     worker: BoxedProcessable<ET>,
     envelopes: &mut [JobEnvelope],
-) -> Result<Result<(), ExecutionError<ET>>, OxanusError>
+) -> Result<ExecutionOutcome<ET>, OxanusError>
 where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
     if envelopes.is_empty() {
-        return Ok(Ok(()));
+        return Ok(ExecutionOutcome {
+            result: Ok(()),
+            duration_ms: 0,
+        });
     }
 
     if worker.len() != envelopes.len() {
@@ -108,17 +121,22 @@ where
     let result = run_process(worker, job_contexts, first_envelope).await;
 
     let duration = start.elapsed();
+    let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
     let is_err = !matches!(result, ExecutionResult::NotPanic(Ok(_)));
     tracing::info!(
         batch_size = envelopes.len(),
         queue = queue,
         worker = worker_name,
         success = !is_err,
-        duration = duration.as_millis(),
+        duration = duration_ms,
         "Job batch finished"
     );
 
-    Ok(finish_batch_result(config.as_ref(), result, envelopes, &policies).await)
+    let result = finish_batch_result(config.as_ref(), result, envelopes, &policies).await;
+    Ok(ExecutionOutcome {
+        result,
+        duration_ms,
+    })
 }
 
 struct JobExecutionPolicy {

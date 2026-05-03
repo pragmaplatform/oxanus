@@ -50,6 +50,28 @@ pub fn format_latency(secs: &f64, _env: &dyn askama::Values) -> askama::Result<S
     }
 }
 
+fn format_duration_from_ms(ms: f64) -> String {
+    if ms >= 3_600_000.0 {
+        format!("{:.1}h", ms / 3_600_000.0)
+    } else if ms >= 60_000.0 {
+        format!("{:.1}m", ms / 60_000.0)
+    } else if ms >= 1_000.0 {
+        format!("{:.2}s", ms / 1_000.0)
+    } else {
+        format!("{ms:.0}ms")
+    }
+}
+
+#[askama::filter_fn]
+pub fn format_duration_ms(val: &u64, _env: &dyn askama::Values) -> askama::Result<String> {
+    Ok(format_duration_from_ms(*val as f64))
+}
+
+#[askama::filter_fn]
+pub fn format_duration_ms_f64(val: f64, _env: &dyn askama::Values) -> askama::Result<String> {
+    Ok(format_duration_from_ms(val))
+}
+
 #[askama::filter_fn]
 pub fn pretty_json(val: &serde_json::Value, _env: &dyn askama::Values) -> askama::Result<String> {
     Ok(serde_json::to_string_pretty(val).unwrap_or_else(|_| val.to_string()))
@@ -90,6 +112,11 @@ fn format_with_commas(mut n: u64) -> String {
 #[askama::filter_fn]
 pub fn format_number(val: &usize, _env: &dyn askama::Values) -> askama::Result<String> {
     Ok(format_with_commas(*val as u64))
+}
+
+#[askama::filter_fn]
+pub fn format_number_u64(val: &u64, _env: &dyn askama::Values) -> askama::Result<String> {
+    Ok(format_with_commas(*val))
 }
 
 #[askama::filter_fn]

@@ -7,10 +7,10 @@ use crate::WorkerBatchConfig;
 use crate::config::Config;
 use crate::context::ContextValue;
 use crate::error::OxanusError;
-use crate::executor::ExecutionError;
+use crate::executor::{ExecutionError, ExecutionOutcome};
 use crate::job_envelope::JobEnvelope;
 use crate::queue::{QueueConfig, QueueKind};
-use crate::result_collector::{JobResult, JobResultKind};
+use crate::result_collector::{WorkerResult, WorkerResultKind};
 use crate::semaphores_map::SemaphoresMap;
 use crate::worker_event::WorkerJob;
 use crate::{
@@ -29,7 +29,7 @@ where
     ET: std::error::Error + Send + Sync + 'static,
 {
     let concurrency = queue_config.concurrency;
-    let (result_tx, result_rx) = mpsc::channel::<JobResult>(concurrency);
+    let (result_tx, result_rx) = mpsc::channel::<WorkerResult>(concurrency);
     let (job_tx, mut job_rx) = mpsc::channel::<WorkerJob>(concurrency);
     let (batch_error_tx, mut batch_error_rx) = mpsc::channel::<OxanusError>(concurrency.max(1));
     let semaphores = Arc::new(SemaphoresMap::new(concurrency));
@@ -78,7 +78,14 @@ where
         }
     }
 
+    drop(batchers);
     wait_for_workers_to_finish(config, Arc::clone(&semaphores)).await;
+    drop(result_tx);
+    drop(batch_error_tx);
+
+    while let Some(task_result) = joinset.join_next().await {
+        task_result??;
+    }
 
     Ok(())
 }
@@ -106,7 +113,7 @@ struct PendingJob {
 async fn route_job<DT, ET>(
     config: Arc<Config<DT, ET>>,
     ctx: ContextValue<DT>,
-    result_tx: mpsc::Sender<JobResult>,
+    result_tx: mpsc::Sender<WorkerResult>,
     batch_error_tx: mpsc::Sender<OxanusError>,
     job_event: WorkerJob,
     batchers: &mut HashMap<BatchKey, mpsc::Sender<PendingJob>>,
@@ -185,7 +192,7 @@ where
 async fn process_pending_job<DT, ET>(
     config: Arc<Config<DT, ET>>,
     ctx: ContextValue<DT>,
-    result_tx: mpsc::Sender<JobResult>,
+    result_tx: mpsc::Sender<WorkerResult>,
     pending: PendingJob,
 ) -> Result<(), OxanusError>
 where
@@ -221,7 +228,7 @@ where
 async fn send_to_batcher<DT, ET>(
     config: Arc<Config<DT, ET>>,
     ctx: ContextValue<DT>,
-    result_tx: mpsc::Sender<JobResult>,
+    result_tx: mpsc::Sender<WorkerResult>,
     batch_error_tx: mpsc::Sender<OxanusError>,
     batchers: &mut HashMap<BatchKey, mpsc::Sender<PendingJob>>,
     pending: PendingJob,
@@ -260,7 +267,7 @@ async fn send_to_batcher<DT, ET>(
 fn spawn_batcher<DT, ET>(
     config: Arc<Config<DT, ET>>,
     ctx: ContextValue<DT>,
-    result_tx: mpsc::Sender<JobResult>,
+    result_tx: mpsc::Sender<WorkerResult>,
     batch_error_tx: mpsc::Sender<OxanusError>,
     batch_config: WorkerBatchConfig,
 ) -> mpsc::Sender<PendingJob>
@@ -291,7 +298,7 @@ where
 async fn run_batcher<DT, ET>(
     config: Arc<Config<DT, ET>>,
     ctx: ContextValue<DT>,
-    result_tx: mpsc::Sender<JobResult>,
+    result_tx: mpsc::Sender<WorkerResult>,
     batch_error_tx: mpsc::Sender<OxanusError>,
     batch_config: WorkerBatchConfig,
     mut rx: mpsc::Receiver<PendingJob>,
@@ -394,7 +401,7 @@ where
 async fn flush_batcher<DT, ET>(
     config: Arc<Config<DT, ET>>,
     ctx: ContextValue<DT>,
-    result_tx: mpsc::Sender<JobResult>,
+    result_tx: mpsc::Sender<WorkerResult>,
     batch_error_tx: mpsc::Sender<OxanusError>,
     rx: &mut mpsc::Receiver<PendingJob>,
     pending: &mut Vec<PendingJob>,
@@ -424,7 +431,7 @@ async fn flush_batcher<DT, ET>(
 fn spawn_batch<DT, ET>(
     config: Arc<Config<DT, ET>>,
     ctx: ContextValue<DT>,
-    result_tx: mpsc::Sender<JobResult>,
+    result_tx: mpsc::Sender<WorkerResult>,
     batch_error_tx: mpsc::Sender<OxanusError>,
     pending: &mut Vec<PendingJob>,
 ) where
@@ -447,7 +454,7 @@ fn spawn_batch<DT, ET>(
 async fn process_pending_batch<DT, ET>(
     config: Arc<Config<DT, ET>>,
     ctx: ContextValue<DT>,
-    result_tx: mpsc::Sender<JobResult>,
+    result_tx: mpsc::Sender<WorkerResult>,
     pending: Vec<PendingJob>,
 ) -> Result<(), OxanusError>
 where
@@ -523,10 +530,10 @@ where
         return Ok(());
     };
 
-    let result = executor::run_batch(Arc::clone(&config), job, &mut envelopes).await?;
+    let outcome = executor::run_batch(Arc::clone(&config), job, &mut envelopes).await?;
     drop(permits);
 
-    process_batch_result(result_tx, &result, envelopes).await;
+    process_batch_result(result_tx, outcome, envelopes).await;
 
     Ok(())
 }
@@ -547,41 +554,61 @@ fn invalid_jobs_by_index(
 }
 
 async fn process_result<ET>(
-    result_tx: mpsc::Sender<JobResult>,
-    result: Result<(), ExecutionError<ET>>,
+    result_tx: mpsc::Sender<WorkerResult>,
+    outcome: ExecutionOutcome<ET>,
     envelope: JobEnvelope,
 ) where
     ET: std::error::Error + Send + Sync + 'static,
 {
-    let kind = match result {
-        Ok(()) => JobResultKind::Success,
+    let kind = match outcome.result {
+        Ok(()) => WorkerResultKind::Success,
         Err(e) => match e {
-            ExecutionError::NotPanic(_) => JobResultKind::Failed,
-            ExecutionError::Panic() => JobResultKind::Panicked,
+            ExecutionError::NotPanic(_) => WorkerResultKind::Failed,
+            ExecutionError::Panic() => WorkerResultKind::Panicked,
         },
     };
 
-    result_tx.send(JobResult { envelope, kind }).await.ok();
+    result_tx
+        .send(WorkerResult {
+            kind,
+            worker_name: envelope.job.name,
+            queue: envelope.queue,
+            execution_ms: outcome.duration_ms,
+            job_count: 1,
+        })
+        .await
+        .ok();
 }
 
 async fn process_batch_result<ET>(
-    result_tx: mpsc::Sender<JobResult>,
-    result: &Result<(), ExecutionError<ET>>,
+    result_tx: mpsc::Sender<WorkerResult>,
+    outcome: ExecutionOutcome<ET>,
     envelopes: Vec<JobEnvelope>,
 ) where
     ET: std::error::Error + Send + Sync + 'static,
 {
-    for envelope in envelopes {
-        let kind = match result {
-            Ok(()) => JobResultKind::Success,
-            Err(e) => match e {
-                ExecutionError::NotPanic(_) => JobResultKind::Failed,
-                ExecutionError::Panic() => JobResultKind::Panicked,
-            },
-        };
+    let kind = match outcome.result {
+        Ok(()) => WorkerResultKind::Success,
+        Err(e) => match e {
+            ExecutionError::NotPanic(_) => WorkerResultKind::Failed,
+            ExecutionError::Panic() => WorkerResultKind::Panicked,
+        },
+    };
 
-        result_tx.send(JobResult { envelope, kind }).await.ok();
-    }
+    let Some(first_envelope) = envelopes.first() else {
+        return;
+    };
+
+    result_tx
+        .send(WorkerResult {
+            kind,
+            worker_name: first_envelope.job.name.clone(),
+            queue: first_envelope.queue.clone(),
+            execution_ms: outcome.duration_ms,
+            job_count: u64::try_from(envelopes.len()).unwrap_or(u64::MAX),
+        })
+        .await
+        .ok();
 }
 
 async fn run_queue_watcher<DT, ET>(

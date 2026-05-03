@@ -42,6 +42,8 @@ pub fn router(state: OxanusWebState) -> Router {
         .route("/", get(handlers::dashboard))
         .route("/busy", get(handlers::busy))
         .route("/queues", get(handlers::queues_list))
+        .route("/metrics", get(handlers::metrics))
+        .route("/metrics/job", get(handlers::metric_detail))
         .route("/cron", get(handlers::cron_jobs))
         .route("/scheduled", get(handlers::scheduled_jobs))
         .route("/dead", get(handlers::dead_jobs))
