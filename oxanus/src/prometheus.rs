@@ -334,7 +334,9 @@ impl PrometheusMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stats::{DynamicQueueStats, Process, QueueStats, Stats, StatsGlobal};
+    use crate::stats::{
+        DynamicQueueStats, Process, QueueRateStats, QueueStats, Stats, StatsGlobal,
+    };
 
     fn create_test_stats() -> Stats {
         Stats {
@@ -364,6 +366,7 @@ mod tests {
                     panicked: 2,
                     failed: 8,
                     latency_s: 1.5,
+                    rate: QueueRateStats::default(),
                     queues: vec![],
                 },
                 QueueStats {
@@ -374,6 +377,7 @@ mod tests {
                     panicked: 0,
                     failed: 2,
                     latency_s: 0.5,
+                    rate: QueueRateStats::default(),
                     queues: vec![DynamicQueueStats {
                         suffix: "user_123".to_string(),
                         enqueued: 5,
@@ -382,6 +386,7 @@ mod tests {
                         panicked: 0,
                         failed: 1,
                         latency_s: 0.3,
+                        rate: QueueRateStats::default(),
                     }],
                 },
             ],

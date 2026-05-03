@@ -72,6 +72,36 @@ pub fn format_duration_ms_f64(val: f64, _env: &dyn askama::Values) -> askama::Re
     Ok(format_duration_from_ms(val))
 }
 
+fn format_duration_from_secs(secs: f64) -> String {
+    if secs >= 3600.0 {
+        format!("{:.1}h", secs / 3600.0)
+    } else if secs >= 60.0 {
+        format!("{:.1}m", secs / 60.0)
+    } else {
+        format!("{secs:.1}s")
+    }
+}
+
+#[askama::filter_fn]
+pub fn format_rate_per_minute(val: &f64, _env: &dyn askama::Values) -> askama::Result<String> {
+    Ok(format!("{val:.1}/min"))
+}
+
+#[askama::filter_fn]
+pub fn format_signed_rate_per_minute(
+    val: &f64,
+    _env: &dyn askama::Values,
+) -> askama::Result<String> {
+    Ok(format!("{val:+.1}/min"))
+}
+
+#[askama::filter_fn]
+pub fn format_eta_s(val: &Option<f64>, _env: &dyn askama::Values) -> askama::Result<String> {
+    Ok(val
+        .map(format_duration_from_secs)
+        .unwrap_or_else(|| "—".to_string()))
+}
+
 #[askama::filter_fn]
 pub fn pretty_json(val: &serde_json::Value, _env: &dyn askama::Values) -> askama::Result<String> {
     Ok(serde_json::to_string_pretty(val).unwrap_or_else(|_| val.to_string()))

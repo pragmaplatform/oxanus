@@ -25,7 +25,7 @@
 
         {% match queue_stats %}
         {% when Some with (qs) %}
-        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4 mb-8">
+        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
                 <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Enqueued</div>
                 <div class="text-2xl font-semibold text-blue-400">{{ qs.enqueued|format_number }}</div>
@@ -53,6 +53,26 @@
             <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
                 <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Latency</div>
                 <div class="text-2xl font-semibold text-yellow-400">{{ qs.latency_s|format_latency }}</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Processed/min</div>
+                <div class="text-2xl font-semibold text-cyan-400">{{ qs.rate.processed_per_minute|format_rate_per_minute }}</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Succeeded/min</div>
+                <div class="text-2xl font-semibold text-emerald-400">{{ qs.rate.succeeded_per_minute|format_rate_per_minute }}</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Failed/min</div>
+                <div class="text-2xl font-semibold text-red-400">{{ qs.rate.failed_per_minute|format_rate_per_minute }}</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Growth/min</div>
+                <div class="text-2xl font-semibold text-orange-400">{{ qs.rate.growth_per_minute|format_signed_rate_per_minute }}</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">ETA</div>
+                <div class="text-2xl font-semibold text-yellow-400">{{ qs.rate.eta_s|format_eta_s }}</div>
             </div>
         </div>
         {% when None %}

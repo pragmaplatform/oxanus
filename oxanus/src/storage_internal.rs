@@ -16,12 +16,16 @@ use crate::{
         JobMetricsSnapshot, METRIC_EXECUTION_MS, METRIC_FAILED_EXECUTIONS, METRIC_FAILED_JOBS,
         METRIC_PANICKED_EXECUTIONS, METRIC_PANICKED_JOBS, METRIC_PROCESSED_JOBS,
         METRIC_SUCCESSFUL_EXECUTIONS, METRICS_RETENTION_SECS, MetricIdentity,
-        QueueLengthMetricsSnapshot, aggregate_counter_hashes, histogram_bitfield_fetch_args,
+        QUEUE_METRIC_FAILED_JOBS, QUEUE_METRIC_PROCESSED_JOBS, QUEUE_METRIC_SUCCEEDED_JOBS,
+        QUEUE_RATE_WINDOW_MINUTES, QueueCounterTotals, QueueLengthMetricsSnapshot,
+        aggregate_counter_hashes, aggregate_queue_counter_hashes, histogram_bitfield_fetch_args,
         histogram_bitfield_increment_args, histogram_buckets_from_counts, metric_minutes,
-        queue_length_series_from_hashes,
+        queue_length_series_from_hashes, queue_metric_field,
     },
     result_collector::QueueResultStats,
-    stats::{DynamicQueueStats, Process, QueueStats, Stats, StatsGlobal, StatsProcessing},
+    stats::{
+        DynamicQueueStats, Process, QueueRateStats, QueueStats, Stats, StatsGlobal, StatsProcessing,
+    },
     storage_keys::StorageKeys,
     storage_types::QueueListOpts,
     worker_registry::CronJob,
@@ -807,6 +811,14 @@ impl StorageInternal {
     ) -> Result<Vec<QueueStats>, OxanusError> {
         let list: HashMap<String, i64> = (*redis).hgetall(&self.keys.stats).await?;
         let now = chrono::Utc::now().timestamp();
+        let rate_minutes = metric_minutes(now, JobMetricsQuery::new(QUEUE_RATE_WINDOW_MINUTES));
+        let queue_length_rate_hashes = self
+            .queue_length_metric_hashes(redis, &rate_minutes)
+            .await?;
+        let queue_counter_rate_hashes = self
+            .queue_counter_metric_hashes(redis, &rate_minutes)
+            .await?;
+        let queue_counter_totals = aggregate_queue_counter_hashes(queue_counter_rate_hashes);
 
         let mut map = HashMap::new();
         let mut queue_values: Vec<(String, String, i64)> = Vec::new();
@@ -861,6 +873,7 @@ impl StorageInternal {
                     panicked: 0,
                     failed: 0,
                     latency_s: 0.0,
+                    rate: QueueRateStats::default(),
                     queues: vec![],
                 });
 
@@ -878,6 +891,7 @@ impl StorageInternal {
                         panicked: 0,
                         failed: 0,
                         latency_s: 0.0,
+                        rate: QueueRateStats::default(),
                     });
                 }
 
@@ -926,6 +940,12 @@ impl StorageInternal {
                     None => self.enqueued_count_w_conn(redis, &value.key).await?,
                 };
                 value.latency_s = self.latency_s_w_conn(redis, &value.key).await?;
+                value.rate = Self::queue_rate_stats(
+                    &value.key,
+                    value.enqueued,
+                    &queue_length_rate_hashes,
+                    &queue_counter_totals,
+                );
             } else {
                 for dynamic_queue in value.queues.iter_mut() {
                     let dynamic_queue_key = format!("{}#{}", value.key, dynamic_queue.suffix);
@@ -944,12 +964,23 @@ impl StorageInternal {
 
                     dynamic_queue.enqueued = enqueued;
                     dynamic_queue.latency_s = latency_s;
+                    dynamic_queue.rate = Self::queue_rate_stats(
+                        &dynamic_queue_key,
+                        dynamic_queue.enqueued,
+                        &queue_length_rate_hashes,
+                        &queue_counter_totals,
+                    );
 
                     if value.latency_s < latency_s {
                         value.latency_s = latency_s;
                     }
                     value.enqueued += enqueued;
                 }
+                value.rate = QueueRateStats::aggregate(
+                    QUEUE_RATE_WINDOW_MINUTES,
+                    value.enqueued,
+                    value.queues.iter().map(|queue| queue.rate),
+                );
             }
 
             value.queues.sort_by(|a, b| a.suffix.cmp(&b.suffix));
@@ -986,6 +1017,7 @@ impl StorageInternal {
                 panicked: 0,
                 failed: 0,
                 latency_s: 0.0,
+                rate: QueueRateStats::default(),
                 queues: vec![],
             });
 
@@ -1003,6 +1035,7 @@ impl StorageInternal {
                 panicked: 0,
                 failed: 0,
                 latency_s: 0.0,
+                rate: QueueRateStats::default(),
             });
         }
     }
@@ -1032,6 +1065,29 @@ impl StorageInternal {
         }
 
         usize::try_from(snapshot.enqueued?).ok()
+    }
+
+    fn queue_rate_stats(
+        queue: &str,
+        enqueued: usize,
+        queue_length_hashes: &[HashMap<String, i64>],
+        queue_counter_totals: &HashMap<String, QueueCounterTotals>,
+    ) -> QueueRateStats {
+        let window_start_enqueued = queue_length_hashes
+            .first()
+            .and_then(|hash| hash.get(queue))
+            .and_then(|value| usize::try_from(*value).ok())
+            .unwrap_or_default();
+        let counters = queue_counter_totals.get(queue).copied().unwrap_or_default();
+
+        QueueRateStats::calculate(
+            QUEUE_RATE_WINDOW_MINUTES,
+            enqueued,
+            window_start_enqueued,
+            counters.processed,
+            counters.succeeded,
+            counters.failed,
+        )
     }
 
     pub(crate) async fn flush_result_stats(
@@ -1207,6 +1263,33 @@ impl StorageInternal {
                 pipe.add_command(cmd).ignore();
                 pipe.expire(histogram_key, METRICS_RETENTION_SECS);
             }
+        }
+
+        for (minute, queue, metrics) in buffer.queue_records() {
+            let counter_key = self.metrics_queue_counter_key(minute);
+
+            if metrics.processed > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    queue_metric_field(queue, QUEUE_METRIC_PROCESSED_JOBS),
+                    redis_metric_increment(metrics.processed),
+                );
+            }
+            if metrics.succeeded > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    queue_metric_field(queue, QUEUE_METRIC_SUCCEEDED_JOBS),
+                    redis_metric_increment(metrics.succeeded),
+                );
+            }
+            if metrics.failed > 0 {
+                pipe.hincr(
+                    &counter_key,
+                    queue_metric_field(queue, QUEUE_METRIC_FAILED_JOBS),
+                    redis_metric_increment(metrics.failed),
+                );
+            }
+            pipe.expire(&counter_key, METRICS_RETENTION_SECS);
         }
 
         let _: () = pipe.query_async(&mut redis).await?;
@@ -1639,6 +1722,10 @@ impl StorageInternal {
         format!("{}:q:{minute}", self.keys.metrics_prefix)
     }
 
+    fn metrics_queue_counter_key(&self, minute: i64) -> String {
+        format!("{}:qc:{minute}", self.keys.metrics_prefix)
+    }
+
     fn metrics_histogram_key(&self, identity: &MetricIdentity, minute: i64) -> String {
         format!(
             "{}:h:{}:{minute}",
@@ -1675,6 +1762,22 @@ impl StorageInternal {
         let mut pipe = redis::pipe();
         for minute in minutes {
             pipe.hgetall(self.metrics_queue_length_key(*minute));
+        }
+        Ok(pipe.query_async(redis).await?)
+    }
+
+    async fn queue_counter_metric_hashes(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        minutes: &[i64],
+    ) -> Result<Vec<HashMap<String, i64>>, OxanusError> {
+        if minutes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut pipe = redis::pipe();
+        for minute in minutes {
+            pipe.hgetall(self.metrics_queue_counter_key(*minute));
         }
         Ok(pipe.query_async(redis).await?)
     }
@@ -1817,6 +1920,13 @@ mod tests {
         fn worker_name() -> &'static str {
             "TestJob"
         }
+    }
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "expected {expected}, got {actual}"
+        );
     }
 
     #[tokio::test]
@@ -2158,6 +2268,129 @@ mod tests {
         assert_eq!(dynamic_queue_stats.suffix, "fast");
         assert_eq!(dynamic_queue_stats.processed, 2);
         assert_eq!(dynamic_queue_stats.succeeded, 2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_stats_include_queue_rates_from_historical_counters() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let static_queue = random_string();
+        let dynamic_prefix = random_string();
+        let dynamic_queue_a = format!("{dynamic_prefix}#a");
+        let dynamic_queue_b = format!("{dynamic_prefix}#b");
+
+        let mut metrics = JobMetricsBuffer::default();
+        metrics.record(&crate::result_collector::WorkerResult {
+            kind: crate::result_collector::WorkerResultKind::Success,
+            worker_name: "Worker".to_string(),
+            queue: static_queue.clone(),
+            execution_ms: 10,
+            job_count: 4,
+        });
+        metrics.record(&crate::result_collector::WorkerResult {
+            kind: crate::result_collector::WorkerResultKind::Failed,
+            worker_name: "Worker".to_string(),
+            queue: static_queue.clone(),
+            execution_ms: 10,
+            job_count: 2,
+        });
+        metrics.record(&crate::result_collector::WorkerResult {
+            kind: crate::result_collector::WorkerResultKind::Success,
+            worker_name: "Worker".to_string(),
+            queue: dynamic_queue_a.clone(),
+            execution_ms: 10,
+            job_count: 4,
+        });
+        metrics.record(&crate::result_collector::WorkerResult {
+            kind: crate::result_collector::WorkerResultKind::Panicked,
+            worker_name: "Worker".to_string(),
+            queue: dynamic_queue_b.clone(),
+            execution_ms: 10,
+            job_count: 2,
+        });
+        storage.flush_job_metrics(&metrics).await?;
+
+        let mut updates = HashMap::new();
+        updates.insert(
+            static_queue.clone(),
+            QueueResultStats {
+                processed: 6,
+                succeeded: 4,
+                panicked: 0,
+                failed: 2,
+            },
+        );
+        updates.insert(
+            dynamic_queue_a.clone(),
+            QueueResultStats {
+                processed: 4,
+                succeeded: 4,
+                panicked: 0,
+                failed: 0,
+            },
+        );
+        updates.insert(
+            dynamic_queue_b.clone(),
+            QueueResultStats {
+                processed: 2,
+                succeeded: 0,
+                panicked: 2,
+                failed: 2,
+            },
+        );
+        storage.flush_result_stats(&updates).await?;
+
+        for _ in 0..3 {
+            storage
+                .enqueue(JobEnvelope::new(static_queue.clone(), TestJob {})?)
+                .await?;
+        }
+        for _ in 0..2 {
+            storage
+                .enqueue(JobEnvelope::new(dynamic_queue_a.clone(), TestJob {})?)
+                .await?;
+        }
+        storage
+            .enqueue(JobEnvelope::new(dynamic_queue_b.clone(), TestJob {})?)
+            .await?;
+
+        let stats = storage.stats().await?;
+        let static_stats = stats
+            .queues
+            .iter()
+            .find(|queue| queue.key == static_queue)
+            .expect("static queue stats should exist");
+        assert_close(static_stats.rate.processed_per_minute, 0.6);
+        assert_close(static_stats.rate.succeeded_per_minute, 0.4);
+        assert_close(static_stats.rate.failed_per_minute, 0.2);
+        assert_close(static_stats.rate.growth_per_minute, 0.3);
+        assert_close(static_stats.rate.effective_drain_per_minute, 0.0);
+        assert!(static_stats.rate.eta_s.is_none());
+
+        let dynamic_stats = stats
+            .queues
+            .iter()
+            .find(|queue| queue.key == dynamic_prefix)
+            .expect("dynamic queue stats should exist");
+        assert_close(dynamic_stats.rate.processed_per_minute, 0.6);
+        assert_close(dynamic_stats.rate.succeeded_per_minute, 0.4);
+        assert_close(dynamic_stats.rate.failed_per_minute, 0.2);
+        assert_close(dynamic_stats.rate.growth_per_minute, 0.3);
+        assert_close(dynamic_stats.rate.effective_drain_per_minute, 0.0);
+        assert!(dynamic_stats.rate.eta_s.is_none());
+
+        let dynamic_queue_stats = dynamic_stats
+            .queues
+            .iter()
+            .find(|queue| queue.suffix == "b")
+            .expect("dynamic sub-queue stats should exist");
+        assert_close(dynamic_queue_stats.rate.processed_per_minute, 0.2);
+        assert_close(dynamic_queue_stats.rate.succeeded_per_minute, 0.0);
+        assert_close(dynamic_queue_stats.rate.failed_per_minute, 0.2);
+        assert_close(dynamic_queue_stats.rate.growth_per_minute, 0.1);
+        assert_close(dynamic_queue_stats.rate.effective_drain_per_minute, 0.0);
+        assert!(dynamic_queue_stats.rate.eta_s.is_none());
 
         Ok(())
     }
