@@ -1,0 +1,35 @@
+[package]
+name = "oxana-web"
+version = "2.0.0-rc.0"
+edition = "2024"
+license = "MIT"
+description = "Web UI for Oxana job queue system."
+repository = "https://github.com/pragmaplatform/oxana"
+keywords = ["job", "scheduler", "worker", "web"]
+categories = ["asynchronous", "web-programming"]
+exclude = [".*", "logo.jpg"]
+
+[lib]
+doctest = false
+test = true
+
+[dependencies]
+oxana = { workspace = true }
+
+askama = "0.15"
+askama_web = { version = "0.15", features = ["axum-0.8"] }
+axum = "0.8"
+chrono = { version = "^0.4", features = ["serde"] }
+serde = { version = "^1.0", features = ["derive"] }
+serde_json = { version = "^1.0", features = ["preserve_order"] }
+urlencoding = "2"
+uuid = { version = "^1.23", features = ["v4"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+oxana = { path = "../oxana", default-features = false, features = [
+    "registry",
+] }
+serde = { version = "^1.0", features = ["derive"] }
+thiserror = "^2.0"
+tokio = { version = "^1.52", features = ["full"] }

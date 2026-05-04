@@ -1,6 +1,6 @@
 # Migration Guide: 0.9 → 0.10
 
-Oxanus 0.10 introduces a **Job/Worker separation** — job data (the serialized payload) is now defined in a separate struct from the worker (the processing logic). This gives workers access to application context at construction time, makes the processing signature more explicit, and removes the generic context parameter from `Context<T>`.
+Oxana 0.10 introduces a **Job/Worker separation** — job data (the serialized payload) is now defined in a separate struct from the worker (the processing logic). This gives workers access to application context at construction time, makes the processing signature more explicit, and removes the generic context parameter from `Context<T>`.
 
 ## Overview of changes
 
@@ -9,7 +9,7 @@ Oxanus 0.10 introduces a **Job/Worker separation** — job data (the serialized 
 | `Worker` trait combines data + processing | `Job` trait (data) + `Worker<Args>` trait (processing) |
 | `Context<T>` (generic over app context) | `JobContext` (no generic) |
 | `Context::value(x)` | `ContextValue::new(x)` |
-| `#[derive(Serialize, Deserialize, oxanus::Worker)]` on one struct | `#[derive(Serialize, Deserialize)]` on job struct, `#[derive(oxanus::Worker)]` on worker struct |
+| `#[derive(Serialize, Deserialize, oxana::Worker)]` on one struct | `#[derive(Serialize, Deserialize)]` on job struct, `#[derive(oxana::Worker)]` on worker struct |
 | `config.register_worker::<W>()` | `config.register_worker::<W, J>()` |
 | `storage.enqueue(queue, MyWorker { .. })` | `storage.enqueue(queue, MyJob { .. })` |
 | `config.has_registered_worker::<W>()` | `config.has_registered_worker_type::<W>()` |
@@ -22,9 +22,9 @@ Oxanus 0.10 introduces a **Job/Worker separation** — job data (the serialized 
 **Before (0.9):**
 
 ```rust
-#[derive(Debug, Serialize, Deserialize, oxanus::Worker)]
-#[oxanus(unique_id = "send_email:{user_id}")]
-#[oxanus(max_retries = 3)]
+#[derive(Debug, Serialize, Deserialize, oxana::Worker)]
+#[oxana(unique_id = "send_email:{user_id}")]
+#[oxana(max_retries = 3)]
 struct SendEmail {
     user_id: i64,
     subject: String,
@@ -32,7 +32,7 @@ struct SendEmail {
 }
 
 impl SendEmail {
-    async fn process(&self, ctx: &oxanus::Context<AppState>) -> Result<(), AppError> {
+    async fn process(&self, ctx: &oxana::Context<AppState>) -> Result<(), AppError> {
         let mailer = &ctx.ctx.mailer;
         mailer.send(self.user_id, &self.subject, &self.body).await?;
         Ok(())
@@ -52,15 +52,15 @@ struct SendEmailJob {
 }
 
 // Worker struct — holds processing logic (and optionally app context)
-#[derive(oxanus::Worker)]
-#[oxanus(unique_id = "send_email:{user_id}")]
-#[oxanus(max_retries = 3)]
+#[derive(oxana::Worker)]
+#[oxana(unique_id = "send_email:{user_id}")]
+#[oxana(max_retries = 3)]
 struct SendEmail {
     state: AppState,  // single field → auto FromContext
 }
 
 impl SendEmail {
-    async fn process(&self, job: &SendEmailJob, _ctx: &oxanus::JobContext) -> Result<(), AppError> {
+    async fn process(&self, job: &SendEmailJob, _ctx: &oxana::JobContext) -> Result<(), AppError> {
         self.state.mailer.send(job.user_id, &job.subject, &job.body).await?;
         Ok(())
     }
@@ -68,8 +68,8 @@ impl SendEmail {
 ```
 
 Key points:
-- By convention, the job type defaults to `{Name}Job` — stripping a `Worker` suffix if present (e.g., `SendEmailWorker` → `SendEmailJob`). Use `#[oxanus(job = CustomType)]` to override.
-- Job-specific attributes (`unique_id`, `on_conflict`, `resurrect`, `throttle_cost`) stay on `#[derive(oxanus::Worker)]` but generate impls on the **job** struct's `Job` trait.
+- By convention, the job type defaults to `{Name}Job` — stripping a `Worker` suffix if present (e.g., `SendEmailWorker` → `SendEmailJob`). Use `#[oxana(job = CustomType)]` to override.
+- Job-specific attributes (`unique_id`, `on_conflict`, `resurrect`, `throttle_cost`) stay on `#[derive(oxana::Worker)]` but generate impls on the **job** struct's `Job` trait.
 - Worker-specific attributes (`max_retries`, `retry_delay`, `cron`, `error`, `context`, `registry`) generate impls on the **worker** struct's `Worker<Args>` trait.
 - The process method signature changes from `process(&self, ctx: &Context<T>)` to `process(&self, job: &JobType, ctx: &JobContext)`.
 
@@ -79,14 +79,14 @@ The worker struct can be:
 
 **Unit struct** (no app context needed):
 ```rust
-#[derive(oxanus::Worker)]
+#[derive(oxana::Worker)]
 struct MyWorker;
 // Assumes job type is `MyJob`
 ```
 
 **Single-field struct** (auto `FromContext` — field is cloned from app context):
 ```rust
-#[derive(oxanus::Worker)]
+#[derive(oxana::Worker)]
 struct MyWorker {
     state: AppState,
 }
@@ -95,7 +95,7 @@ struct MyWorker {
 
 For more complex cases, implement `FromContext` manually:
 ```rust
-impl oxanus::FromContext<AppState> for MyWorker {
+impl oxana::FromContext<AppState> for MyWorker {
     fn from_context(ctx: &AppState) -> Self {
         Self {
             db: ctx.db_pool.clone(),
@@ -109,12 +109,12 @@ impl oxanus::FromContext<AppState> for MyWorker {
 
 **Before:**
 ```rust
-let ctx = oxanus::Context::value(AppState { db, mailer });
+let ctx = oxana::Context::value(AppState { db, mailer });
 ```
 
 **After:**
 ```rust
-let ctx = oxanus::ContextValue::new(AppState { db, mailer });
+let ctx = oxana::ContextValue::new(AppState { db, mailer });
 ```
 
 ### 4. Update enqueue calls
@@ -135,14 +135,14 @@ storage.enqueue(MyQueue, SendEmailJob { user_id: 1, subject: "hi".into(), body: 
 
 **Before:**
 ```rust
-let config = oxanus::Config::new(&storage)
+let config = oxana::Config::new(&storage)
     .register_queue::<MyQueue>()
     .register_worker::<SendEmail>();
 ```
 
 **After:**
 ```rust
-let config = oxanus::Config::new(&storage)
+let config = oxana::Config::new(&storage)
     .register_queue::<MyQueue>()
     .register_worker::<SendEmail, SendEmailJob>();
 ```
@@ -169,19 +169,19 @@ config.has_registered_cron_worker_type::<MyCronWorker>()
 
 **Before:**
 ```rust
-let config = oxanus::Config::new(&storage)
+let config = oxana::Config::new(&storage)
     .register_cron_worker::<MyCronWorker>(MyDynamicQueue(1));
 ```
 
 **After:**
 ```rust
 // Cron schedule and queue are defined on the derive
-#[derive(oxanus::Worker)]
-#[oxanus(job = MyCronJob)]
-#[oxanus(cron(schedule = "*/5 * * * * *", queue = MyQueue))]
+#[derive(oxana::Worker)]
+#[oxana(job = MyCronJob)]
+#[oxana(cron(schedule = "*/5 * * * * *", queue = MyQueue))]
 struct MyCronWorker;
 
-let config = oxanus::Config::new(&storage)
+let config = oxana::Config::new(&storage)
     .register_worker::<MyCronWorker, MyCronJob>();
 ```
 
@@ -191,7 +191,7 @@ If you implement `Worker` manually (without the derive macro), you now need to i
 
 ```rust
 // 1. Job trait on the job data struct
-impl oxanus::Job for MyJob {
+impl oxana::Job for MyJob {
     fn worker_name() -> &'static str {
         std::any::type_name::<MyWorker>()
     }
@@ -201,10 +201,10 @@ impl oxanus::Job for MyJob {
 
 // 2. Worker trait on the worker struct (now generic over job type)
 #[async_trait::async_trait]
-impl oxanus::Worker<MyJob> for MyWorker {
+impl oxana::Worker<MyJob> for MyWorker {
     type Error = MyError;
 
-    async fn process(&self, job: &MyJob, ctx: &oxanus::JobContext) -> Result<(), MyError> {
+    async fn process(&self, job: &MyJob, ctx: &oxana::JobContext) -> Result<(), MyError> {
         // ...
         Ok(())
     }
@@ -213,7 +213,7 @@ impl oxanus::Worker<MyJob> for MyWorker {
 }
 
 // 3. FromContext trait for constructing the worker from app context
-impl oxanus::FromContext<AppState> for MyWorker {
+impl oxana::FromContext<AppState> for MyWorker {
     fn from_context(ctx: &AppState) -> Self {
         Self { state: ctx.clone() }
     }
@@ -242,7 +242,7 @@ The app context (`ctx.ctx` in 0.9) is no longer on `JobContext`. Instead, it liv
 |------|-------------|
 | `Job` | Trait for job data structs (serializable payloads) |
 | `JobContext` | Replaces `Context<T>` — metadata + state, no generic |
-| `ContextValue<T>` | Wrapper for app context passed to `oxanus::run()` |
+| `ContextValue<T>` | Wrapper for app context passed to `oxana::run()` |
 | `FromContext<T>` | Trait for constructing workers from app context |
 | `Processable` | Type-erased trait for job execution (internal, but public) |
 | `BoxedProcessable<ET>` | Boxed `Processable` (internal, but public) |

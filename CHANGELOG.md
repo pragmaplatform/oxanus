@@ -6,18 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Add `#[derive(oxanus::Job)]` for defining enqueue-time job metadata, including unique IDs, conflict strategy, resurrection behavior, throttle cost, and worker binding.
-- Add optional batch workers with the derive-macro `process_batch` hook, `BatchItem`, `WorkerBatchConfig`, and `#[oxanus(batch_size = ..., batch_timeout_ms = ...)]` worker macro attributes.
+- Add `#[derive(oxana::Job)]` for defining enqueue-time job metadata, including unique IDs, conflict strategy, resurrection behavior, throttle cost, and worker binding.
+- Add optional batch workers with the derive-macro `process_batch` hook, `BatchItem`, `WorkerBatchConfig`, and `#[oxana(batch_size = ..., batch_timeout_ms = ...)]` worker macro attributes.
 - Add queue length history metrics and a Queue Lengths chart to the web queues dashboard.
 - Add per-queue processing rate, growth rate, and ETA stats with web dashboard display.
-- Add `#[oxanus(on_demand)]` and an On-Demand dashboard tab for manually enqueueing registered jobs.
+- Add `#[oxana(on_demand)]` and an On-Demand dashboard tab for manually enqueueing registered jobs.
 - Add separate Redis configuration for stats via `REDIS_STATS_URL`, `build_from_redis_urls`, and `build_from_pools`.
 
 ### Changed
 
 - Batch result stats writes and active queue length snapshots to reduce Redis calls during job completion and dashboard stats reads.
 - Replace runtime Redis `KEYS` calls with cursor-based `SCAN` for queue discovery and orphaned processing queue recovery.
-- Move job-specific derive attributes (`unique_id`, `on_conflict`, `resurrect`, and `throttle_cost`) from `#[derive(oxanus::Worker)]` to `#[derive(oxanus::Job)]`; `Self::...` in job hooks now resolves to the job type.
+- Move job-specific derive attributes (`unique_id`, `on_conflict`, `resurrect`, and `throttle_cost`) from `#[derive(oxana::Worker)]` to `#[derive(oxana::Job)]`; `Self::...` in job hooks now resolves to the job type.
 - Change worker execution to own job values and route all worker execution through the batched runtime path; job types no longer need `Sync`.
 
 ## [1.1.1]
@@ -50,7 +50,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- BSD support for shutdown signal handling ([#41](https://github.com/pragmaplatform/oxanus/issues/41))
+- BSD support for shutdown signal handling ([#41](https://github.com/pragmaplatform/oxana/issues/41))
 
 ## [1.0.3]
 
@@ -86,11 +86,11 @@ All notable changes to this project will be documented in this file.
 - `FromContext` trait for injecting app state into workers (auto-derived for unit and single-field structs)
 - `JobContext` replaces generic `Context<T>`
 - `ContextValue::new(x)` replaces `Context::value(x)`
-- `#[oxanus(job = Type)]` attribute with `{Name}Job` convention default (strips `Worker` suffix)
+- `#[oxana(job = Type)]` attribute with `{Name}Job` convention default (strips `Worker` suffix)
 
 ### Changed
 
-- `#[derive(oxanus::Worker)]` now generates both `Job` and `Worker<Args>` impls
+- `#[derive(oxana::Worker)]` now generates both `Job` and `Worker<Args>` impls
 - `config.register_worker::<W, J>()` replaces `config.register_worker::<W>()`
 - `storage.enqueue(queue, job)` now takes the job struct, not the worker struct
 - Cron `queue` attribute is now required at compile time (was runtime panic)
@@ -148,7 +148,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Web UI dashboard (`oxanus-web` crate) for monitoring jobs, queues, and cron
+- Web UI dashboard (`oxana-web` crate) for monitoring jobs, queues, and cron
 - Revive button to dead jobs dashboard
 - Link enqueued stat box to queues tab in web dashboard
 
@@ -392,7 +392,7 @@ All notable changes to this project will be documented in this file.
 - Add cron job validation
 - Firehose (optional, disabled by default)
 - Tracing instrument feature
-- Multi-crate workspace structure (`oxanus` + `oxanus-api`)
+- Multi-crate workspace structure (`oxana` + `oxana-api`)
 - Latency max to global stats
 - Global stats enhancements
 - Process reporting and stats expansion

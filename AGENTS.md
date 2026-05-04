@@ -19,13 +19,13 @@ This file provides guidance to any coding agent (Claude, ChatGPT, etc.) when wor
 
 This is a Rust workspace with three crates:
 
-- `oxanus/` - Main job processing library
-- `oxanus-macros/` - Proc macros for Oxanus
-- `oxanus-web/` - Web UI dashboard for monitoring jobs, queues, and cron
+- `oxana/` - Main job processing library
+- `oxana-macros/` - Proc macros for Oxana
+- `oxana-web/` - Web UI dashboard for monitoring jobs, queues, and cron
 
 ## Architecture Overview
 
-Oxanus is a job processing library built around several core components:
+Oxana is a job processing library built around several core components:
 
 ### Core Components
 
@@ -43,7 +43,7 @@ Oxanus is a job processing library built around several core components:
 
 - Uses Redis as the backing store (via deadpool-redis)
 - Graceful shutdown handling with signal management (SIGTERM/SIGINT on Unix, Ctrl+C on Windows)
-- Comprehensive error handling with custom `OxanusError` type
+- Comprehensive error handling with custom `OxanaError` type
 - Extensive Clippy linting rules enforced for code quality
 - Supports both static queues (compile-time) and dynamic queues (runtime)
 - Job uniqueness, throttling, retries, and scheduling capabilities
@@ -53,21 +53,21 @@ Oxanus is a job processing library built around several core components:
 The workspace is organized as:
 
 - Root `Cargo.toml` defines workspace members and shared package metadata
-- `oxanus/` contains the main library implementation
-- `oxanus-macros/` contains proc macros
-- `oxanus-web/` contains the web UI dashboard (uses askama templates + axum)
+- `oxana/` contains the main library implementation
+- `oxana-macros/` contains proc macros
+- `oxana-web/` contains the web UI dashboard (uses askama templates + axum)
 
 ### Testing
 
 - Unit tests are co-located with source code
-- Integration tests are in `oxanus/tests/integration/`
+- Integration tests are in `oxana/tests/integration/`
 - Test utilities are in `test_helper.rs`
 - Uses `testresult` crate for test error handling
-- Benchmarks use the divan framework in `oxanus/benches/`
+- Benchmarks use the divan framework in `oxana/benches/`
 
 ### Examples
 
-Comprehensive examples are provided in `oxanus/examples/` covering:
+Comprehensive examples are provided in `oxana/examples/` covering:
 
 - Basic usage (`minimal.rs`)
 - Cron scheduling (`cron.rs`)

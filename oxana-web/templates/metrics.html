@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metrics - Oxana</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js"></script>
+    <style>
+        .uplot {
+            color: #d1d5db;
+            background: transparent;
+        }
+        .chart-tooltip {
+            position: absolute;
+            z-index: 10;
+            min-width: 9rem;
+            pointer-events: none;
+            border: 1px solid #374151;
+            border-radius: 0.375rem;
+            background: rgba(17, 24, 39, 0.96);
+            color: #f9fafb;
+            padding: 0.5rem 0.625rem;
+            font-size: 0.75rem;
+            line-height: 1.25rem;
+            white-space: nowrap;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.35);
+            transform: translate(-50%, -100%);
+        }
+        .chart-tooltip.hidden {
+            display: none;
+        }
+        .chart-tooltip-label {
+            color: #9ca3af;
+        }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+    <div class="max-w-[88rem] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="mb-6">
+            <h1 class="text-2xl font-bold tracking-tight">Oxana Dashboard</h1>
+        </div>
+
+        {% include "_tabs.html" %}
+
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+            <h2 class="text-lg font-semibold">Metrics</h2>
+            <form method="GET" action="{{ base_path }}/metrics" class="flex items-center gap-2 text-sm">
+                <label for="minutes" class="text-gray-400">Window</label>
+                <select id="minutes" name="minutes" class="bg-gray-900 border border-gray-800 rounded px-3 py-1.5 text-gray-200" onchange="this.form.submit()">
+                    <option value="60" {% if metrics.minutes == 60 %}selected{% endif %}>60 minutes</option>
+                    <option value="120" {% if metrics.minutes == 120 %}selected{% endif %}>2 hours</option>
+                    <option value="240" {% if metrics.minutes == 240 %}selected{% endif %}>4 hours</option>
+                    <option value="480" {% if metrics.minutes == 480 %}selected{% endif %}>8 hours</option>
+                </select>
+            </form>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-8">
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Processed</div>
+                <div class="text-2xl font-semibold text-green-400">{{ metrics.totals.processed|format_number_u64 }}</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Failed</div>
+                <div class="text-2xl font-semibold text-red-400">{{ metrics.totals.failed|format_number_u64 }}</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Succeeded</div>
+                <div class="text-2xl font-semibold text-emerald-400">{{ metrics.totals.succeeded|format_number_u64 }}</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Time</div>
+                <div class="text-2xl font-semibold text-blue-400">{{ metrics.totals.execution_ms|format_duration_ms }}</div>
+            </div>
+            <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+                <div class="text-xs text-gray-400 uppercase tracking-wide mb-1">Avg Time</div>
+                <div class="text-2xl font-semibold text-purple-400">{{ metrics.totals.average_execution_ms()|format_duration_ms_f64 }}</div>
+            </div>
+        </div>
+
+        <section class="space-y-6 mb-10">
+            <div>
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold">Total Time</h2>
+                </div>
+                <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
+                    <div id="execution-chart" class="w-full h-[300px]"></div>
+                </div>
+            </div>
+            <div>
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold">Total Processed</h2>
+                </div>
+                <div class="relative bg-gray-900 border border-gray-800 rounded-lg p-4">
+                    <div id="processed-chart" class="w-full h-[300px]"></div>
+                </div>
+            </div>
+        </section>
+
+        <section>
+            <h2 class="text-lg font-semibold mb-4">Workers</h2>
+            {% if metrics.workers.is_empty() %}
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500">
+                No metrics
+            </div>
+            {% else %}
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b border-gray-800 text-left text-xs text-gray-400 uppercase tracking-wide">
+                            <th class="pb-3 pr-4">Worker</th>
+                            <th class="pb-3 pr-4 text-right">Processed</th>
+                            <th class="pb-3 pr-4 text-right">Succeeded</th>
+                            <th class="pb-3 pr-4 text-right">Failed</th>
+                            <th class="pb-3 pr-4 text-right">Total Time</th>
+                            <th class="pb-3 text-right">Avg Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in &metrics.workers %}
+                        <tr class="border-b border-gray-800/50 hover:bg-gray-900/50">
+                            <td class="py-3 pr-4 font-mono text-sm">
+                                <a href="{{ base_path }}/metrics/job?worker={{ row.identity.worker|urlencode }}&amp;minutes={{ metrics.minutes }}" title="{{ row.identity.worker }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ self.metric_identity_label(&row.identity) }}</a>
+                            </td>
+                            <td class="py-3 pr-4 text-right text-green-400">{{ row.totals.processed|format_number_u64 }}</td>
+                            <td class="py-3 pr-4 text-right text-emerald-400">{{ row.totals.succeeded|format_number_u64 }}</td>
+                            <td class="py-3 pr-4 text-right text-red-400">{{ row.totals.failed|format_number_u64 }}</td>
+                            <td class="py-3 pr-4 text-right text-blue-400">{{ row.totals.execution_ms|format_duration_ms }}</td>
+                            <td class="py-3 text-right text-purple-400">{{ row.totals.average_execution_ms()|format_duration_ms_f64 }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </section>
+    </div>
+
+    <script>
+        window.addEventListener('DOMContentLoaded', function () {
+            if (typeof uPlot === 'undefined') {
+                return;
+            }
+
+            function formatTime(ts) {
+                return new Date(ts * 1000).toLocaleString(undefined, {
+                    month: 'numeric',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit'
+                });
+            }
+
+            function formatSeconds(value) {
+                if (value >= 60) {
+                    return (value / 60).toFixed(1) + 'm';
+                }
+                return value.toFixed(1) + 's';
+            }
+
+            function formatCount(value) {
+                return Math.round(value).toLocaleString();
+            }
+
+            var palette = [
+                '#60a5fa',
+                '#4ade80',
+                '#f472b6',
+                '#facc15',
+                '#a78bfa',
+                '#2dd4bf',
+                '#fb923c',
+                '#94a3b8'
+            ];
+
+            function seriesColor(index) {
+                return palette[index % palette.length];
+            }
+
+            function sortedSeriesRows(payload, idx) {
+                return payload.series.map(function (series, seriesIdx) {
+                    return {
+                        series: series,
+                        seriesIdx: seriesIdx,
+                        value: series.data[idx] || 0
+                    };
+                }).sort(function (a, b) {
+                    return (b.value - a.value) || (a.seriesIdx - b.seriesIdx);
+                });
+            }
+
+            function buildTooltip(chartEl, payload, formatter, options) {
+                options = options || {};
+                var tooltip = document.createElement('div');
+                tooltip.className = 'chart-tooltip hidden';
+                chartEl.appendChild(tooltip);
+
+                chartEl.addEventListener('mouseleave', function () {
+                    tooltip.classList.add('hidden');
+                });
+
+                return function (u) {
+                    var idx = u.cursor.idx;
+                    if (idx == null || idx < 0 || idx >= payload.timestamps.length) {
+                        tooltip.classList.add('hidden');
+                        return;
+                    }
+
+                    tooltip.replaceChildren();
+
+                    var time = document.createElement('div');
+                    var timeLabel = document.createElement('span');
+                    timeLabel.className = 'chart-tooltip-label';
+                    timeLabel.textContent = 'Time: ';
+                    time.appendChild(timeLabel);
+                    time.append(formatTime(payload.timestamps[idx]));
+                    tooltip.appendChild(time);
+
+                    sortedSeriesRows(payload, idx).filter(function (entry) {
+                        return options.includeZeroValues !== false || entry.value !== 0;
+                    }).forEach(function (entry) {
+                        var row = document.createElement('div');
+                        var label = document.createElement('span');
+                        label.className = 'chart-tooltip-label';
+                        label.textContent = (entry.series.fullLabel || entry.series.label) + ': ';
+                        label.style.color = seriesColor(entry.seriesIdx);
+                        row.appendChild(label);
+                        row.append(formatter(entry.value));
+                        tooltip.appendChild(row);
+                    });
+
+                    tooltip.classList.remove('hidden');
+
+                    var x = u.over.offsetLeft + u.cursor.left;
+                    var y = u.over.offsetTop + u.cursor.top;
+                    var halfWidth = tooltip.offsetWidth / 2;
+                    var left = Math.min(Math.max(x, halfWidth + 8), chartEl.clientWidth - halfWidth - 8);
+                    var top = Math.max(y - 12, tooltip.offsetHeight + 8);
+
+                    tooltip.style.left = left + 'px';
+                    tooltip.style.top = top + 'px';
+                };
+            }
+
+            function renderChart(chartId, payload, valueFormatter, options) {
+                var chartEl = document.getElementById(chartId);
+                if (!chartEl) {
+                    return;
+                }
+
+                var data = [payload.timestamps].concat(payload.series.map(function (series) {
+                    return series.data;
+                }));
+
+                new uPlot({
+                    width: Math.max(chartEl.clientWidth, 320),
+                    height: 300,
+                    legend: { show: false },
+                    tzDate: function (ts) { return uPlot.tzDate(new Date(ts * 1e3), 'Etc/UTC'); },
+                    scales: {
+                        x: { time: true },
+                        y: { range: [0, null] }
+                    },
+                    axes: [
+                        {
+                            stroke: '#9ca3af',
+                            grid: { stroke: 'rgba(31, 41, 55, 0.7)' },
+                            ticks: { stroke: '#374151' }
+                        },
+                        {
+                            size: 72,
+                            stroke: '#9ca3af',
+                            grid: { stroke: 'rgba(31, 41, 55, 0.7)' },
+                            ticks: { stroke: '#374151' },
+                            values: function (_u, vals) {
+                                return vals.map(valueFormatter);
+                            }
+                        }
+                    ],
+                    series: [
+                        {}
+                    ].concat(payload.series.map(function (series, index) {
+                        return {
+                            label: series.label,
+                            stroke: seriesColor(index),
+                            width: 2
+                        };
+                    })),
+                    hooks: {
+                        setCursor: [buildTooltip(chartEl, payload, valueFormatter, options)]
+                    }
+                }, data, chartEl);
+            }
+
+            function svgEl(name) {
+                return document.createElementNS('http://www.w3.org/2000/svg', name);
+            }
+
+            function formatShortTime(ts) {
+                return new Date(ts * 1000).toLocaleString(undefined, {
+                    hour: 'numeric',
+                    minute: '2-digit'
+                });
+            }
+
+            function renderStackedProcessedChart(chartId, payload) {
+                var chartEl = document.getElementById(chartId);
+                if (!chartEl) {
+                    return;
+                }
+
+                var width = Math.max(chartEl.clientWidth, 320);
+                var height = 300;
+                var margin = { top: 12, right: 16, bottom: 44, left: 72 };
+                var plotWidth = width - margin.left - margin.right;
+                var plotHeight = height - margin.top - margin.bottom;
+                var timestamps = payload.timestamps;
+                var totals = timestamps.map(function (_ts, idx) {
+                    return payload.series.reduce(function (sum, series) {
+                        return sum + (series.data[idx] || 0);
+                    }, 0);
+                });
+                var maxTotal = Math.max.apply(null, totals.concat([1]));
+                var barStep = plotWidth / Math.max(timestamps.length, 1);
+                var barWidth = Math.max(1, Math.min(18, barStep * 0.72));
+                var bottom = margin.top + plotHeight;
+
+                chartEl.replaceChildren();
+
+                var tooltip = document.createElement('div');
+                tooltip.className = 'chart-tooltip hidden';
+                chartEl.appendChild(tooltip);
+
+                var svg = svgEl('svg');
+                svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+                svg.setAttribute('width', '100%');
+                svg.setAttribute('height', height.toString());
+                svg.setAttribute('role', 'img');
+                svg.setAttribute('aria-label', 'Total processed by worker');
+                chartEl.appendChild(svg);
+
+                for (var tick = 0; tick <= 4; tick += 1) {
+                    var value = Math.round((maxTotal * tick) / 4);
+                    var y = bottom - (plotHeight * value / maxTotal);
+
+                    var grid = svgEl('line');
+                    grid.setAttribute('x1', margin.left.toString());
+                    grid.setAttribute('x2', (width - margin.right).toString());
+                    grid.setAttribute('y1', y.toString());
+                    grid.setAttribute('y2', y.toString());
+                    grid.setAttribute('stroke', 'rgba(31, 41, 55, 0.7)');
+                    svg.appendChild(grid);
+
+                    var label = svgEl('text');
+                    label.setAttribute('x', (margin.left - 14).toString());
+                    label.setAttribute('y', (y + 4).toString());
+                    label.setAttribute('text-anchor', 'end');
+                    label.setAttribute('fill', '#9ca3af');
+                    label.setAttribute('font-size', '12');
+                    label.textContent = formatCount(value);
+                    svg.appendChild(label);
+                }
+
+                var xTickIndexes = Array.from(new Set([
+                    0,
+                    Math.floor((timestamps.length - 1) / 3),
+                    Math.floor(((timestamps.length - 1) * 2) / 3),
+                    timestamps.length - 1
+                ])).filter(function (idx) {
+                    return idx >= 0 && idx < timestamps.length;
+                });
+
+                xTickIndexes.forEach(function (idx) {
+                    var x = margin.left + (idx + 0.5) * barStep;
+                    var label = svgEl('text');
+                    label.setAttribute('x', x.toString());
+                    label.setAttribute('y', (height - 14).toString());
+                    label.setAttribute('text-anchor', 'middle');
+                    label.setAttribute('fill', '#9ca3af');
+                    label.setAttribute('font-size', '12');
+                    label.textContent = formatShortTime(timestamps[idx]);
+                    svg.appendChild(label);
+                });
+
+                function appendSegment(idx, value, offset, seriesIdx) {
+                    if (value <= 0) {
+                        return;
+                    }
+
+                    var segmentHeight = Math.max(1, plotHeight * value / maxTotal);
+                    var y = bottom - (plotHeight * (offset + value) / maxTotal);
+                    var rect = svgEl('rect');
+                    rect.setAttribute('x', (margin.left + idx * barStep + (barStep - barWidth) / 2).toString());
+                    rect.setAttribute('y', y.toString());
+                    rect.setAttribute('width', barWidth.toString());
+                    rect.setAttribute('height', segmentHeight.toString());
+                    rect.setAttribute('fill', seriesColor(seriesIdx));
+                    svg.appendChild(rect);
+                }
+
+                timestamps.forEach(function (_ts, idx) {
+                    var offset = 0;
+                    payload.series.forEach(function (series, seriesIdx) {
+                        var value = series.data[idx] || 0;
+                        appendSegment(idx, value, offset, seriesIdx);
+                        offset += value;
+                    });
+                });
+
+                svg.addEventListener('mousemove', function (event) {
+                    var rect = svg.getBoundingClientRect();
+                    var localX = ((event.clientX - rect.left) / rect.width) * width;
+                    var idx = Math.round((localX - margin.left) / barStep - 0.5);
+                    idx = Math.max(0, Math.min(timestamps.length - 1, idx));
+
+                    tooltip.replaceChildren();
+
+                    var time = document.createElement('div');
+                    var timeLabel = document.createElement('span');
+                    timeLabel.className = 'chart-tooltip-label';
+                    timeLabel.textContent = 'Time: ';
+                    time.appendChild(timeLabel);
+                    time.append(formatTime(timestamps[idx]));
+                    tooltip.appendChild(time);
+
+                    sortedSeriesRows(payload, idx).filter(function (entry) {
+                        return entry.value !== 0;
+                    }).forEach(function (entry) {
+                        var row = document.createElement('div');
+                        var label = document.createElement('span');
+                        label.className = 'chart-tooltip-label';
+                        label.textContent = (entry.series.fullLabel || entry.series.label) + ': ';
+                        label.style.color = seriesColor(entry.seriesIdx);
+                        row.appendChild(label);
+                        row.append(formatCount(entry.value));
+                        tooltip.appendChild(row);
+                    });
+
+                    if ((totals[idx] || 0) !== 0) {
+                        var total = document.createElement('div');
+                        var totalLabel = document.createElement('span');
+                        totalLabel.className = 'chart-tooltip-label';
+                        totalLabel.textContent = 'Total: ';
+                        total.appendChild(totalLabel);
+                        total.append(formatCount(totals[idx] || 0));
+                        tooltip.appendChild(total);
+                    }
+                    tooltip.classList.remove('hidden');
+
+                    var x = event.clientX - rect.left;
+                    var y = event.clientY - rect.top;
+                    var halfWidth = tooltip.offsetWidth / 2;
+                    var left = Math.min(Math.max(x, halfWidth + 8), chartEl.clientWidth - halfWidth - 8);
+                    var top = Math.max(y - 12, tooltip.offsetHeight + 8);
+
+                    tooltip.style.left = left + 'px';
+                    tooltip.style.top = top + 'px';
+                });
+
+                svg.addEventListener('mouseleave', function () {
+                    tooltip.classList.add('hidden');
+                });
+            }
+
+            renderChart(
+                'execution-chart',
+                {{ self.execution_chart_data_json()|safe }},
+                formatSeconds,
+                { includeZeroValues: false }
+            );
+            renderStackedProcessedChart(
+                'processed-chart',
+                {{ self.processed_chart_data_json()|safe }}
+            );
+        });
+    </script>
+</body>
+</html>
