@@ -164,6 +164,7 @@ The component registry automatically discovers and registers all workers and que
 `Storage` provides the interface for job persistence - enqueueing, scheduling, state management, and queue monitoring.
 
 Build it with `Storage::builder().build_from_env()` which reads the `REDIS_URL` environment variable.
+Set `REDIS_STATS_URL` to store counters and metrics in a separate Redis instance; when it is not set, stats use `REDIS_URL`.
 
 ### Context
 

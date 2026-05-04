@@ -40,6 +40,7 @@ const QUEUE_LENGTH_SNAPSHOT_TTL_SECS: i64 = 120;
 #[derive(Clone)]
 pub(crate) struct StorageInternal {
     pool: deadpool_redis::Pool,
+    stats_pool: Option<deadpool_redis::Pool>,
     keys: StorageKeys,
     started_at: i64,
     consecutive_redis_failures: Arc<AtomicU32>,
@@ -57,11 +58,34 @@ struct QueueLengthSnapshot {
     refreshed_at: Option<i64>,
 }
 
+struct QueueStatsInputs {
+    stats: HashMap<String, i64>,
+    queue_length_rate_hashes: Vec<HashMap<String, i64>>,
+    queue_counter_totals: HashMap<String, QueueCounterTotals>,
+}
+
 impl StorageInternal {
     pub fn new(pool: deadpool_redis::Pool, namespace: Option<String>) -> Self {
+        Self::with_optional_stats_pool(pool, None, namespace)
+    }
+
+    pub fn with_stats_pool(
+        pool: deadpool_redis::Pool,
+        stats_pool: deadpool_redis::Pool,
+        namespace: Option<String>,
+    ) -> Self {
+        Self::with_optional_stats_pool(pool, Some(stats_pool), namespace)
+    }
+
+    fn with_optional_stats_pool(
+        pool: deadpool_redis::Pool,
+        stats_pool: Option<deadpool_redis::Pool>,
+        namespace: Option<String>,
+    ) -> Self {
         let keys = StorageKeys::new(namespace.unwrap_or_default());
         Self {
             pool,
+            stats_pool,
             keys,
             started_at: chrono::Utc::now().timestamp(),
             consecutive_redis_failures: Arc::new(AtomicU32::new(0)),
@@ -109,13 +133,28 @@ impl StorageInternal {
         &self.keys.namespace
     }
 
+    #[cfg(test)]
+    pub(crate) fn has_dedicated_stats_pool(&self) -> bool {
+        self.stats_pool.is_some()
+    }
+
     pub async fn pool(&self) -> Result<deadpool_redis::Pool, OxanusError> {
         Ok(self.pool.clone())
     }
 
     pub async fn connection(&self) -> Result<deadpool_redis::Connection, OxanusError> {
-        self.pool
-            .get()
+        Self::connection_from_pool(&self.pool).await
+    }
+
+    async fn stats_connection(&self) -> Result<deadpool_redis::Connection, OxanusError> {
+        let pool = self.stats_pool.as_ref().unwrap_or(&self.pool);
+        Self::connection_from_pool(pool).await
+    }
+
+    async fn connection_from_pool(
+        pool: &deadpool_redis::Pool,
+    ) -> Result<deadpool_redis::Connection, OxanusError> {
+        pool.get()
             .await
             .map_err(OxanusError::DeadpoolRedisPoolError)
     }
@@ -809,16 +848,9 @@ impl StorageInternal {
         queues: &[String],
         filter: bool,
     ) -> Result<Vec<QueueStats>, OxanusError> {
-        let list: HashMap<String, i64> = (*redis).hgetall(&self.keys.stats).await?;
         let now = chrono::Utc::now().timestamp();
         let rate_minutes = metric_minutes(now, JobMetricsQuery::new(QUEUE_RATE_WINDOW_MINUTES));
-        let queue_length_rate_hashes = self
-            .queue_length_metric_hashes(redis, &rate_minutes)
-            .await?;
-        let queue_counter_rate_hashes = self
-            .queue_counter_metric_hashes(redis, &rate_minutes)
-            .await?;
-        let queue_counter_totals = aggregate_queue_counter_hashes(queue_counter_rate_hashes);
+        let inputs = self.queue_stats_inputs(redis, &rate_minutes).await?;
 
         let mut map = HashMap::new();
         let mut queue_values: Vec<(String, String, i64)> = Vec::new();
@@ -828,7 +860,7 @@ impl StorageInternal {
             queue_values.push((queue.clone(), "processed".to_string(), 0));
         }
 
-        for (key, value) in list {
+        for (key, value) in inputs.stats {
             let (queue_full_key, stat_key) = match Self::stats_key_parts(&key) {
                 Some(parts) => parts,
                 None => continue,
@@ -943,8 +975,8 @@ impl StorageInternal {
                 value.rate = Self::queue_rate_stats(
                     &value.key,
                     value.enqueued,
-                    &queue_length_rate_hashes,
-                    &queue_counter_totals,
+                    &inputs.queue_length_rate_hashes,
+                    &inputs.queue_counter_totals,
                 );
             } else {
                 for dynamic_queue in value.queues.iter_mut() {
@@ -967,8 +999,8 @@ impl StorageInternal {
                     dynamic_queue.rate = Self::queue_rate_stats(
                         &dynamic_queue_key,
                         dynamic_queue.enqueued,
-                        &queue_length_rate_hashes,
-                        &queue_counter_totals,
+                        &inputs.queue_length_rate_hashes,
+                        &inputs.queue_counter_totals,
                     );
 
                     if value.latency_s < latency_s {
@@ -989,6 +1021,39 @@ impl StorageInternal {
         values.sort_by(|a, b| a.key.cmp(&b.key));
 
         Ok(values)
+    }
+
+    async fn queue_stats_inputs(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        rate_minutes: &[i64],
+    ) -> Result<QueueStatsInputs, OxanusError> {
+        if self.stats_pool.is_some() {
+            let mut stats_redis = self.stats_connection().await?;
+            self.queue_stats_inputs_w_conn(&mut stats_redis, rate_minutes)
+                .await
+        } else {
+            self.queue_stats_inputs_w_conn(redis, rate_minutes).await
+        }
+    }
+
+    async fn queue_stats_inputs_w_conn(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        rate_minutes: &[i64],
+    ) -> Result<QueueStatsInputs, OxanusError> {
+        let stats: HashMap<String, i64> = (*redis).hgetall(&self.keys.stats).await?;
+        let queue_length_rate_hashes = self.queue_length_metric_hashes(redis, rate_minutes).await?;
+        let queue_counter_rate_hashes = self
+            .queue_counter_metric_hashes(redis, rate_minutes)
+            .await?;
+        let queue_counter_totals = aggregate_queue_counter_hashes(queue_counter_rate_hashes);
+
+        Ok(QueueStatsInputs {
+            stats,
+            queue_length_rate_hashes,
+            queue_counter_totals,
+        })
     }
 
     fn stats_key_parts(key: &str) -> Option<(&str, &str)> {
@@ -1098,7 +1163,7 @@ impl StorageInternal {
             return Ok(());
         }
 
-        let mut redis = self.connection().await?;
+        let mut redis = self.stats_connection().await?;
         let mut pipe = redis::pipe();
         let mut has_commands = false;
 
@@ -1164,10 +1229,29 @@ impl StorageInternal {
         }
 
         let refreshed_at = chrono::Utc::now().timestamp();
+
+        if self.stats_pool.is_some() {
+            let mut stats_redis = self.stats_connection().await?;
+            self.write_queue_length_stats(&mut stats_redis, &lengths, refreshed_at)
+                .await?;
+        } else {
+            self.write_queue_length_stats(&mut redis, &lengths, refreshed_at)
+                .await?;
+        }
+
+        Ok(lengths)
+    }
+
+    async fn write_queue_length_stats(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        lengths: &HashMap<String, i64>,
+        refreshed_at: i64,
+    ) -> Result<(), OxanusError> {
         let queue_length_key = self.metrics_queue_length_key(refreshed_at.div_euclid(60));
         let mut pipe = redis::pipe();
 
-        for (queue, count) in &lengths {
+        for (queue, count) in lengths {
             pipe.hset(&self.keys.stats, format!("{queue}:enqueued"), *count)
                 .hset(
                     &self.keys.stats,
@@ -1178,9 +1262,9 @@ impl StorageInternal {
         }
         pipe.expire(queue_length_key, METRICS_RETENTION_SECS);
 
-        let _: () = pipe.query_async(&mut redis).await?;
+        let _: () = pipe.query_async(redis).await?;
 
-        Ok(lengths)
+        Ok(())
     }
 
     pub async fn flush_job_metrics(&self, buffer: &JobMetricsBuffer) -> Result<(), OxanusError> {
@@ -1188,7 +1272,7 @@ impl StorageInternal {
             return Ok(());
         }
 
-        let mut redis = self.connection().await?;
+        let mut redis = self.stats_connection().await?;
         let mut pipe = redis::pipe();
 
         for (minute, identity, metrics) in buffer.records() {
@@ -1301,7 +1385,7 @@ impl StorageInternal {
         &self,
         query: JobMetricsQuery,
     ) -> Result<JobMetricsSnapshot, OxanusError> {
-        let mut redis = self.connection().await?;
+        let mut redis = self.stats_connection().await?;
         let minutes = metric_minutes(chrono::Utc::now().timestamp(), query);
         let hashes = self.metrics_counter_hashes(&mut redis, &minutes).await?;
         let aggregation = aggregate_counter_hashes(&minutes, hashes, None);
@@ -1323,7 +1407,7 @@ impl StorageInternal {
         identity: &MetricIdentity,
         query: JobMetricsQuery,
     ) -> Result<JobMetricsDetail, OxanusError> {
-        let mut redis = self.connection().await?;
+        let mut redis = self.stats_connection().await?;
         let minutes = metric_minutes(chrono::Utc::now().timestamp(), query);
         let hashes = self
             .metrics_counter_hashes_for(&mut redis, &minutes, identity)
@@ -1350,7 +1434,7 @@ impl StorageInternal {
         &self,
         query: JobMetricsQuery,
     ) -> Result<QueueLengthMetricsSnapshot, OxanusError> {
-        let mut redis = self.connection().await?;
+        let mut redis = self.stats_connection().await?;
         let minutes = metric_minutes(chrono::Utc::now().timestamp(), query);
         let hashes = self
             .queue_length_metric_hashes(&mut redis, &minutes)
