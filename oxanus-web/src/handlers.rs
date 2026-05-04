@@ -204,6 +204,14 @@ pub(crate) async fn dead_jobs(
     })
 }
 
+pub(crate) async fn wipe_dead(
+    Extension(state): Extension<OxanusWebState>,
+) -> Result<Redirect, OxanusWebError> {
+    state.storage.wipe_dead().await?;
+
+    Ok(Redirect::to(&format!("{}/dead", state.base_path)))
+}
+
 pub(crate) async fn retry_jobs(
     Extension(state): Extension<OxanusWebState>,
     Query(params): Query<PaginationParams>,

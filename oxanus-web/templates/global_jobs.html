@@ -23,6 +23,13 @@
                 {% endif %}
             </h2>
             <div class="flex items-center gap-2 text-sm">
+                {% if kind.is_dead() %}
+                {% if total > 0 %}
+                <form method="POST" action="{{ base_path }}/dead/wipe" onsubmit="return confirmWipeDead()">
+                    <button type="submit" class="px-3 py-1 rounded bg-red-900/50 border border-red-800 hover:bg-red-800 text-red-300 transition-colors">Wipe</button>
+                </form>
+                {% endif %}
+                {% endif %}
                 {% if page > 1 %}
                 <a href="?page={{ page - 1 }}" class="px-3 py-1 rounded bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300">&larr; Prev</a>
                 {% else %}
@@ -166,6 +173,10 @@
             btn.textContent = 'Copy failed';
             setTimeout(function() { btn.textContent = 'Copy Error Info'; }, 1500);
         });
+    }
+    function confirmWipeDead() {
+        var input = prompt('Type WIPE to permanently remove all dead jobs.');
+        return input === 'WIPE';
     }
     </script>
 </body>

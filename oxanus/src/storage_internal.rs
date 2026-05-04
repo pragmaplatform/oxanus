@@ -637,6 +637,12 @@ impl StorageInternal {
         Ok(())
     }
 
+    pub async fn wipe_dead(&self) -> Result<(), OxanusError> {
+        let mut redis = self.connection().await?;
+        let _: () = (*redis).del(&self.keys.dead).await?;
+        Ok(())
+    }
+
     pub async fn list_dead(&self, opts: &QueueListOpts) -> Result<Vec<JobEnvelope>, OxanusError> {
         let mut redis = self.connection().await?;
         let start = opts.offset as isize;
@@ -2822,6 +2828,36 @@ mod tests {
         assert_eq!(storage.enqueued_count(&queue).await?, 0);
         assert!(storage.get_job(&envelope1.id).await?.is_none());
         assert!(storage.get_job(&envelope2.id).await?.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_wipe_dead() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+        let envelope1 = JobEnvelope::new(queue.clone(), TestJob {})?;
+        let envelope2 = JobEnvelope::new(queue, TestJob {})?;
+
+        storage.kill(&envelope1, "first failed".to_string()).await?;
+        storage
+            .kill(&envelope2, "second failed".to_string())
+            .await?;
+
+        assert_eq!(storage.dead_count().await?, 2);
+
+        storage.wipe_dead().await?;
+
+        assert_eq!(storage.dead_count().await?, 0);
+        assert!(
+            storage
+                .list_dead(&QueueListOpts {
+                    count: 10,
+                    offset: 0,
+                })
+                .await?
+                .is_empty()
+        );
 
         Ok(())
     }

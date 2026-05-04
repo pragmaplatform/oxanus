@@ -422,6 +422,15 @@ impl Storage {
         self.internal.wipe_queue(&queue.key()).await
     }
 
+    /// Removes all jobs from the dead queue.
+    ///
+    /// # Returns
+    ///
+    /// An [`OxanusError`] if the operation fails.
+    pub async fn wipe_dead(&self) -> Result<(), OxanusError> {
+        self.internal.wipe_dead().await
+    }
+
     /// Returns Prometheus metrics based on the current stats.
     ///
     /// # Returns
