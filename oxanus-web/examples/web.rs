@@ -1,6 +1,6 @@
 // cargo run --package oxanus-web --example web
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[derive(oxanus::Registry)]
 struct ComponentRegistry(oxanus::ComponentRegistry<WorkerContext, WorkerError>);
@@ -11,66 +11,94 @@ enum WorkerError {}
 #[derive(Debug, Clone)]
 struct WorkerContext {}
 
-#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
-#[oxanus(on_demand = true)]
-struct SyncCustomerProfileJob {
-    duration_ms: u64,
-}
+mod demo {
+    pub(crate) mod crm {
+        pub(crate) mod customers {
+            use crate::{ComponentRegistry, WorkerContext, WorkerError};
+            use serde::{Deserialize, Serialize};
 
-#[derive(oxanus::Worker)]
-#[oxanus(max_retries = 0)]
-struct SyncCustomerProfileWorker;
+            #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+            #[oxanus(on_demand)]
+            pub(crate) struct SyncCustomerProfileJob {
+                pub(crate) duration_ms: u64,
+            }
 
-impl SyncCustomerProfileWorker {
-    async fn process(
-        &self,
-        job: SyncCustomerProfileJob,
-        _ctx: &oxanus::JobContext,
-    ) -> Result<(), WorkerError> {
-        tokio::time::sleep(std::time::Duration::from_millis(job.duration_ms)).await;
-        Ok(())
+            #[derive(oxanus::Worker)]
+            #[oxanus(max_retries = 0)]
+            struct SyncCustomerProfileWorker;
+
+            impl SyncCustomerProfileWorker {
+                async fn process(
+                    &self,
+                    job: SyncCustomerProfileJob,
+                    _ctx: &oxanus::JobContext,
+                ) -> Result<(), WorkerError> {
+                    tokio::time::sleep(std::time::Duration::from_millis(job.duration_ms)).await;
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    pub(crate) mod billing {
+        pub(crate) mod invoices {
+            use crate::{ComponentRegistry, WorkerContext, WorkerError};
+            use serde::{Deserialize, Serialize};
+
+            #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+            #[oxanus(on_demand)]
+            pub(crate) struct GenerateInvoiceJob {
+                pub(crate) duration_ms: u64,
+            }
+
+            #[derive(oxanus::Worker)]
+            #[oxanus(max_retries = 0)]
+            struct GenerateInvoiceWorker;
+
+            impl GenerateInvoiceWorker {
+                async fn process(
+                    &self,
+                    job: GenerateInvoiceJob,
+                    _ctx: &oxanus::JobContext,
+                ) -> Result<(), WorkerError> {
+                    tokio::time::sleep(std::time::Duration::from_millis(job.duration_ms)).await;
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    pub(crate) mod messaging {
+        pub(crate) mod receipts {
+            use crate::{ComponentRegistry, WorkerContext, WorkerError};
+            use serde::{Deserialize, Serialize};
+
+            #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
+            pub(crate) struct SendReceiptEmailJob {
+                pub(crate) duration_ms: u64,
+            }
+
+            #[derive(oxanus::Worker)]
+            #[oxanus(max_retries = 0)]
+            struct SendReceiptEmailWorker;
+
+            impl SendReceiptEmailWorker {
+                async fn process(
+                    &self,
+                    job: SendReceiptEmailJob,
+                    _ctx: &oxanus::JobContext,
+                ) -> Result<(), WorkerError> {
+                    tokio::time::sleep(std::time::Duration::from_millis(job.duration_ms)).await;
+                    Ok(())
+                }
+            }
+        }
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
-struct GenerateInvoiceJob {
-    duration_ms: u64,
-}
-
-#[derive(oxanus::Worker)]
-#[oxanus(max_retries = 0)]
-struct GenerateInvoiceWorker;
-
-impl GenerateInvoiceWorker {
-    async fn process(
-        &self,
-        job: GenerateInvoiceJob,
-        _ctx: &oxanus::JobContext,
-    ) -> Result<(), WorkerError> {
-        tokio::time::sleep(std::time::Duration::from_millis(job.duration_ms)).await;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, oxanus::Job)]
-struct SendReceiptEmailJob {
-    duration_ms: u64,
-}
-
-#[derive(oxanus::Worker)]
-#[oxanus(max_retries = 0)]
-struct SendReceiptEmailWorker;
-
-impl SendReceiptEmailWorker {
-    async fn process(
-        &self,
-        job: SendReceiptEmailJob,
-        _ctx: &oxanus::JobContext,
-    ) -> Result<(), WorkerError> {
-        tokio::time::sleep(std::time::Duration::from_millis(job.duration_ms)).await;
-        Ok(())
-    }
-}
+use demo::billing::invoices::GenerateInvoiceJob;
+use demo::crm::customers::SyncCustomerProfileJob;
+use demo::messaging::receipts::SendReceiptEmailJob;
 
 #[derive(Serialize, oxanus::Queue)]
 #[oxanus(key = "default", concurrency = 5)]

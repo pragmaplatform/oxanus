@@ -4,7 +4,7 @@ use axum::{
     response::Redirect,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::JOBS_PER_PAGE;
 use crate::OxanusWebState;
@@ -12,7 +12,7 @@ use crate::error::OxanusWebError;
 use crate::templates::{
     BusyTemplate, CronRow, CronTemplate, CronWorkerView, DashboardTemplate, GlobalJobsTemplate,
     JobListKind, MetricDetailTemplate, MetricsTemplate, OnDemandJobView, OnDemandQueueView,
-    OnDemandTemplate, QueueDetailTemplate, QueuesTemplate,
+    OnDemandRow, OnDemandTemplate, QueueDetailTemplate, QueuesTemplate,
 };
 
 pub(crate) async fn dashboard(
@@ -119,17 +119,7 @@ pub(crate) async fn on_demand_jobs(
     Extension(state): Extension<OxanusWebState>,
     Query(params): Query<OnDemandParams>,
 ) -> OnDemandTemplate {
-    let jobs = state
-        .catalog
-        .on_demand_jobs
-        .iter()
-        .map(|job| OnDemandJobView {
-            name: job.name.clone(),
-            short_name: short_type_name(&job.name),
-            args_template_json: serde_json::to_string_pretty(&job.args_template)
-                .unwrap_or_else(|_| job.args_template.to_string()),
-        })
-        .collect::<Vec<_>>();
+    let rows = build_on_demand_rows(&state.catalog.on_demand_jobs);
     let queues = state
         .catalog
         .queues
@@ -143,8 +133,8 @@ pub(crate) async fn on_demand_jobs(
     OnDemandTemplate {
         base_path: state.base_path,
         active_tab: "/on-demand",
-        total: jobs.len(),
-        jobs,
+        total: state.catalog.on_demand_jobs.len(),
+        rows,
         queues,
         scheduled: params.scheduled.as_deref() == Some("1"),
         invalid_json: params.invalid_json.as_deref() == Some("1"),
@@ -506,10 +496,6 @@ fn compare_eta(a: Option<f64>, b: Option<f64>, desc: bool) -> std::cmp::Ordering
     if desc { cmp.reverse() } else { cmp }
 }
 
-fn short_type_name(name: &str) -> String {
-    name.rsplit("::").next().unwrap_or(name).to_string()
-}
-
 fn on_demand_envelope_from_form(
     catalog: &oxanus::Catalog,
     form: &OnDemandEnqueueJobForm,
@@ -541,56 +527,64 @@ fn on_demand_envelope_from_form(
     job.enqueue_envelope(form.queue.clone(), args)
 }
 
+struct TypeTreeNode<T> {
+    children: BTreeMap<String, TypeTreeNode<T>>,
+    entries: Vec<T>,
+}
+
+impl<T> TypeTreeNode<T> {
+    fn new() -> Self {
+        Self {
+            children: BTreeMap::new(),
+            entries: Vec::new(),
+        }
+    }
+}
+
+fn type_tree_parts(name: &str) -> (Vec<&str>, String) {
+    let segments: Vec<&str> = name.split("::").collect();
+    let split = segments.len().saturating_sub(2);
+
+    (segments[..split].to_vec(), segments[split..].join("::"))
+}
+
+fn insert_type_tree_entry<T>(root: &mut TypeTreeNode<T>, group_segments: &[&str], entry: T) {
+    let mut node = root;
+    for seg in group_segments {
+        node = node
+            .children
+            .entry((*seg).to_string())
+            .or_insert_with(TypeTreeNode::new);
+    }
+
+    node.entries.push(entry);
+}
+
 fn build_cron_rows(
     cron_workers: &[oxanus::CronWorkerInfo],
     now: &chrono::DateTime<chrono::Utc>,
 ) -> Vec<CronRow> {
-    use std::collections::BTreeMap;
-
-    struct TreeNode {
-        children: BTreeMap<String, TreeNode>,
-        workers: Vec<CronWorkerView>,
-    }
-
-    impl TreeNode {
-        fn new() -> Self {
-            Self {
-                children: BTreeMap::new(),
-                workers: Vec::new(),
-            }
-        }
-    }
-
-    let mut root = TreeNode::new();
+    let mut root = TypeTreeNode::new();
 
     for cw in cron_workers {
-        let segments: Vec<&str> = cw.name.split("::").collect();
-
-        let split = segments.len().saturating_sub(2);
-        let group_segments = segments.get(..split).unwrap_or_default();
-        let leaf_name = segments.get(split..).unwrap_or_default().join("::");
-
-        let mut node = &mut root;
-        for seg in group_segments {
-            node = node
-                .children
-                .entry((*seg).to_string())
-                .or_insert_with(TreeNode::new);
-        }
-
-        node.workers.push(CronWorkerView {
-            short_name: leaf_name,
-            schedule: cw.schedule.to_string(),
-            queue_key: cw.queue_key.clone(),
-            next_run_micros: cw
-                .schedule
-                .after(now)
-                .next()
-                .map(|dt| dt.timestamp_micros()),
-        });
+        let (group_segments, leaf_name) = type_tree_parts(&cw.name);
+        insert_type_tree_entry(
+            &mut root,
+            &group_segments,
+            CronWorkerView {
+                short_name: leaf_name,
+                schedule: cw.schedule.to_string(),
+                queue_key: cw.queue_key.clone(),
+                next_run_micros: cw
+                    .schedule
+                    .after(now)
+                    .next()
+                    .map(|dt| dt.timestamp_micros()),
+            },
+        );
     }
 
-    fn flatten(node: &TreeNode, depth: usize, rows: &mut Vec<CronRow>) {
+    fn flatten(node: &TypeTreeNode<CronWorkerView>, depth: usize, rows: &mut Vec<CronRow>) {
         for (name, child) in &node.children {
             rows.push(CronRow::Group {
                 name: name.clone(),
@@ -598,9 +592,47 @@ fn build_cron_rows(
             });
             flatten(child, depth + 1, rows);
         }
-        for worker in &node.workers {
+        for worker in &node.entries {
             rows.push(CronRow::Worker {
                 view: worker.clone(),
+                depth,
+            });
+        }
+    }
+
+    let mut rows = Vec::new();
+    flatten(&root, 0, &mut rows);
+    rows
+}
+
+fn build_on_demand_rows(on_demand_jobs: &[oxanus::OnDemandJobInfo]) -> Vec<OnDemandRow> {
+    let mut root = TypeTreeNode::new();
+
+    for job in on_demand_jobs {
+        let (group_segments, leaf_name) = type_tree_parts(&job.name);
+        insert_type_tree_entry(
+            &mut root,
+            &group_segments,
+            OnDemandJobView {
+                name: job.name.clone(),
+                short_name: leaf_name,
+                args_template_json: serde_json::to_string_pretty(&job.args_template)
+                    .unwrap_or_else(|_| job.args_template.to_string()),
+            },
+        );
+    }
+
+    fn flatten(node: &TypeTreeNode<OnDemandJobView>, depth: usize, rows: &mut Vec<OnDemandRow>) {
+        for (name, child) in &node.children {
+            rows.push(OnDemandRow::Group {
+                name: name.clone(),
+                depth,
+            });
+            flatten(child, depth + 1, rows);
+        }
+        for job in &node.entries {
+            rows.push(OnDemandRow::Job {
+                view: job.clone(),
                 depth,
             });
         }
@@ -647,7 +679,7 @@ mod tests {
 
     #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
     #[oxanus(worker = OnDemandWorker)]
-    #[oxanus(on_demand = true)]
+    #[oxanus(on_demand)]
     #[oxanus(unique_id = "on_demand_{id}")]
     struct OnDemandJob {
         id: u64,
