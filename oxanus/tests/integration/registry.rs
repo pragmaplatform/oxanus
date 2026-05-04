@@ -12,7 +12,7 @@ struct QueueTwo;
 
 #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
 #[oxanus(worker = WorkerCounter)]
-#[oxanus(on_demand = true)]
+#[oxanus(on_demand)]
 pub struct WorkerCounterJob {
     pub key: String,
 }

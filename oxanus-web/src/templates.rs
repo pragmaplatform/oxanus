@@ -417,6 +417,23 @@ pub(crate) struct OnDemandJobView {
     pub args_template_json: String,
 }
 
+pub(crate) enum OnDemandRow {
+    Group { name: String, depth: usize },
+    Job { view: OnDemandJobView, depth: usize },
+}
+
+impl OnDemandRow {
+    fn depth(&self) -> usize {
+        match self {
+            Self::Group { depth, .. } | Self::Job { depth, .. } => *depth,
+        }
+    }
+
+    pub fn indent_px(&self) -> usize {
+        self.depth() * 20
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct OnDemandQueueView {
     pub key: String,
@@ -427,7 +444,7 @@ pub(crate) struct OnDemandQueueView {
 pub(crate) struct OnDemandTemplate {
     pub base_path: String,
     pub active_tab: &'static str,
-    pub jobs: Vec<OnDemandJobView>,
+    pub rows: Vec<OnDemandRow>,
     pub queues: Vec<OnDemandQueueView>,
     pub total: usize,
     pub scheduled: bool,
@@ -534,7 +551,7 @@ impl GlobalJobsTemplate {
 
 #[cfg(test)]
 mod on_demand_tests {
-    use super::{OnDemandJobView, OnDemandQueueView, OnDemandTemplate};
+    use super::{OnDemandJobView, OnDemandQueueView, OnDemandRow, OnDemandTemplate};
     use askama::Template;
 
     #[test]
@@ -542,7 +559,7 @@ mod on_demand_tests {
         let template = OnDemandTemplate {
             base_path: "/admin".to_string(),
             active_tab: "/on-demand",
-            jobs: Vec::new(),
+            rows: Vec::new(),
             queues: vec![OnDemandQueueView {
                 key: "default".to_string(),
             }],
@@ -561,10 +578,13 @@ mod on_demand_tests {
         let template = OnDemandTemplate {
             base_path: "/admin".to_string(),
             active_tab: "/on-demand",
-            jobs: vec![OnDemandJobView {
-                name: "crate::EmailWorker".to_string(),
-                short_name: "EmailWorker".to_string(),
-                args_template_json: "{}".to_string(),
+            rows: vec![OnDemandRow::Job {
+                view: OnDemandJobView {
+                    name: "crate::EmailWorker".to_string(),
+                    short_name: "EmailWorker".to_string(),
+                    args_template_json: "{}".to_string(),
+                },
+                depth: 0,
             }],
             queues: Vec::new(),
             total: 1,
@@ -582,11 +602,20 @@ mod on_demand_tests {
         let template = OnDemandTemplate {
             base_path: "/admin".to_string(),
             active_tab: "/on-demand",
-            jobs: vec![OnDemandJobView {
-                name: "crate::EmailWorker".to_string(),
-                short_name: "EmailWorker".to_string(),
-                args_template_json: "{\n  \"payload\": \"\"\n}".to_string(),
-            }],
+            rows: vec![
+                OnDemandRow::Group {
+                    name: "crate".to_string(),
+                    depth: 0,
+                },
+                OnDemandRow::Job {
+                    view: OnDemandJobView {
+                        name: "crate::email::EmailWorker".to_string(),
+                        short_name: "email::EmailWorker".to_string(),
+                        args_template_json: "{\n  \"payload\": \"\"\n}".to_string(),
+                    },
+                    depth: 1,
+                },
+            ],
             queues: vec![OnDemandQueueView {
                 key: "default".to_string(),
             }],
@@ -599,6 +628,8 @@ mod on_demand_tests {
 
         assert!(rendered.contains("action=\"/admin/on-demand/enqueue\""));
         assert!(rendered.contains("<option value=\"default\">default</option>"));
+        assert!(rendered.contains("crate"));
+        assert!(rendered.contains("email::EmailWorker"));
         assert!(rendered.contains("payload"));
     }
 
@@ -607,7 +638,7 @@ mod on_demand_tests {
         let template = OnDemandTemplate {
             base_path: "/admin".to_string(),
             active_tab: "/on-demand",
-            jobs: Vec::new(),
+            rows: Vec::new(),
             queues: Vec::new(),
             total: 0,
             scheduled: true,
@@ -624,7 +655,7 @@ mod on_demand_tests {
         let template = OnDemandTemplate {
             base_path: "/admin".to_string(),
             active_tab: "/on-demand",
-            jobs: Vec::new(),
+            rows: Vec::new(),
             queues: Vec::new(),
             total: 0,
             scheduled: false,

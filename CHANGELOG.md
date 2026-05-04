@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 - Add optional batch workers with the derive-macro `process_batch` hook, `BatchItem`, `WorkerBatchConfig`, and `#[oxanus(batch_size = ..., batch_timeout_ms = ...)]` worker macro attributes.
 - Add queue length history metrics and a Queue Lengths chart to the web queues dashboard.
 - Add per-queue processing rate, growth rate, and ETA stats with web dashboard display.
-- Add `#[oxanus(on_demand = true)]` and an On-Demand dashboard tab for manually enqueueing registered jobs.
+- Add `#[oxanus(on_demand)]` and an On-Demand dashboard tab for manually enqueueing registered jobs.
 - Add separate Redis configuration for stats via `REDIS_STATS_URL`, `build_from_redis_urls`, and `build_from_pools`.
 
 ### Changed

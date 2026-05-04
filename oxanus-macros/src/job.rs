@@ -1,4 +1,4 @@
-use darling::{Error, FromDeriveInput, FromMeta};
+use darling::{Error, FromDeriveInput, FromMeta, util::Flag};
 use heck::{
     ToKebabCase, ToLowerCamelCase, ToShoutyKebabCase, ToShoutySnakeCase, ToSnakeCase,
     ToUpperCamelCase,
@@ -19,7 +19,7 @@ struct OxanusJobArgs {
     on_conflict: Option<Ident>,
     resurrect: Option<bool>,
     throttle_cost: Option<ThrottleCost>,
-    on_demand: Option<bool>,
+    on_demand: Flag,
 }
 
 #[derive(Debug)]
@@ -174,7 +174,7 @@ pub fn expand_derive_job(input: DeriveInput) -> TokenStream {
     };
 
     let on_demand_args_template =
-        expand_on_demand_args_template(&input, args.on_demand.unwrap_or(false));
+        expand_on_demand_args_template(&input, args.on_demand.is_present());
 
     quote! {
         #[automatically_derived]
@@ -439,6 +439,7 @@ fn json_template_for_path(path: &syn::TypePath) -> TokenStream {
         "f32" | "f64" => quote!(0.0),
         "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
         | "usize" => quote!(0),
+        _ if looks_like_numeric_id_newtype(&ident) => quote!(0),
         "Vec" | "VecDeque" | "LinkedList" | "HashSet" | "BTreeSet" => quote!([]),
         "HashMap" | "BTreeMap" => quote!({}),
         "Box" => {
@@ -446,6 +447,10 @@ fn json_template_for_path(path: &syn::TypePath) -> TokenStream {
         }
         _ => quote!({}),
     }
+}
+
+fn looks_like_numeric_id_newtype(ident: &str) -> bool {
+    ident.ends_with("Id") || ident.ends_with("ID")
 }
 
 fn generic_type(arguments: &PathArguments) -> Option<&Type> {

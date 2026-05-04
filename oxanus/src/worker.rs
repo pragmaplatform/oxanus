@@ -655,11 +655,15 @@ mod tests {
             name: String,
         }
 
+        #[repr(transparent)]
+        #[derive(Debug, Serialize, Deserialize)]
+        struct CustomerId(i32);
+
         struct NamedOnDemandWorker;
 
         #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
         #[oxanus(worker = NamedOnDemandWorker)]
-        #[oxanus(on_demand = true)]
+        #[oxanus(on_demand)]
         #[serde(rename_all = "camelCase")]
         struct NamedOnDemandJob {
             name: String,
@@ -670,6 +674,7 @@ mod tests {
             tags: Vec<String>,
             labels: HashMap<String, String>,
             nested: NestedTask,
+            customer_id: CustomerId,
             #[serde(rename = "custom_id")]
             renamed_id: u64,
             #[serde(skip)]
@@ -688,6 +693,7 @@ mod tests {
                 "tags": [],
                 "labels": {},
                 "nested": {},
+                "customerId": 0,
                 "custom_id": 0,
             }))
         );
@@ -696,7 +702,7 @@ mod tests {
 
         #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
         #[oxanus(worker = TupleOnDemandWorker)]
-        #[oxanus(on_demand = true)]
+        #[oxanus(on_demand)]
         struct TupleOnDemandJob(String, u64, Option<bool>, Vec<String>);
 
         assert_eq!(
@@ -708,7 +714,7 @@ mod tests {
 
         #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
         #[oxanus(worker = UnitOnDemandWorker)]
-        #[oxanus(on_demand = true)]
+        #[oxanus(on_demand)]
         struct UnitOnDemandJob;
 
         assert_eq!(

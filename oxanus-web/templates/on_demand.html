@@ -35,7 +35,7 @@
 
         <h2 class="text-lg font-semibold mb-4">On-Demand Jobs ({{ total }})</h2>
 
-        {% if jobs.is_empty() %}
+        {% if rows.is_empty() %}
         <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500">
             No on-demand jobs registered
         </div>
@@ -45,17 +45,21 @@
         </div>
         {% else %}
         <div class="w-full text-sm">
-            <div class="grid grid-cols-1 lg:grid-cols-[minmax(16rem,0.8fr)_minmax(20rem,1.6fr)_auto] gap-4 border-b border-gray-800 pb-3 text-left text-xs text-gray-400 uppercase tracking-wide">
-                <div>Job</div>
+            <div class="grid grid-cols-[minmax(16rem,1fr)_auto] gap-4 border-b border-gray-800 pb-3 text-left text-xs text-gray-400 uppercase tracking-wide">
                 <div>Worker</div>
                 <div>Action</div>
             </div>
             <div>
-                {% for job in &jobs %}
+                {% for row in &rows %}
+                {% match row %}
+                {% when OnDemandRow::Group { name, depth: _ } %}
+                <div class="border-b border-gray-800/50">
+                    <div class="py-2 pt-4 font-mono text-xs text-gray-500 font-semibold" style="padding-left: {{ row.indent_px() }}px">{{ name }}</div>
+                </div>
+                {% when OnDemandRow::Job { view: job, depth: _ } %}
                 <details class="border-b border-gray-800/50">
-                    <summary class="grid cursor-pointer list-none grid-cols-1 lg:grid-cols-[minmax(16rem,0.8fr)_minmax(20rem,1.6fr)_auto] gap-4 py-3 hover:bg-gray-900/50">
-                        <span class="font-mono text-sm">{{ job.short_name }}</span>
-                        <span class="font-mono text-xs text-gray-500">{{ job.name }}</span>
+                    <summary class="grid cursor-pointer list-none grid-cols-[minmax(16rem,1fr)_auto] gap-4 py-3 hover:bg-gray-900/50">
+                        <span class="font-mono text-sm" style="padding-left: {{ row.indent_px() }}px"><span class="text-gray-600">&#8627; </span>{{ job.short_name }}</span>
                         <span class="inline-flex w-fit select-none rounded bg-green-900/50 border border-green-800 px-2.5 py-1 text-xs text-green-300 hover:bg-green-800 transition-colors">Enqueue</span>
                     </summary>
                     <form method="POST" action="{{ base_path }}/on-demand/enqueue" class="w-full pb-6 pt-3">
@@ -73,6 +77,7 @@
                         </div>
                     </form>
                 </details>
+                {% endmatch %}
                 {% endfor %}
             </div>
         </div>

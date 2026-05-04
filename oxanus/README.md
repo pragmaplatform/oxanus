@@ -131,11 +131,13 @@ Jobs carry the data that gets enqueued and define enqueue-time metadata. Workers
 | `#[oxanus(on_conflict = Skip)]` - handle unique job conflicts (Skip or Replace) | `#[oxanus(error = MyError)]` - set worker error type |
 | `#[oxanus(resurrect = false)]` - disable crash resurrection for this job type | `#[oxanus(registry = MyRegistry)]` - choose component registry |
 | `#[oxanus(throttle_cost = 2)]` - set per-job throttle cost | `#[oxanus(max_retries = 3)]` - set maximum retry attempts |
-| `#[oxanus(on_demand = true)]` - expose the job in the web dashboard for manual enqueueing | `#[oxanus(retry_delay = 5)]` - set retry delay in seconds |
+| `#[oxanus(on_demand)]` - expose the job in the web dashboard for manual enqueueing | `#[oxanus(retry_delay = 5)]` - set retry delay in seconds |
 |  | `#[oxanus(cron(schedule = "*/5 * * * * *", queue = MyQueue))]` - schedule periodic jobs |
 |  | `#[oxanus(batch_size = 100, batch_timeout_ms = 500)]` - process jobs in batches |
 
 For job hooks, `Self::...` resolves to the job type. For worker hooks, `Self::...` resolves to the worker type.
+
+On-demand argument templates infer editable placeholders from field types. Numeric primitives and common numeric ID newtypes named `*Id` or `*ID` are prefilled with `0`.
 
 Batch workers use all-or-nothing result semantics: if `process_batch` returns `Ok(())`, every job in the batch is marked successful; if it returns an error or panics, every job in that batch follows the normal retry or failure path. Batch handlers should therefore be idempotent, or should only commit external side effects after the whole batch is ready to succeed.
 
