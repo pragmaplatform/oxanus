@@ -292,33 +292,43 @@ mod tests {
         };
     }
 
-    #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
-    #[oxanus(worker = PlainWorker)]
+    #[derive(Debug, Serialize, Deserialize)]
     struct PlainJob {
         value: String,
     }
 
     struct PlainWorker;
 
+    impl oxanus::Job for PlainJob {
+        fn worker_name() -> &'static str {
+            std::any::type_name::<PlainWorker>()
+        }
+    }
+
     impl_test_worker!(PlainWorker, PlainJob);
 
-    #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
-    #[oxanus(worker = ZetaWorker)]
-    #[oxanus(on_demand = true)]
+    #[derive(Debug, Serialize, Deserialize)]
     struct ZetaJob {
         value: String,
     }
 
     struct ZetaWorker;
 
+    impl oxanus::Job for ZetaJob {
+        fn worker_name() -> &'static str {
+            std::any::type_name::<ZetaWorker>()
+        }
+
+        fn on_demand_args_template() -> Option<serde_json::Value> {
+            Some(serde_json::json!({
+                "value": "",
+            }))
+        }
+    }
+
     impl_test_worker!(ZetaWorker, ZetaJob);
 
-    #[derive(Debug, Serialize, Deserialize, oxanus::Job)]
-    #[oxanus(worker = AlphaWorker)]
-    #[oxanus(on_demand = true)]
-    #[oxanus(unique_id = "alpha_{id}")]
-    #[oxanus(on_conflict = Replace)]
-    #[oxanus(throttle_cost = Self::throttle_cost)]
+    #[derive(Debug, Serialize, Deserialize)]
     struct AlphaJob {
         id: u64,
         cost: u64,
@@ -331,6 +341,31 @@ mod tests {
     }
 
     struct AlphaWorker;
+
+    impl oxanus::Job for AlphaJob {
+        fn worker_name() -> &'static str {
+            std::any::type_name::<AlphaWorker>()
+        }
+
+        fn unique_id(&self) -> Option<String> {
+            Some(format!("alpha_{}", self.id))
+        }
+
+        fn on_conflict(&self) -> oxanus::JobConflictStrategy {
+            oxanus::JobConflictStrategy::Replace
+        }
+
+        fn throttle_cost(&self) -> Option<u64> {
+            Self::throttle_cost(self)
+        }
+
+        fn on_demand_args_template() -> Option<serde_json::Value> {
+            Some(serde_json::json!({
+                "id": 0,
+                "cost": 0,
+            }))
+        }
+    }
 
     impl_test_worker!(AlphaWorker, AlphaJob);
 
