@@ -67,7 +67,7 @@
                         <label class="block text-xs text-gray-500 mb-1" for="queue-{{ loop.index }}">Queue</label>
                         <select id="queue-{{ loop.index }}" name="queue" class="w-full sm:w-72 mb-3 rounded bg-gray-950 border border-gray-800 px-3 py-2 text-sm text-gray-200">
                             {% for queue in &queues %}
-                            <option value="{{ queue.key }}">{{ queue.key }}</option>
+                            <option value="{{ queue.key }}" {% if queue.selected %}selected{% endif %}>{{ queue.key }}</option>
                             {% endfor %}
                         </select>
                         <label class="block text-xs text-gray-500 mb-1" for="args-{{ loop.index }}">Arguments</label>

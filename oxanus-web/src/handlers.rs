@@ -120,15 +120,7 @@ pub(crate) async fn on_demand_jobs(
     Query(params): Query<OnDemandParams>,
 ) -> OnDemandTemplate {
     let rows = build_on_demand_rows(&state.catalog.on_demand_jobs);
-    let queues = state
-        .catalog
-        .queues
-        .iter()
-        .filter(|queue| !queue.dynamic)
-        .map(|queue| OnDemandQueueView {
-            key: queue.key.clone(),
-        })
-        .collect::<Vec<_>>();
+    let queues = build_on_demand_queue_views(&state.catalog.queues);
 
     OnDemandTemplate {
         base_path: state.base_path,
@@ -643,10 +635,28 @@ fn build_on_demand_rows(on_demand_jobs: &[oxanus::OnDemandJobInfo]) -> Vec<OnDem
     rows
 }
 
+fn build_on_demand_queue_views(queues: &[oxanus::QueueInfo]) -> Vec<OnDemandQueueView> {
+    let selected_queue = ["default", "main"].into_iter().find(|candidate| {
+        queues
+            .iter()
+            .any(|queue| !queue.dynamic && queue.key == *candidate)
+    });
+
+    queues
+        .iter()
+        .filter(|queue| !queue.dynamic)
+        .map(|queue| OnDemandQueueView {
+            key: queue.key.clone(),
+            selected: selected_queue == Some(queue.key.as_str()),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        OnDemandEnqueueJobForm, enqueue_on_demand_job, on_demand_envelope_from_form, sort_queues,
+        OnDemandEnqueueJobForm, build_on_demand_queue_views, enqueue_on_demand_job,
+        on_demand_envelope_from_form, sort_queues,
     };
     use crate::OxanusWebState;
     use axum::Form;
@@ -735,6 +745,15 @@ mod tests {
         }
     }
 
+    fn queue_info(key: &str, dynamic: bool) -> oxanus::QueueInfo {
+        oxanus::QueueInfo {
+            key: key.to_string(),
+            dynamic,
+            concurrency: 1,
+            throttle: None,
+        }
+    }
+
     #[test]
     fn eta_sort_ascending_places_unknown_last() {
         let mut queues = vec![
@@ -788,6 +807,48 @@ mod tests {
         .expect_err("dynamic queues should not be accepted");
 
         assert!(matches!(err, oxanus::OxanusError::GenericError(_)));
+    }
+
+    #[test]
+    fn on_demand_queue_views_preselect_default_queue() {
+        let views = build_on_demand_queue_views(&[
+            queue_info("alpha", false),
+            queue_info("default", false),
+            queue_info("main", false),
+        ]);
+
+        let selected_keys = views
+            .iter()
+            .filter(|queue| queue.selected)
+            .map(|queue| queue.key.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected_keys, vec!["default"]);
+    }
+
+    #[test]
+    fn on_demand_queue_views_preselect_main_when_default_is_missing() {
+        let views = build_on_demand_queue_views(&[
+            queue_info("default", true),
+            queue_info("main", false),
+            queue_info("worker", false),
+        ]);
+
+        let selected_keys = views
+            .iter()
+            .filter(|queue| queue.selected)
+            .map(|queue| queue.key.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected_keys, vec!["main"]);
+    }
+
+    #[test]
+    fn on_demand_queue_views_do_not_preselect_other_queues() {
+        let views =
+            build_on_demand_queue_views(&[queue_info("alpha", false), queue_info("worker", false)]);
+
+        assert!(views.iter().all(|queue| !queue.selected));
     }
 
     #[test]

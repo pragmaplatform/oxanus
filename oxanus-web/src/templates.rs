@@ -437,6 +437,7 @@ impl OnDemandRow {
 #[derive(Clone)]
 pub(crate) struct OnDemandQueueView {
     pub key: String,
+    pub selected: bool,
 }
 
 #[derive(Template, WebTemplate)]
@@ -562,6 +563,7 @@ mod on_demand_tests {
             rows: Vec::new(),
             queues: vec![OnDemandQueueView {
                 key: "default".to_string(),
+                selected: true,
             }],
             total: 0,
             scheduled: false,
@@ -618,6 +620,7 @@ mod on_demand_tests {
             ],
             queues: vec![OnDemandQueueView {
                 key: "default".to_string(),
+                selected: true,
             }],
             total: 1,
             scheduled: false,
@@ -627,7 +630,7 @@ mod on_demand_tests {
         let rendered = template.render().unwrap();
 
         assert!(rendered.contains("action=\"/admin/on-demand/enqueue\""));
-        assert!(rendered.contains("<option value=\"default\">default</option>"));
+        assert!(rendered.contains("<option value=\"default\" selected>default</option>"));
         assert!(rendered.contains("crate"));
         assert!(rendered.contains("email::EmailWorker"));
         assert!(rendered.contains("payload"));
