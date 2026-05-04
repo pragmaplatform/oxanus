@@ -1090,8 +1090,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
-name = "oxanus"
-version = "1.1.1"
+name = "oxana"
+version = "2.0.0-rc.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1102,8 +1102,8 @@ dependencies = [
  "futures",
  "gethostname",
  "inventory",
- "oxanus",
- "oxanus-macros",
+ "oxana",
+ "oxana-macros",
  "prometheus-client",
  "rand 0.10.1",
  "sentry-core",
@@ -1120,8 +1120,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxanus-macros"
-version = "1.0.1"
+name = "oxana-macros"
+version = "2.0.0-rc.0"
 dependencies = [
  "darling",
  "heck",
@@ -1132,15 +1132,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxanus-web"
-version = "1.0.1"
+name = "oxana-web"
+version = "2.0.0-rc.0"
 dependencies = [
  "askama",
  "askama_web",
  "async-trait",
  "axum",
  "chrono",
- "oxanus",
+ "oxana",
  "serde",
  "serde_json",
  "thiserror",

@@ -1,11 +1,11 @@
 [workspace]
-members = ["oxanus", "oxanus-macros", "oxanus-web"]
+members = ["oxana", "oxana-macros", "oxana-web"]
 resolver = "3"
-default-members = ["oxanus"]
+default-members = ["oxana"]
 
 [workspace.package]
 rust-version = "1.75"
 
 [workspace.dependencies]
-oxanus = { version = "^1.0", path = "oxanus" }
-oxanus-macros = { version = "^1.0", path = "oxanus-macros" }
+oxana = { version = "2.0.0-rc.0", path = "oxana" }
+oxana-macros = { version = "2.0.0-rc.0", path = "oxana-macros" }

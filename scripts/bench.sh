@@ -32,7 +32,7 @@ cmd_run() {
     echo "Running benchmarks (label: $label)..."
     echo ""
 
-    cargo bench -p oxanus 2>&1 | tee "$outfile"
+    cargo bench -p oxana 2>&1 | tee "$outfile"
 
     echo ""
     echo "Results saved to $outfile"

@@ -1,7 +1,0 @@
-error[E0599]: no method named `process_batch` found for reference `&MissingProcessBatchWorker` in the current scope
-  --> tests/ui/batch_missing_process_batch.rs:14:10
-   |
-14 | #[derive(oxanus::Worker)]
-   |          ^^^^^^^^^^^^^^
-   |
-   = note: this error originates in the derive macro `oxanus::Worker` (in Nightly builds, run with -Z macro-backtrace for more info)
