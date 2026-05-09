@@ -756,11 +756,13 @@ fn build_on_demand_rows(on_demand_jobs: &[oxana::OnDemandJobInfo]) -> Vec<OnDema
 }
 
 fn build_on_demand_queue_views(queues: &[oxana::QueueInfo]) -> Vec<OnDemandQueueView> {
-    let selected_queue = ["default", "main"].into_iter().find(|candidate| {
-        queues
-            .iter()
-            .any(|queue| !queue.dynamic && queue.key == *candidate)
-    });
+    let selected_queue = ["on_demand", "default", "main"]
+        .into_iter()
+        .find(|candidate| {
+            queues
+                .iter()
+                .any(|queue| !queue.dynamic && queue.key == *candidate)
+        });
 
     queues
         .iter()
@@ -981,7 +983,25 @@ mod tests {
     }
 
     #[test]
-    fn on_demand_queue_views_preselect_default_queue() {
+    fn on_demand_queue_views_preselect_on_demand_queue() {
+        let views = build_on_demand_queue_views(&[
+            queue_info("alpha", false),
+            queue_info("on_demand", false),
+            queue_info("default", false),
+            queue_info("main", false),
+        ]);
+
+        let selected_keys = views
+            .iter()
+            .filter(|queue| queue.selected)
+            .map(|queue| queue.key.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(selected_keys, vec!["on_demand"]);
+    }
+
+    #[test]
+    fn on_demand_queue_views_preselect_default_when_on_demand_is_missing() {
         let views = build_on_demand_queue_views(&[
             queue_info("alpha", false),
             queue_info("default", false),
