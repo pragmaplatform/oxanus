@@ -146,7 +146,6 @@ mod demo {
                     ctx.state
                         .update_progress((
                             0,
-                            0,
                             job.duration_s,
                             "Starting long-running job".to_string(),
                         ))
@@ -157,9 +156,8 @@ mod demo {
                         ctx.state
                             .update_progress((
                                 second,
-                                second,
                                 job.duration_s,
-                                Some(format!("Processed second {second} of {}", job.duration_s)),
+                                Some(format!("Completed second {second} of {}", job.duration_s)),
                             ))
                             .await?;
                     }

@@ -174,7 +174,7 @@ fn progress_parts(val: &serde_json::Value) -> Option<oxana::JobProgress> {
 }
 
 fn should_show_progress(val: &serde_json::Value) -> bool {
-    progress_parts(val).is_some_and(|progress| progress.processed != 0 || progress.total != 0)
+    progress_parts(val).is_some_and(|progress| progress.total > 0)
 }
 
 fn progress_eta_s(
@@ -183,11 +183,11 @@ fn progress_eta_s(
     now_micros: i64,
 ) -> Option<f64> {
     let progress = progress_parts(val)?;
-    if progress.total <= 0 || progress.processed <= 0 || scheduled_at_micros <= 0 {
+    if progress.total <= 0 || progress.cursor <= 0 || scheduled_at_micros <= 0 {
         return None;
     }
 
-    let remaining = progress.total.saturating_sub(progress.processed).max(0);
+    let remaining = progress.total.saturating_sub(progress.cursor).max(0);
     if remaining == 0 {
         return Some(0.0);
     }
@@ -197,8 +197,8 @@ fn progress_eta_s(
         return None;
     }
 
-    let processed = progress.processed.max(0) as f64;
-    Some(elapsed_s * (remaining as f64 / processed))
+    let cursor = progress.cursor.max(0) as f64;
+    Some(elapsed_s * (remaining as f64 / cursor))
 }
 
 #[askama::filter_fn]
@@ -217,13 +217,13 @@ pub fn job_progress_percent(
     let Some(progress) = progress_parts(val) else {
         return Ok("0".to_string());
     };
-    let processed = progress.processed;
+    let cursor = progress.cursor;
     let total = progress.total;
     if total <= 0 {
         return Ok("0".to_string());
     }
 
-    let percent = ((processed.max(0) as f64 / total as f64) * 100.0).clamp(0.0, 100.0);
+    let percent = ((cursor.max(0) as f64 / total as f64) * 100.0).clamp(0.0, 100.0);
     Ok(format!("{percent:.0}"))
 }
 
@@ -235,20 +235,20 @@ pub fn job_progress_summary(
     let Some(progress) = progress_parts(val) else {
         return Ok("0 / 0".to_string());
     };
-    let processed = progress.processed;
+    let cursor = progress.cursor;
     let total = progress.total;
     if total <= 0 {
         return Ok(format!(
             "{} / {}",
-            format_with_commas(processed.max(0) as u64),
+            format_with_commas(cursor.max(0) as u64),
             total
         ));
     }
 
-    let percent = ((processed.max(0) as f64 / total as f64) * 100.0).clamp(0.0, 100.0);
+    let percent = ((cursor.max(0) as f64 / total as f64) * 100.0).clamp(0.0, 100.0);
     Ok(format!(
         "{} / {} ({percent:.0}%)",
-        format_with_commas(processed.max(0) as u64),
+        format_with_commas(cursor.max(0) as u64),
         format_with_commas(total as u64)
     ))
 }
@@ -286,8 +286,7 @@ mod tests {
     #[test]
     fn progress_parts_recognizes_update_progress_state() {
         let value = json!({
-            "cursor": 42,
-            "processed": 25,
+            "cursor": 25,
             "total": 100,
             "note": "importing users"
         });
@@ -295,8 +294,7 @@ mod tests {
         assert_eq!(
             progress_parts(&value),
             Some(oxana::JobProgress {
-                cursor: 42,
-                processed: 25,
+                cursor: 25,
                 total: 100,
                 note: Some("importing users".to_string()),
             })
@@ -306,10 +304,9 @@ mod tests {
             Some(oxana::JobProgress::from(42))
         );
         assert_eq!(
-            progress_parts(&json!([42, 25, 100])),
+            progress_parts(&json!([25, 100])),
             Some(oxana::JobProgress {
-                cursor: 42,
-                processed: 25,
+                cursor: 25,
                 total: 100,
                 note: None,
             })
@@ -317,17 +314,15 @@ mod tests {
     }
 
     #[test]
-    fn progress_display_requires_processed_or_total() {
+    fn progress_display_requires_total() {
         assert!(!should_show_progress(&json!(42)));
         assert!(!should_show_progress(&json!({
             "cursor": 42,
-            "processed": 0,
             "total": 0
         })));
-        assert!(should_show_progress(&json!([42, 1, 100])));
+        assert!(should_show_progress(&json!([1, 100])));
         assert!(should_show_progress(&json!({
             "cursor": 42,
-            "processed": 0,
             "total": 100
         })));
     }
@@ -335,8 +330,7 @@ mod tests {
     #[test]
     fn progress_eta_uses_scheduled_time_and_progress_rate() {
         let state = json!({
-            "cursor": 42,
-            "processed": 25,
+            "cursor": 25,
             "total": 100
         });
 
@@ -348,8 +342,7 @@ mod tests {
         assert_eq!(
             progress_eta_s(
                 &json!({
-                    "cursor": 42,
-                    "processed": 0,
+                    "cursor": 0,
                     "total": 100
                 }),
                 1_000_000,
@@ -357,17 +350,17 @@ mod tests {
             ),
             None
         );
-        assert_eq!(progress_eta_s(&json!([42, 25, 100]), 0, 11_000_000), None);
+        assert_eq!(progress_eta_s(&json!([25, 100]), 0, 11_000_000), None);
     }
 
     #[test]
     fn progress_eta_is_zero_when_complete() {
         assert_eq!(
-            progress_eta_s(&json!([42, 100, 100]), 1_000_000, 11_000_000),
+            progress_eta_s(&json!([100, 100]), 1_000_000, 11_000_000),
             Some(0.0)
         );
         assert_eq!(
-            progress_eta_s(&json!([42, 125, 100]), 1_000_000, 11_000_000),
+            progress_eta_s(&json!([125, 100]), 1_000_000, 11_000_000),
             Some(0.0)
         );
     }

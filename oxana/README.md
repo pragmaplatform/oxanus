@@ -183,19 +183,18 @@ the current attempt with `ctx.state.get::<T>()`. This is useful for resumable jo
 that need to continue from the last completed item after a retry.
 
 For long-running jobs, use `ctx.state.update_progress(...)` to store progress in a
-structured format. The web dashboard renders a progress bar when `processed` or
-`total` is set:
+structured format. The web dashboard renders a progress bar when `total` is set:
 
 ```rust
 ctx.state
-    .update_progress((cursor, processed, total, Some("importing users".to_string())))
+    .update_progress((cursor, total, Some("importing users".to_string())))
     .await?;
 ```
 
-`update_progress` accepts a cursor value, `(cursor, processed, total)`, or
-`(cursor, processed, total, note)`. Cursor-only state remains useful for resumable
-jobs and is shown as normal state in the dashboard. `ctx.state.progress().await?`
-reloads the latest stored progress for the current job.
+`update_progress` accepts a cursor value, `(cursor, total)`, or
+`(cursor, total, note)`. Cursor-only state remains useful for resumable jobs and is
+shown as normal state in the dashboard. `ctx.state.progress().await?` reloads the
+latest stored progress for the current job.
 
 ### Configuration
 

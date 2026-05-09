@@ -12,8 +12,8 @@ pub struct JobState {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct JobProgress {
     pub cursor: i64,
-    pub processed: i64,
     pub total: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
 }
 
@@ -21,40 +21,36 @@ impl From<i64> for JobProgress {
     fn from(cursor: i64) -> Self {
         Self {
             cursor,
-            processed: 0,
             total: 0,
             note: None,
         }
     }
 }
 
-impl From<(i64, i64, i64)> for JobProgress {
-    fn from((cursor, processed, total): (i64, i64, i64)) -> Self {
+impl From<(i64, i64)> for JobProgress {
+    fn from((cursor, total): (i64, i64)) -> Self {
         Self {
             cursor,
-            processed,
             total,
             note: None,
         }
     }
 }
 
-impl From<(i64, i64, i64, String)> for JobProgress {
-    fn from((cursor, processed, total, note): (i64, i64, i64, String)) -> Self {
+impl From<(i64, i64, String)> for JobProgress {
+    fn from((cursor, total, note): (i64, i64, String)) -> Self {
         Self {
             cursor,
-            processed,
             total,
             note: Some(note),
         }
     }
 }
 
-impl From<(i64, i64, i64, Option<String>)> for JobProgress {
-    fn from((cursor, processed, total, note): (i64, i64, i64, Option<String>)) -> Self {
+impl From<(i64, i64, Option<String>)> for JobProgress {
+    fn from((cursor, total, note): (i64, i64, Option<String>)) -> Self {
         Self {
             cursor,
-            processed,
             total,
             note,
         }
@@ -66,13 +62,13 @@ impl From<(i64, i64, i64, Option<String>)> for JobProgress {
 enum JobProgressRepr {
     Struct {
         cursor: i64,
-        processed: i64,
+        #[serde(default)]
         total: i64,
         #[serde(default)]
         note: Option<String>,
     },
-    Tuple4(i64, i64, i64, Option<String>),
-    Tuple3(i64, i64, i64),
+    Tuple3WithNote(i64, i64, Option<String>),
+    Tuple2(i64, i64),
     Cursor(i64),
 }
 
@@ -84,19 +80,16 @@ impl<'de> serde::Deserialize<'de> for JobProgress {
         Ok(match JobProgressRepr::deserialize(deserializer)? {
             JobProgressRepr::Struct {
                 cursor,
-                processed,
                 total,
                 note,
             }
-            | JobProgressRepr::Tuple4(cursor, processed, total, note) => Self {
+            | JobProgressRepr::Tuple3WithNote(cursor, total, note) => Self {
                 cursor,
-                processed,
                 total,
                 note,
             },
-            JobProgressRepr::Tuple3(cursor, processed, total) => Self {
+            JobProgressRepr::Tuple2(cursor, total) => Self {
                 cursor,
-                processed,
                 total,
                 note: None,
             },
@@ -165,26 +158,24 @@ mod tests {
             JobProgress::from(7),
             JobProgress {
                 cursor: 7,
-                processed: 0,
                 total: 0,
                 note: None,
             }
         );
         assert_eq!(
-            JobProgress::from((7, 3, 10)),
+            JobProgress::from((7, 10)),
             JobProgress {
                 cursor: 7,
-                processed: 3,
                 total: 10,
                 note: None,
             }
         );
         assert_eq!(
-            JobProgress::from((7, 3, 10, "chunk imported".to_string())).note,
+            JobProgress::from((7, 10, "chunk imported".to_string())).note,
             Some("chunk imported".to_string())
         );
         assert_eq!(
-            JobProgress::from((7, 3, 10, Some("chunk imported".to_string()))).note,
+            JobProgress::from((7, 10, Some("chunk imported".to_string()))).note,
             Some("chunk imported".to_string())
         );
     }
@@ -193,7 +184,6 @@ mod tests {
     fn job_progress_deserializes_from_supported_shapes() {
         let expected = JobProgress {
             cursor: 7,
-            processed: 3,
             total: 10,
             note: None,
         };
@@ -203,11 +193,11 @@ mod tests {
             JobProgress::from(7)
         );
         assert_eq!(
-            serde_json::from_value::<JobProgress>(json!([7, 3, 10])).unwrap(),
+            serde_json::from_value::<JobProgress>(json!([7, 10])).unwrap(),
             expected
         );
         assert_eq!(
-            serde_json::from_value::<JobProgress>(json!([7, 3, 10, "chunk imported"])).unwrap(),
+            serde_json::from_value::<JobProgress>(json!([7, 10, "chunk imported"])).unwrap(),
             JobProgress {
                 note: Some("chunk imported".to_string()),
                 ..expected.clone()
