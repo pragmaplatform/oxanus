@@ -108,6 +108,7 @@ The dashboard exposes these pages:
 - `/busy` - Currently processing jobs
 - `/queues` - All queues with stats
 - `/queues/{queue_key}` - Jobs in a specific queue
+- `/jobs/{job_id}` - Details for a specific job
 - `/metrics` - Worker execution metrics
 - `/metrics/job?worker=...` - Metrics for a specific worker
 - `/cron` - Cron job schedules
