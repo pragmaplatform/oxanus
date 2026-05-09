@@ -17,6 +17,69 @@ pub struct JobProgress {
     pub note: Option<String>,
 }
 
+pub struct JobProgressIterator<'a, I>
+where
+    I: Iterator,
+{
+    iter: std::iter::Skip<std::iter::Enumerate<I>>,
+    state: Option<&'a JobState>,
+    current_index: Option<usize>,
+    total: usize,
+}
+
+impl<'a, I> JobProgressIterator<'a, I>
+where
+    I: Iterator,
+{
+    pub async fn new(state: impl Into<Option<&'a JobState>>, iter: I) -> Result<Self, OxanaError> {
+        let state = state.into();
+        let cursor = match state {
+            Some(state) => state
+                .progress()
+                .await?
+                .map(|progress| usize::try_from(progress.cursor.max(0)))
+                .transpose()?
+                .unwrap_or(0),
+            None => 0,
+        };
+        let (min_remaining, max_remaining) = iter.size_hint();
+        let total = max_remaining.unwrap_or(min_remaining);
+
+        Ok(Self {
+            iter: iter.enumerate().skip(cursor),
+            state,
+            current_index: None,
+            total,
+        })
+    }
+
+    pub async fn next(&mut self) -> Result<Option<I::Item>, OxanaError> {
+        self.mark_current_completed().await?;
+
+        if let Some((index, value)) = self.iter.next() {
+            self.current_index = Some(index);
+            return Ok(Some(value));
+        }
+
+        Ok(None)
+    }
+
+    pub fn current_index(&self) -> Option<usize> {
+        self.current_index
+    }
+
+    async fn mark_current_completed(&mut self) -> Result<(), OxanaError> {
+        if let (Some(state), Some(index)) = (self.state, self.current_index.take()) {
+            let cursor = index + 1;
+            state
+                .update_progress((i64::try_from(cursor)?, i64::try_from(self.total)?))
+                .await?;
+        }
+
+        Ok(())
+    }
+}
+
 impl From<i64> for JobProgress {
     fn from(cursor: i64) -> Self {
         Self {
@@ -137,6 +200,16 @@ impl JobState {
         })
     }
 
+    pub async fn iter_with_progress<I>(
+        &self,
+        iter: I,
+    ) -> Result<JobProgressIterator<'_, I>, OxanaError>
+    where
+        I: Iterator,
+    {
+        JobProgressIterator::new(self, iter).await
+    }
+
     pub async fn get<S: DeserializeOwned>(&self) -> Result<Option<S>, OxanaError> {
         Ok(match self.value.clone() {
             Some(state) => {
@@ -149,7 +222,7 @@ impl JobState {
 
 #[cfg(test)]
 mod tests {
-    use super::JobProgress;
+    use super::{JobProgress, JobProgressIterator};
     use serde_json::json;
 
     #[test]
@@ -208,5 +281,20 @@ mod tests {
                 .unwrap(),
             expected
         );
+    }
+
+    #[tokio::test]
+    async fn job_progress_iterator_without_state_iterates_items() {
+        let mut iter = JobProgressIterator::new(None, ["one", "two"].into_iter())
+            .await
+            .unwrap();
+
+        assert_eq!(iter.current_index(), None);
+        assert_eq!(iter.next().await.unwrap(), Some("one"));
+        assert_eq!(iter.current_index(), Some(0));
+        assert_eq!(iter.next().await.unwrap(), Some("two"));
+        assert_eq!(iter.current_index(), Some(1));
+        assert_eq!(iter.next().await.unwrap(), None);
+        assert_eq!(iter.current_index(), None);
     }
 }

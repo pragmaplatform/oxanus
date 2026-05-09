@@ -114,7 +114,7 @@ pub use crate::context::{ContextValue, JobContext};
 pub use crate::drainer::drain;
 pub use crate::error::OxanaError;
 pub use crate::job_envelope::{JobConflictStrategy, JobData, JobEnvelope, JobId, JobMeta};
-pub use crate::job_state::{JobProgress, JobState};
+pub use crate::job_state::{JobProgress, JobProgressIterator, JobState};
 pub use crate::launcher::run;
 pub use crate::metrics::*;
 pub use crate::queue::{Queue, QueueConfig, QueueKind, QueueThrottle};
