@@ -178,6 +178,25 @@ The context provides shared state and utilities to workers. It can include:
 - Shared resources
 - Job state (for resumable jobs)
 
+Workers can persist job state with `ctx.state.update(...)` and read the state from
+the current attempt with `ctx.state.get::<T>()`. This is useful for resumable jobs
+that need to continue from the last completed item after a retry.
+
+For long-running jobs, use `ctx.state.update_progress(...)` to store progress in a
+structured format. The web dashboard renders a progress bar when `processed` or
+`total` is set:
+
+```rust
+ctx.state
+    .update_progress((cursor, processed, total, Some("importing users".to_string())))
+    .await?;
+```
+
+`update_progress` accepts a cursor value, `(cursor, processed, total)`, or
+`(cursor, processed, total, note)`. Cursor-only state remains useful for resumable
+jobs and is shown as normal state in the dashboard. `ctx.state.progress().await?`
+reloads the latest stored progress for the current job.
+
 ### Configuration
 
 Configuration is done through the `Config` builder, which allows you to:

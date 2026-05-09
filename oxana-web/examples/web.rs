@@ -6,7 +6,10 @@ use serde::Serialize;
 struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext, WorkerError>);
 
 #[derive(Debug, thiserror::Error)]
-enum WorkerError {}
+enum WorkerError {
+    #[error(transparent)]
+    Oxana(#[from] oxana::OxanaError),
+}
 
 #[derive(Debug, Clone)]
 struct WorkerContext {}
@@ -119,11 +122,58 @@ mod demo {
                 }
             }
         }
+
+        pub(crate) mod progress {
+            use crate::{ComponentRegistry, WorkerContext, WorkerError};
+            use serde::{Deserialize, Serialize};
+
+            #[derive(Debug, Serialize, Deserialize, oxana::Job)]
+            #[oxana(on_demand)]
+            pub(crate) struct LongRunningProgressJob {
+                pub(crate) duration_s: i64,
+            }
+
+            #[derive(oxana::Worker)]
+            #[oxana(max_retries = 0)]
+            struct LongRunningProgressWorker;
+
+            impl LongRunningProgressWorker {
+                async fn process(
+                    &self,
+                    job: LongRunningProgressJob,
+                    ctx: &oxana::JobContext,
+                ) -> Result<(), WorkerError> {
+                    ctx.state
+                        .update_progress((
+                            0,
+                            0,
+                            job.duration_s,
+                            "Starting long-running job".to_string(),
+                        ))
+                        .await?;
+
+                    for second in 1..=job.duration_s {
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        ctx.state
+                            .update_progress((
+                                second,
+                                second,
+                                job.duration_s,
+                                Some(format!("Processed second {second} of {}", job.duration_s)),
+                            ))
+                            .await?;
+                    }
+
+                    Ok(())
+                }
+            }
+        }
     }
 }
 
 use demo::billing::invoices::GenerateInvoiceJob;
 use demo::crm::customers::SyncCustomerProfileJob;
+use demo::maintenance::progress::LongRunningProgressJob;
 use demo::messaging::receipts::SendReceiptEmailJob;
 
 #[derive(Serialize, oxana::Queue)]
@@ -133,6 +183,10 @@ struct DefaultQueue;
 #[derive(Serialize, oxana::Queue)]
 #[oxana(key = "priority", concurrency = 5)]
 struct PriorityQueue;
+
+#[derive(Serialize, oxana::Queue)]
+#[oxana(key = "progress", concurrency = 1)]
+struct ProgressQueue;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -309,6 +363,9 @@ async fn seed_sample_jobs(storage: &oxana::Storage) -> Result<(), oxana::OxanaEr
                 duration_ms: seconds(150),
             },
         )
+        .await?;
+    storage
+        .enqueue(ProgressQueue, LongRunningProgressJob { duration_s: 150 })
         .await?;
 
     println!("Seeded sample jobs across default and priority queues");

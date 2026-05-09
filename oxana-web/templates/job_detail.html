@@ -76,10 +76,14 @@
 
             {% match job.meta.state %}
             {% when Some with (state) %}
+            {% if state|show_job_progress %}
+            {% include "_job_progress.html" %}
+            {% else %}
             <details class="mt-3" open>
                 <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">State</summary>
                 <pre class="mt-2 text-xs bg-gray-950 rounded p-3 overflow-x-auto text-gray-300 border border-gray-800">{{ state|pretty_json }}</pre>
             </details>
+            {% endif %}
             {% when None %}
             {% endmatch %}
 

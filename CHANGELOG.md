@@ -19,10 +19,12 @@ All notable changes to this project will be documented in this file.
 - Add queue length history, per-queue processing rates, growth rates, effective drain rates, and ETA estimates to the stats APIs and dashboard.
 - Add `REDIS_STATS_URL`, `build_from_redis_urls`, and `build_from_pools` so counters and metrics can use a separate Redis instance from the primary job store.
 - Add dashboard actions for enqueueing cron jobs immediately and wiping the dead queue.
+- Add structured job progress state with `ctx.state.update_progress(...)`, `ctx.state.progress()`, and dashboard progress bars for long-running jobs.
 
 ### Changed
 
 - Make dashboard queue and metrics views more operationally useful: queue length charts now live with queue stats, tooltips use readable worker labels, zero-value tooltip rows are hidden, and unknown ETAs sort after known drain times.
+- Show progress-aware job state in the dashboard while preserving cursor-only resumable state as raw job state.
 - Reduce Redis pressure by replacing `KEYS` with cursor-based `SCAN`, batching result counter writes, and snapshotting active queue lengths during worker refreshes.
 - Improve on-demand registration so the dashboard can prefill arguments, keep job hooks intact, and choose a sensible default queue.
 - Refresh examples, package metadata, CI paths, documentation references, and dependency versions for the Oxana rename and 2.0 release candidate.

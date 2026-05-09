@@ -168,3 +168,128 @@ pub fn has_args(val: &serde_json::Value, _env: &dyn askama::Values) -> askama::R
     };
     Ok(!empty)
 }
+
+fn progress_parts(val: &serde_json::Value) -> Option<oxana::JobProgress> {
+    serde_json::from_value(val.clone()).ok()
+}
+
+fn should_show_progress(val: &serde_json::Value) -> bool {
+    progress_parts(val).is_some_and(|progress| progress.processed != 0 || progress.total != 0)
+}
+
+#[askama::filter_fn]
+pub fn show_job_progress(
+    val: &serde_json::Value,
+    _env: &dyn askama::Values,
+) -> askama::Result<bool> {
+    Ok(should_show_progress(val))
+}
+
+#[askama::filter_fn]
+pub fn job_progress_percent(
+    val: &serde_json::Value,
+    _env: &dyn askama::Values,
+) -> askama::Result<String> {
+    let Some(progress) = progress_parts(val) else {
+        return Ok("0".to_string());
+    };
+    let processed = progress.processed;
+    let total = progress.total;
+    if total <= 0 {
+        return Ok("0".to_string());
+    }
+
+    let percent = ((processed.max(0) as f64 / total as f64) * 100.0).clamp(0.0, 100.0);
+    Ok(format!("{percent:.0}"))
+}
+
+#[askama::filter_fn]
+pub fn job_progress_summary(
+    val: &serde_json::Value,
+    _env: &dyn askama::Values,
+) -> askama::Result<String> {
+    let Some(progress) = progress_parts(val) else {
+        return Ok("0 / 0".to_string());
+    };
+    let processed = progress.processed;
+    let total = progress.total;
+    if total <= 0 {
+        return Ok(format!(
+            "{} / {}",
+            format_with_commas(processed.max(0) as u64),
+            total
+        ));
+    }
+
+    let percent = ((processed.max(0) as f64 / total as f64) * 100.0).clamp(0.0, 100.0);
+    Ok(format!(
+        "{} / {} ({percent:.0}%)",
+        format_with_commas(processed.max(0) as u64),
+        format_with_commas(total as u64)
+    ))
+}
+
+#[askama::filter_fn]
+pub fn job_progress_note(
+    val: &serde_json::Value,
+    _env: &dyn askama::Values,
+) -> askama::Result<String> {
+    Ok(progress_parts(val)
+        .and_then(|progress| progress.note)
+        .unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{progress_parts, should_show_progress};
+    use serde_json::json;
+
+    #[test]
+    fn progress_parts_recognizes_update_progress_state() {
+        let value = json!({
+            "cursor": 42,
+            "processed": 25,
+            "total": 100,
+            "note": "importing users"
+        });
+
+        assert_eq!(
+            progress_parts(&value),
+            Some(oxana::JobProgress {
+                cursor: 42,
+                processed: 25,
+                total: 100,
+                note: Some("importing users".to_string()),
+            })
+        );
+        assert_eq!(
+            progress_parts(&json!(42)),
+            Some(oxana::JobProgress::from(42))
+        );
+        assert_eq!(
+            progress_parts(&json!([42, 25, 100])),
+            Some(oxana::JobProgress {
+                cursor: 42,
+                processed: 25,
+                total: 100,
+                note: None,
+            })
+        );
+    }
+
+    #[test]
+    fn progress_display_requires_processed_or_total() {
+        assert!(!should_show_progress(&json!(42)));
+        assert!(!should_show_progress(&json!({
+            "cursor": 42,
+            "processed": 0,
+            "total": 0
+        })));
+        assert!(should_show_progress(&json!([42, 1, 100])));
+        assert!(should_show_progress(&json!({
+            "cursor": 42,
+            "processed": 0,
+            "total": 100
+        })));
+    }
+}

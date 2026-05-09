@@ -2,8 +2,8 @@ use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
-use crate::context::JobState;
 use crate::job_envelope::JobEnvelope;
+use crate::job_state::JobState;
 use crate::worker::BoxedProcessable;
 use crate::{Config, JobContext, OxanaError};
 

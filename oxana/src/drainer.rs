@@ -1,7 +1,7 @@
 use crate::config::Config;
-use crate::context::{ContextValue, JobState};
 use crate::error::OxanaError;
 use crate::{JobContext, JobId, Queue};
+use crate::{context::ContextValue, job_state::JobState};
 
 enum ProcessJobResult {
     Success,
