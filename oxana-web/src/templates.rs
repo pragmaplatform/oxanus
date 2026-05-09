@@ -553,6 +553,16 @@ impl GlobalJobsTemplate {
     }
 }
 
+#[derive(Template, WebTemplate)]
+#[template(path = "job_detail.html")]
+pub(crate) struct JobDetailTemplate {
+    pub base_path: String,
+    pub active_tab: &'static str,
+    pub job_id: String,
+    pub job: Option<oxana::JobEnvelope>,
+    pub is_dead: bool,
+}
+
 #[cfg(test)]
 mod cron_tests {
     use super::{CronRow, CronTemplate, CronWorkerView};

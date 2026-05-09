@@ -112,9 +112,13 @@
                             <span class="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
                             <span class="font-semibold text-sm">{{ item.job_envelope.job.name }}</span>
                         </div>
-                        <span class="text-xs text-gray-500 font-mono">{{ item.process_id }}</span>
+                        <a href="{{ base_path }}/jobs/{{ item.job_envelope.id|urlencode }}" class="text-xs text-gray-500 hover:text-blue-300 hover:underline font-mono">{{ item.job_envelope.id }}</a>
                     </div>
-                    <div class="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs text-gray-400 mt-2">
+                    <div class="grid grid-cols-1 sm:grid-cols-5 gap-2 text-xs text-gray-400 mt-2">
+                        <div>
+                            <span class="text-gray-500">Process:</span>
+                            <span class="ml-1 text-gray-300 font-mono">{{ item.process_id }}</span>
+                        </div>
                         <div>
                             <span class="text-gray-500">Queue:</span>
                             <a href="{{ base_path }}/queues/{{ item.job_envelope.queue|urlencode }}" class="ml-1 text-blue-400 hover:text-blue-300 hover:underline">{{ item.job_envelope.queue }}</a>

@@ -51,9 +51,12 @@
         <div class="space-y-3">
             {% for job in &jobs %}
             <div class="bg-gray-900 border {{ kind.border_class() }} rounded-lg p-4">
-                <div class="flex items-center gap-2 mb-2">
-                    <span class="inline-block w-2 h-2 rounded-full {{ kind.dot_class() }}"></span>
-                    <span class="font-semibold text-sm">{{ job.job.name }}</span>
+                <div class="flex items-start justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <span class="inline-block w-2 h-2 rounded-full {{ kind.dot_class() }}"></span>
+                        <span class="font-semibold text-sm">{{ job.job.name }}</span>
+                    </div>
+                    <a href="{{ base_path }}/jobs/{{ job.id|urlencode }}" class="text-xs text-gray-500 hover:text-blue-300 hover:underline font-mono">{{ job.id }}</a>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs text-gray-400 mt-2">
                     <div>

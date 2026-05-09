@@ -239,6 +239,19 @@ impl Storage {
         self.internal.delete_job(id).await
     }
 
+    /// Returns a job by its ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the job to return
+    ///
+    /// # Returns
+    ///
+    /// The job envelope when present, or [`None`] if the job no longer exists.
+    pub async fn get_job(&self, id: &JobId) -> Result<Option<JobEnvelope>, OxanaError> {
+        self.internal.get_job(id).await
+    }
+
     /// Returns per-queue statistics for queues matching the given patterns.
     ///
     /// Each pattern is matched against queue names using the same glob syntax

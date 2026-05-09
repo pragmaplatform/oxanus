@@ -52,6 +52,7 @@ pub fn router(state: OxanaWebState) -> Router {
         .route("/dead", get(handlers::dead_jobs))
         .route("/dead/wipe", post(handlers::wipe_dead))
         .route("/retries", get(handlers::retry_jobs))
+        .route("/jobs/{job_id}", get(handlers::job_detail))
         .route("/queues/{queue_key}", get(handlers::queue_detail))
         .route("/enqueue", post(handlers::enqueue_job))
         .route("/queues/{queue_key}/wipe", post(handlers::wipe_queue))

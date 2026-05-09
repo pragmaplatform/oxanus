@@ -11,8 +11,8 @@ use crate::OxanaWebState;
 use crate::error::OxanaWebError;
 use crate::templates::{
     BusyTemplate, CronRow, CronTemplate, CronWorkerView, DashboardTemplate, GlobalJobsTemplate,
-    JobListKind, MetricDetailTemplate, MetricsTemplate, OnDemandJobView, OnDemandQueueView,
-    OnDemandRow, OnDemandTemplate, QueueDetailTemplate, QueuesTemplate,
+    JobDetailTemplate, JobListKind, MetricDetailTemplate, MetricsTemplate, OnDemandJobView,
+    OnDemandQueueView, OnDemandRow, OnDemandTemplate, QueueDetailTemplate, QueuesTemplate,
 };
 
 pub(crate) async fn dashboard(
@@ -254,6 +254,21 @@ pub(crate) async fn retry_jobs(
     })
 }
 
+pub(crate) async fn job_detail(
+    Extension(state): Extension<OxanaWebState>,
+    Path(job_id): Path<String>,
+) -> Result<JobDetailTemplate, OxanaWebError> {
+    let (job, is_dead) = find_job(&state.storage, &job_id).await?;
+
+    Ok(JobDetailTemplate {
+        base_path: state.base_path,
+        active_tab: "/jobs",
+        job_id,
+        job,
+        is_dead,
+    })
+}
+
 pub(crate) async fn queue_detail(
     Extension(state): Extension<OxanaWebState>,
     Path(queue_key): Path<String>,
@@ -314,6 +329,33 @@ pub(crate) async fn queue_detail(
         total,
         has_next,
     })
+}
+
+async fn find_job(
+    storage: &oxana::Storage,
+    job_id: &str,
+) -> Result<(Option<oxana::JobEnvelope>, bool), oxana::OxanaError> {
+    let job_id = job_id.to_string();
+    if let Some(job) = storage.get_job(&job_id).await? {
+        return Ok((Some(job), false));
+    }
+
+    let dead_count = storage.dead_count().await?;
+    if dead_count == 0 {
+        return Ok((None, false));
+    }
+
+    let dead_jobs = storage
+        .list_dead(&oxana::QueueListOpts {
+            count: dead_count,
+            offset: 0,
+        })
+        .await?;
+    let Some(dead_job) = dead_jobs.into_iter().find(|job| job.id == job_id) else {
+        return Ok((None, false));
+    };
+
+    Ok((Some(dead_job), true))
 }
 
 pub(crate) async fn wipe_queue(
