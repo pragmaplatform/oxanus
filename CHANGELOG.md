@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.0.0-rc.3]
+## [2.0.0-rc.5]
 
 ### Breaking Changes
 
@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Move enqueue-time metadata onto `#[derive(oxana::Job)]`. Job identity, conflict handling, resurrection, throttle cost, on-demand exposure, and worker binding now belong to the job type; custom job hooks now resolve `Self` as the job type.
 - Route every worker through the batch-capable execution path. Manual worker implementations now provide `run_batch`, while derive users can keep writing `process` for single-job workers or opt into `process_batch`.
 - Own job values during execution instead of borrowing them, so job payload types no longer need to implement `Sync`.
+- Simplify structured job progress to cursor/total values. `JobProgress` no longer exposes a separate `processed` field, and `update_progress` tuple helpers now use `(cursor, total)` or `(cursor, total, note)`.
 
 ### Added
 
@@ -20,11 +21,12 @@ All notable changes to this project will be documented in this file.
 - Add `REDIS_STATS_URL`, `build_from_redis_urls`, and `build_from_pools` so counters and metrics can use a separate Redis instance from the primary job store.
 - Add dashboard actions for enqueueing cron jobs immediately and wiping the dead queue.
 - Add structured job progress state with `ctx.state.update_progress(...)`, `ctx.state.progress()`, and dashboard progress bars for long-running jobs.
+- Add `ctx.state.iter_with_progress(...)` and `JobProgressIterator` for resumable iterator-style jobs that should restart from the saved cursor and advance progress as items complete.
 
 ### Changed
 
 - Make dashboard queue and metrics views more operationally useful: queue length charts now live with queue stats, tooltips use readable worker labels, zero-value tooltip rows are hidden, and unknown ETAs sort after known drain times.
-- Show progress-aware job state in the dashboard while preserving cursor-only resumable state as raw job state.
+- Show progress-aware job state and ETA estimates in the dashboard while preserving cursor-only resumable state as raw job state.
 - Reduce Redis pressure by replacing `KEYS` with cursor-based `SCAN`, batching result counter writes, and snapshotting active queue lengths during worker refreshes.
 - Improve on-demand registration so the dashboard can prefill arguments, keep job hooks intact, and choose a sensible default queue.
 - Refresh examples, package metadata, CI paths, documentation references, and dependency versions for the Oxana rename and 2.0 release candidate.
