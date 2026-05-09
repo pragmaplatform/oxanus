@@ -461,6 +461,7 @@ pub(crate) struct QueueDetailTemplate {
     pub active_tab: &'static str,
     pub queue_key: String,
     pub queue_stats: Option<oxana::QueueStats>,
+    pub active_jobs: Vec<oxana::StatsProcessing>,
     pub busy: usize,
     pub jobs: Vec<oxana::JobEnvelope>,
     pub page: usize,

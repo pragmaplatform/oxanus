@@ -286,11 +286,13 @@ pub(crate) async fn queue_detail(
             })
         });
     let total = queue_stats.as_ref().map_or(0, |q| q.enqueued);
-    let busy = stats
+    let active_jobs = stats
         .processing
         .iter()
         .filter(|p| p.job_envelope.queue == queue_key)
-        .count();
+        .cloned()
+        .collect::<Vec<_>>();
+    let busy = active_jobs.len();
 
     let mut jobs = state
         .storage
@@ -305,6 +307,7 @@ pub(crate) async fn queue_detail(
         active_tab: "/queues",
         queue_key,
         queue_stats,
+        active_jobs,
         busy,
         jobs,
         page,
