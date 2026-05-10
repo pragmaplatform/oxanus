@@ -18,6 +18,7 @@ struct OxanaJobArgs {
     unique_id: Option<UniqueIdSpec>,
     on_conflict: Option<Ident>,
     resurrect: Option<bool>,
+    resume: Option<bool>,
     throttle_cost: Option<ThrottleCost>,
     on_demand: Flag,
 }
@@ -168,6 +169,18 @@ pub fn expand_derive_job(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
+    let resume = match args.resume {
+        Some(value) => quote! {
+            fn should_resume() -> bool
+            where
+                Self: Sized,
+            {
+                #value
+            }
+        },
+        None => quote!(),
+    };
+
     let throttle_cost = match &args.throttle_cost {
         Some(throttle_cost) => expand_throttle_cost(throttle_cost),
         None => quote!(),
@@ -191,6 +204,8 @@ pub fn expand_derive_job(input: DeriveInput) -> TokenStream {
             #on_conflict
 
             #resurrect
+
+            #resume
 
             #throttle_cost
 

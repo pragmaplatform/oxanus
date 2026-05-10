@@ -43,6 +43,13 @@ pub trait Job: Send + serde::Serialize {
         true
     }
 
+    fn should_resume() -> bool
+    where
+        Self: Sized,
+    {
+        true
+    }
+
     fn throttle_cost(&self) -> Option<u64> {
         None
     }
@@ -138,6 +145,9 @@ pub trait Processable: Send {
     fn len(&self) -> usize;
     fn max_retries(&self, index: usize) -> u32;
     fn retry_delay(&self, index: usize, retries: u32) -> u64;
+    fn should_resume(&self) -> bool {
+        true
+    }
 }
 
 pub type BoxedProcessable<ET> = Box<dyn Processable<Error = ET>>;
@@ -156,7 +166,7 @@ pub(crate) struct BoundBatchJob<W, A> {
 impl<W, A> Processable for BoundJob<W, A>
 where
     W: Worker<A> + Send + Sync + 'static,
-    A: Send + 'static,
+    A: Job + Send + 'static,
 {
     type Error = W::Error;
 
@@ -184,13 +194,17 @@ where
         assert_eq!(index, 0, "single job index must be zero");
         self.worker.retry_delay(&self.job, retries)
     }
+
+    fn should_resume(&self) -> bool {
+        A::should_resume()
+    }
 }
 
 #[async_trait::async_trait]
 impl<W, A> Processable for BoundBatchJob<W, A>
 where
     W: Worker<A> + Send + Sync + 'static,
-    A: Send + 'static,
+    A: Job + Send + 'static,
 {
     type Error = W::Error;
 
@@ -221,6 +235,10 @@ where
     fn retry_delay(&self, index: usize, retries: u32) -> u64 {
         let job = self.jobs.get(index).expect("batch job index out of bounds");
         self.worker.retry_delay(job, retries)
+    }
+
+    fn should_resume(&self) -> bool {
+        A::should_resume()
     }
 }
 
@@ -632,6 +650,28 @@ mod tests {
         }
 
         assert!(<DefaultResurrectJob as oxana::Job>::should_resurrect());
+    }
+
+    #[test]
+    fn test_define_job_with_resume_false() {
+        use crate as oxana;
+
+        struct NoResumeWorker;
+
+        #[derive(Debug, Serialize, Deserialize, oxana::Job)]
+        #[oxana(worker = NoResumeWorker)]
+        #[oxana(resume = false)]
+        struct NoResumeJob {}
+
+        assert!(!<NoResumeJob as oxana::Job>::should_resume());
+
+        struct DefaultResumeWorker;
+
+        #[derive(Debug, Serialize, Deserialize, oxana::Job)]
+        #[oxana(worker = DefaultResumeWorker)]
+        struct DefaultResumeJob {}
+
+        assert!(<DefaultResumeJob as oxana::Job>::should_resume());
     }
 
     #[test]

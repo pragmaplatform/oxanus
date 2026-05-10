@@ -32,6 +32,9 @@ where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
+    if !worker.should_resume() {
+        envelope.meta.state = None;
+    }
     config.storage.internal.set_started_at(envelope).await?;
     let policy = execution_policy(&worker, 0, envelope);
 
@@ -96,6 +99,12 @@ where
         .enumerate()
         .map(|(index, envelope)| execution_policy(&worker, index, envelope))
         .collect();
+
+    if !worker.should_resume() {
+        for envelope in envelopes.iter_mut() {
+            envelope.meta.state = None;
+        }
+    }
 
     config
         .storage
@@ -375,7 +384,6 @@ fn job_contexts(storage: &crate::Storage, envelopes: &[JobEnvelope]) -> Vec<JobC
         .map(|envelope| job_context(storage, envelope))
         .collect()
 }
-
 async fn handle_err<DT, ET>(
     config: &Config<DT, ET>,
     err_msg: &str,

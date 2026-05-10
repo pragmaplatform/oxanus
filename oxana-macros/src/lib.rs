@@ -37,6 +37,7 @@ pub fn derive_queue(input: TokenStream) -> TokenStream {
 /// #[derive(Serialize, oxana::Job)]
 /// #[oxana(on_conflict = Replace)]
 /// #[oxana(unique_id = "foo_{id}")]
+/// #[oxana(resume = false)]
 /// #[oxana(throttle_cost = Self::throttle_cost)]
 /// struct TestJob {
 ///     id: i32,

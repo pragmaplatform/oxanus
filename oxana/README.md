@@ -131,6 +131,7 @@ Jobs carry the data that gets enqueued and define enqueue-time metadata. Workers
 | `#[oxana(unique_id = "worker_{id}")]` - define unique job identifiers | `#[oxana(context = MyContext)]` - set worker context type |
 | `#[oxana(on_conflict = Skip)]` - handle unique job conflicts (Skip or Replace) | `#[oxana(error = MyError)]` - set worker error type |
 | `#[oxana(resurrect = false)]` - disable crash resurrection for this job type | `#[oxana(registry = MyRegistry)]` - choose component registry |
+| `#[oxana(resume = false)]` - reset prior-attempt job state on retry |  |
 | `#[oxana(throttle_cost = 2)]` - set per-job throttle cost | `#[oxana(max_retries = 3)]` - set maximum retry attempts |
 | `#[oxana(on_demand)]` - expose the job in the web dashboard for manual enqueueing | `#[oxana(retry_delay = 5)]` - set retry delay in seconds |
 |  | `#[oxana(cron(schedule = "*/5 * * * * *", queue = MyQueue))]` - schedule periodic jobs |
@@ -180,7 +181,9 @@ The context provides shared state and utilities to workers. It can include:
 
 Workers can persist job state with `ctx.state.update(...)` and read the state from
 the current attempt with `ctx.state.get::<T>()`. This is useful for resumable jobs
-that need to continue from the last completed item after a retry.
+that need to continue from the last completed item after a retry. Jobs resume
+state by default; use `#[oxana(resume = false)]` to clear prior-attempt state
+before each retry.
 
 For long-running jobs, use `ctx.state.update_progress(...)` to store progress in a
 structured format. The web dashboard renders a progress bar when `total` is set:

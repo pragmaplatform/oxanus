@@ -65,7 +65,7 @@ pub fn job_factory<W, A, DT, ET>(
 ) -> Result<BoxedProcessable<ET>, OxanaError>
 where
     W: Worker<A, Error = ET> + FromContext<DT> + 'static,
-    A: serde::de::DeserializeOwned + Send + 'static,
+    A: Job + serde::de::DeserializeOwned + Send + 'static,
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
@@ -80,7 +80,7 @@ pub fn job_batch_factory<W, A, DT, ET>(
 ) -> Result<BatchBuild<ET>, OxanaError>
 where
     W: Worker<A, Error = ET> + FromContext<DT> + 'static,
-    A: serde::de::DeserializeOwned + Send + 'static,
+    A: Job + serde::de::DeserializeOwned + Send + 'static,
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {

@@ -66,7 +66,7 @@ where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
-    let envelope = match config.storage.internal.get_job(&job_id).await? {
+    let mut envelope = match config.storage.internal.get_job(&job_id).await? {
         Some(envelope) => envelope,
         None => return Ok(ProcessJobResult::Missing),
     };
@@ -74,6 +74,12 @@ where
     let job = config
         .registry
         .build(&envelope.job.name, envelope.job.args.clone(), &ctx.0)?;
+
+    let should_resume = job.should_resume();
+    if !should_resume {
+        envelope.meta.state = None;
+        config.storage.internal.update_job(&envelope).await?;
+    }
 
     let job_ctx = JobContext {
         meta: envelope.meta.clone(),
