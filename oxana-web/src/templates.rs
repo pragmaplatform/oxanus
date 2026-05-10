@@ -249,6 +249,7 @@ pub(crate) struct MetricsTemplate {
     pub base_path: String,
     pub active_tab: &'static str,
     pub metrics: oxana::JobMetricsSnapshot,
+    pub table_workers: Vec<oxana::WorkerMetricsSummary>,
     pub sort: String,
     pub dir: String,
 }
@@ -353,8 +354,28 @@ mod metrics_template_tests {
                 series: Vec::new(),
                 workers: Vec::new(),
             },
+            table_workers: Vec::new(),
             sort: sort.to_string(),
             dir: dir.to_string(),
+        }
+    }
+
+    fn worker_metrics(worker: &str, execution_ms: u64) -> oxana::WorkerMetricsSummary {
+        oxana::WorkerMetricsSummary {
+            identity: oxana::MetricIdentity {
+                worker: worker.to_string(),
+            },
+            totals: oxana::JobMetricsTotals {
+                execution_ms,
+                successful_executions: 1,
+                ..oxana::JobMetricsTotals::default()
+            },
+            series: vec![oxana::JobMetricsPoint {
+                timestamp: 60,
+                execution_ms,
+                successful_executions: 1,
+                ..oxana::JobMetricsPoint::default()
+            }],
         }
     }
 
@@ -387,6 +408,29 @@ mod metrics_template_tests {
             template.sort_href("total_time"),
             "/admin/metrics?sort=total_time&dir=asc&minutes=120"
         );
+    }
+
+    #[test]
+    fn metrics_chart_data_uses_snapshot_worker_order() {
+        let mut template = metrics_template("processed", "desc");
+        template.metrics.series = vec![oxana::JobMetricsPoint {
+            timestamp: 60,
+            ..oxana::JobMetricsPoint::default()
+        }];
+        template.metrics.workers = vec![
+            worker_metrics("ChartFirst", 100),
+            worker_metrics("ChartSecond", 200),
+        ];
+        template.table_workers = vec![
+            worker_metrics("TableFirst", 300),
+            worker_metrics("TableSecond", 400),
+        ];
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&template.execution_chart_data_json()).unwrap();
+
+        assert_eq!(payload["series"][0]["fullLabel"], "ChartFirst");
+        assert_eq!(payload["series"][1]["fullLabel"], "ChartSecond");
     }
 }
 

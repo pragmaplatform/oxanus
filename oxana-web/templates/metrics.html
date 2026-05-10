@@ -105,7 +105,7 @@
 
         <section>
             <h2 class="text-lg font-semibold mb-4">Workers</h2>
-            {% if metrics.workers.is_empty() %}
+            {% if table_workers.is_empty() %}
             <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500">
                 No metrics
             </div>
@@ -123,7 +123,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for row in &metrics.workers %}
+                        {% for row in &table_workers %}
                         <tr class="border-b border-gray-800/50 hover:bg-gray-900/50">
                             <td class="py-3 pr-4 font-mono text-sm">
                                 <a href="{{ base_path }}/metrics/job?worker={{ row.identity.worker|urlencode }}&amp;minutes={{ metrics.minutes }}" title="{{ row.identity.worker }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ self.metric_identity_label(&row.identity) }}</a>

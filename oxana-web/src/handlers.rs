@@ -71,7 +71,7 @@ pub(crate) async fn metrics(
     Query(params): Query<MetricsParams>,
 ) -> Result<MetricsTemplate, OxanaWebError> {
     let query = oxana::JobMetricsQuery::new(params.minutes.unwrap_or(0));
-    let mut metrics = state.storage.job_metrics(query).await?;
+    let metrics = state.storage.job_metrics(query).await?;
     let sort = params
         .sort
         .as_deref()
@@ -83,13 +83,15 @@ pub(crate) async fn metrics(
         "desc"
     };
     let sort_key = if sort.is_empty() { "total_time" } else { sort };
+    let mut table_workers = metrics.workers.clone();
 
-    sort_worker_metrics(&mut metrics.workers, sort_key, dir == "desc");
+    sort_worker_metrics(&mut table_workers, sort_key, dir == "desc");
 
     Ok(MetricsTemplate {
         base_path: state.base_path,
         active_tab: "/metrics",
         metrics,
+        table_workers,
         sort: sort.to_string(),
         dir: dir.to_string(),
     })
