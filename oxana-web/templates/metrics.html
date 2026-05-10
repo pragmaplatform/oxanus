@@ -47,6 +47,10 @@
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
             <h2 class="text-lg font-semibold">Metrics</h2>
             <form method="GET" action="{{ base_path }}/metrics" class="flex items-center gap-2 text-sm">
+                {% if self.has_sort() %}
+                <input type="hidden" name="sort" value="{{ sort }}">
+                <input type="hidden" name="dir" value="{{ dir }}">
+                {% endif %}
                 <label for="minutes" class="text-gray-400">Window</label>
                 <select id="minutes" name="minutes" class="bg-gray-900 border border-gray-800 rounded px-3 py-1.5 text-gray-200" onchange="this.form.submit()">
                     <option value="60" {% if metrics.minutes == 60 %}selected{% endif %}>60 minutes</option>
@@ -101,7 +105,7 @@
 
         <section>
             <h2 class="text-lg font-semibold mb-4">Workers</h2>
-            {% if metrics.workers.is_empty() %}
+            {% if table_workers.is_empty() %}
             <div class="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500">
                 No metrics
             </div>
@@ -111,15 +115,15 @@
                     <thead>
                         <tr class="border-b border-gray-800 text-left text-xs text-gray-400 uppercase tracking-wide">
                             <th class="pb-3 pr-4">Worker</th>
-                            <th class="pb-3 pr-4 text-right">Processed</th>
-                            <th class="pb-3 pr-4 text-right">Succeeded</th>
-                            <th class="pb-3 pr-4 text-right">Failed</th>
-                            <th class="pb-3 pr-4 text-right">Total Time</th>
-                            <th class="pb-3 text-right">Avg Time</th>
+                            <th class="pb-3 pr-4 text-right"><a href="{{ self.sort_href("processed") }}" class="hover:text-gray-200">Processed{{ self.sort_arrow("processed") }}</a></th>
+                            <th class="pb-3 pr-4 text-right"><a href="{{ self.sort_href("succeeded") }}" class="hover:text-gray-200">Succeeded{{ self.sort_arrow("succeeded") }}</a></th>
+                            <th class="pb-3 pr-4 text-right"><a href="{{ self.sort_href("failed") }}" class="hover:text-gray-200">Failed{{ self.sort_arrow("failed") }}</a></th>
+                            <th class="pb-3 pr-4 text-right"><a href="{{ self.sort_href("total_time") }}" class="hover:text-gray-200">Total Time{{ self.sort_arrow("total_time") }}</a></th>
+                            <th class="pb-3 text-right"><a href="{{ self.sort_href("avg_time") }}" class="hover:text-gray-200">Avg Time{{ self.sort_arrow("avg_time") }}</a></th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for row in &metrics.workers %}
+                        {% for row in &table_workers %}
                         <tr class="border-b border-gray-800/50 hover:bg-gray-900/50">
                             <td class="py-3 pr-4 font-mono text-sm">
                                 <a href="{{ base_path }}/metrics/job?worker={{ row.identity.worker|urlencode }}&amp;minutes={{ metrics.minutes }}" title="{{ row.identity.worker }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ self.metric_identity_label(&row.identity) }}</a>

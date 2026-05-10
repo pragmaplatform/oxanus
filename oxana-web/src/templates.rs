@@ -249,9 +249,54 @@ pub(crate) struct MetricsTemplate {
     pub base_path: String,
     pub active_tab: &'static str,
     pub metrics: oxana::JobMetricsSnapshot,
+    pub table_workers: Vec<oxana::WorkerMetricsSummary>,
+    pub sort: String,
+    pub dir: String,
 }
 
 impl MetricsTemplate {
+    pub fn has_sort(&self) -> bool {
+        !self.sort.is_empty()
+    }
+
+    fn effective_sort(&self) -> &str {
+        if self.sort.is_empty() {
+            "total_time"
+        } else {
+            &self.sort
+        }
+    }
+
+    pub fn next_dir(&self, col: &str) -> &'static str {
+        if self.effective_sort() == col {
+            if self.dir == "desc" { "asc" } else { "desc" }
+        } else {
+            "desc"
+        }
+    }
+
+    pub fn sort_arrow(&self, col: &str) -> &'static str {
+        if self.effective_sort() == col {
+            if self.dir == "asc" {
+                " \u{25B2}"
+            } else {
+                " \u{25BC}"
+            }
+        } else {
+            ""
+        }
+    }
+
+    pub fn sort_href(&self, col: &str) -> String {
+        format!(
+            "{}/metrics?sort={}&dir={}&minutes={}",
+            self.base_path,
+            col,
+            self.next_dir(col),
+            self.metrics.minutes
+        )
+    }
+
     pub fn metric_identity_label(&self, identity: &oxana::MetricIdentity) -> String {
         metric_identity_label(identity)
     }
@@ -290,6 +335,102 @@ impl MetricsTemplate {
             "series": series,
         })
         .to_string()
+    }
+}
+
+#[cfg(test)]
+mod metrics_template_tests {
+    use super::MetricsTemplate;
+
+    fn metrics_template(sort: &str, dir: &str) -> MetricsTemplate {
+        MetricsTemplate {
+            base_path: "/admin".to_string(),
+            active_tab: "/metrics",
+            metrics: oxana::JobMetricsSnapshot {
+                starts_at: 0,
+                ends_at: 0,
+                minutes: 120,
+                totals: oxana::JobMetricsTotals::default(),
+                series: Vec::new(),
+                workers: Vec::new(),
+            },
+            table_workers: Vec::new(),
+            sort: sort.to_string(),
+            dir: dir.to_string(),
+        }
+    }
+
+    fn worker_metrics(worker: &str, execution_ms: u64) -> oxana::WorkerMetricsSummary {
+        oxana::WorkerMetricsSummary {
+            identity: oxana::MetricIdentity {
+                worker: worker.to_string(),
+            },
+            totals: oxana::JobMetricsTotals {
+                execution_ms,
+                successful_executions: 1,
+                ..oxana::JobMetricsTotals::default()
+            },
+            series: vec![oxana::JobMetricsPoint {
+                timestamp: 60,
+                execution_ms,
+                successful_executions: 1,
+                ..oxana::JobMetricsPoint::default()
+            }],
+        }
+    }
+
+    #[test]
+    fn metrics_sort_href_preserves_chart_window_and_defaults_descending() {
+        let template = metrics_template("", "desc");
+
+        assert_eq!(
+            template.sort_href("processed"),
+            "/admin/metrics?sort=processed&dir=desc&minutes=120"
+        );
+    }
+
+    #[test]
+    fn metrics_sort_href_toggles_current_column() {
+        let template = metrics_template("processed", "desc");
+
+        assert_eq!(
+            template.sort_href("processed"),
+            "/admin/metrics?sort=processed&dir=asc&minutes=120"
+        );
+    }
+
+    #[test]
+    fn metrics_default_sort_shows_total_time_indicator() {
+        let template = metrics_template("", "desc");
+
+        assert_eq!(template.sort_arrow("total_time"), " \u{25BC}");
+        assert_eq!(
+            template.sort_href("total_time"),
+            "/admin/metrics?sort=total_time&dir=asc&minutes=120"
+        );
+    }
+
+    #[test]
+    fn metrics_chart_data_uses_snapshot_worker_order() {
+        let mut template = metrics_template("processed", "desc");
+        template.metrics.series = vec![oxana::JobMetricsPoint {
+            timestamp: 60,
+            ..oxana::JobMetricsPoint::default()
+        }];
+        template.metrics.workers = vec![
+            worker_metrics("ChartFirst", 100),
+            worker_metrics("ChartSecond", 200),
+        ];
+        template.table_workers = vec![
+            worker_metrics("TableFirst", 300),
+            worker_metrics("TableSecond", 400),
+        ];
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&template.execution_chart_data_json()).unwrap();
+
+        assert_eq!(payload["series"][0]["fullLabel"], "ChartFirst");
+        assert_eq!(payload["series"][1]["fullLabel"], "ChartSecond");
     }
 }
 
