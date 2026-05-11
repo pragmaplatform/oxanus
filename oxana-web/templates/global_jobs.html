@@ -76,7 +76,9 @@
                         <span class="ml-1 text-gray-300">{{ job.meta.scheduled_at|relative_time_micros }}</span>
                     </div>
                 </div>
-                {% if job.job.args|has_args %}
+                {% let arg_pills = job.job.args|simple_args %}
+                {% include "_arg_pills.html" %}
+                {% if job.job.args|show_args_json %}
                 <details class="mt-3" open>
                     <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Arguments</summary>
                     <pre class="mt-2 text-xs bg-gray-950 rounded p-3 overflow-x-auto text-gray-300 border border-gray-800">{{ job.job.args|pretty_json }}</pre>

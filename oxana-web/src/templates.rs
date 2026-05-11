@@ -705,6 +705,89 @@ pub(crate) struct JobDetailTemplate {
 }
 
 #[cfg(test)]
+mod job_card_tests {
+    use super::{GlobalJobsTemplate, JobListKind};
+    use askama::Template;
+    use serde_json::json;
+
+    fn job_envelope(args: serde_json::Value) -> oxana::JobEnvelope {
+        oxana::JobEnvelope {
+            id: "job-1".to_string(),
+            queue: "default".to_string(),
+            job: oxana::JobData {
+                name: "crate::ImportGame".to_string(),
+                args,
+            },
+            meta: oxana::JobMeta {
+                id: "job-1".to_string(),
+                retries: 0,
+                unique: false,
+                on_conflict: None,
+                created_at: 1_000_000,
+                scheduled_at: 1_000_000,
+                started_at: None,
+                state: None,
+                resurrect: true,
+                error: None,
+                throttle_cost: None,
+            },
+        }
+    }
+
+    #[test]
+    fn global_job_cards_render_simple_arg_pills() {
+        let template = GlobalJobsTemplate {
+            base_path: "/admin".to_string(),
+            active_tab: "/scheduled",
+            kind: JobListKind::Scheduled,
+            jobs: vec![job_envelope(json!({
+                "game_id": 12345,
+                "dry_run": false,
+            }))],
+            page: 1,
+            total: 1,
+            has_next: false,
+        };
+
+        let rendered = template.render().unwrap();
+
+        assert!(rendered.contains("title=\"game_id: 12345\""));
+        assert!(rendered.contains("title=\"dry_run: false\""));
+        assert!(
+            !rendered.contains(
+                "<summary class=\"text-xs text-gray-500 cursor-pointer hover:text-gray-300\">Arguments</summary>"
+            )
+        );
+    }
+
+    #[test]
+    fn global_job_cards_render_pills_and_json_args_when_any_arg_is_complex() {
+        let template = GlobalJobsTemplate {
+            base_path: "/admin".to_string(),
+            active_tab: "/scheduled",
+            kind: JobListKind::Scheduled,
+            jobs: vec![job_envelope(json!({
+                "game_id": 12345,
+                "metadata": { "season": 2026 },
+            }))],
+            page: 1,
+            total: 1,
+            has_next: false,
+        };
+
+        let rendered = template.render().unwrap();
+
+        assert!(rendered.contains("title=\"game_id: 12345\""));
+        assert!(!rendered.contains("title=\"metadata:"));
+        assert!(
+            rendered.contains(
+                "<summary class=\"text-xs text-gray-500 cursor-pointer hover:text-gray-300\">Arguments</summary>"
+            )
+        );
+    }
+}
+
+#[cfg(test)]
 mod cron_tests {
     use super::{CronRow, CronTemplate, CronWorkerView};
     use askama::Template;

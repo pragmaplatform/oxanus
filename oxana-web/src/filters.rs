@@ -169,6 +169,68 @@ pub fn has_args(val: &serde_json::Value, _env: &dyn askama::Values) -> askama::R
     Ok(!empty)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimpleArgPill {
+    pub key: String,
+    pub value: String,
+}
+
+fn simple_arg_value(val: &serde_json::Value) -> Option<String> {
+    match val {
+        serde_json::Value::Null => Some("null".to_string()),
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::String(value) => Some(if value.is_empty() {
+            "\"\"".to_string()
+        } else {
+            value.clone()
+        }),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => None,
+    }
+}
+
+fn simple_args_for(val: &serde_json::Value) -> Vec<SimpleArgPill> {
+    let serde_json::Value::Object(args) = val else {
+        return Vec::new();
+    };
+
+    args.iter()
+        .filter_map(|(key, value)| {
+            simple_arg_value(value).map(|value| SimpleArgPill {
+                key: key.clone(),
+                value,
+            })
+        })
+        .collect()
+}
+
+#[askama::filter_fn]
+pub fn simple_args(
+    val: &serde_json::Value,
+    _env: &dyn askama::Values,
+) -> askama::Result<Vec<SimpleArgPill>> {
+    Ok(simple_args_for(val))
+}
+
+fn should_show_args_json(val: &serde_json::Value) -> bool {
+    match val {
+        serde_json::Value::Null => false,
+        serde_json::Value::Object(args) if args.is_empty() => false,
+        serde_json::Value::Object(args) => {
+            args.values().any(|value| simple_arg_value(value).is_none())
+        }
+        serde_json::Value::Array(_)
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => true,
+    }
+}
+
+#[askama::filter_fn]
+pub fn show_args_json(val: &serde_json::Value, _env: &dyn askama::Values) -> askama::Result<bool> {
+    Ok(should_show_args_json(val))
+}
+
 fn progress_parts(val: &serde_json::Value) -> Option<oxana::JobProgress> {
     serde_json::from_value(val.clone()).ok()
 }
@@ -280,8 +342,79 @@ pub fn job_progress_eta(
 
 #[cfg(test)]
 mod tests {
-    use super::{progress_eta_s, progress_parts, should_show_progress};
+    use super::{
+        SimpleArgPill, progress_eta_s, progress_parts, should_show_args_json, should_show_progress,
+        simple_args_for,
+    };
     use serde_json::json;
+
+    #[test]
+    fn simple_args_include_top_level_scalar_values() {
+        let value = json!({
+            "game_id": 12345,
+            "league": "nba",
+            "dry_run": true,
+            "missing": null,
+        });
+
+        assert_eq!(
+            simple_args_for(&value),
+            vec![
+                SimpleArgPill {
+                    key: "game_id".to_string(),
+                    value: "12345".to_string(),
+                },
+                SimpleArgPill {
+                    key: "league".to_string(),
+                    value: "nba".to_string(),
+                },
+                SimpleArgPill {
+                    key: "dry_run".to_string(),
+                    value: "true".to_string(),
+                },
+                SimpleArgPill {
+                    key: "missing".to_string(),
+                    value: "null".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn simple_args_include_scalar_values_from_mixed_args() {
+        let value = json!({
+            "game_id": 12345,
+            "metadata": { "season": 2026 },
+        });
+
+        assert_eq!(
+            simple_args_for(&value),
+            vec![SimpleArgPill {
+                key: "game_id".to_string(),
+                value: "12345".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn simple_args_require_an_object() {
+        assert!(simple_args_for(&json!(12345)).is_empty());
+        assert!(simple_args_for(&json!(["game_id", 12345])).is_empty());
+    }
+
+    #[test]
+    fn args_json_only_shows_when_pills_do_not_cover_everything() {
+        assert!(!should_show_args_json(&json!({})));
+        assert!(!should_show_args_json(&json!({
+            "game_id": 12345,
+            "dry_run": false,
+        })));
+        assert!(should_show_args_json(&json!({
+            "game_id": 12345,
+            "metadata": { "season": 2026 },
+        })));
+        assert!(should_show_args_json(&json!(12345)));
+    }
 
     #[test]
     fn progress_parts_recognizes_update_progress_state() {

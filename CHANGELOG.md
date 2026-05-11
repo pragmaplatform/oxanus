@@ -22,6 +22,7 @@ All notable changes to this project will be documented in this file.
 - Add dashboard actions for enqueueing cron jobs immediately and wiping the dead queue.
 - Add structured job progress state with `ctx.state.update_progress(...)`, `ctx.state.progress()`, and dashboard progress bars for long-running jobs.
 - Add `ctx.state.iter_with_progress(...)` and `JobProgressIterator` for resumable iterator-style jobs that should restart from the saved cursor and advance progress as items complete.
+- Show scalar job arguments as compact dashboard pills while preserving raw JSON for complex arguments.
 
 ### Changed
 
