@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     hash::{Hash, Hasher},
     time::Duration,
@@ -23,7 +23,7 @@ pub trait Queue: Send + Sync + Serialize {
 #[derive(Debug, Clone)]
 pub struct QueueConfig {
     pub kind: QueueKind,
-    pub concurrency: usize,
+    pub concurrency: QueueConcurrency,
     pub throttle: Option<QueueThrottle>,
 }
 
@@ -48,7 +48,7 @@ impl QueueConfig {
                 prefix: prefix.into(),
                 sleep_period: Duration::from_millis(500),
             },
-            concurrency: 1,
+            concurrency: QueueConcurrency::Fixed(1),
             throttle: None,
         }
     }
@@ -56,13 +56,24 @@ impl QueueConfig {
     pub fn as_static(key: impl Into<String>) -> Self {
         Self {
             kind: QueueKind::Static { key: key.into() },
-            concurrency: 1,
+            concurrency: QueueConcurrency::Fixed(1),
             throttle: None,
         }
     }
 
     pub fn concurrency(mut self, concurrency: usize) -> Self {
-        self.concurrency = concurrency;
+        self.concurrency = QueueConcurrency::Fixed(concurrency);
+        self
+    }
+
+    /// Sets the default concurrency used by the runtime queue configuration.
+    ///
+    /// Runtime queue config is persisted in Redis, so this value is used when a
+    /// queue does not have an existing runtime override yet.
+    pub fn dynamic_concurrency(mut self, default_concurrency: usize) -> Self {
+        self.concurrency = QueueConcurrency::Dynamic {
+            default: default_concurrency,
+        };
         self
     }
 
@@ -75,6 +86,54 @@ impl QueueConfig {
         match &self.kind {
             QueueKind::Static { key } => Some(key.clone()),
             QueueKind::Dynamic { .. } => None,
+        }
+    }
+
+    pub fn key_or_prefix(&self) -> String {
+        match &self.kind {
+            QueueKind::Static { key } => key.clone(),
+            QueueKind::Dynamic { prefix, .. } => prefix.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum QueueConcurrency {
+    Fixed(usize),
+    Dynamic { default: usize },
+}
+
+impl QueueConcurrency {
+    pub fn default_concurrency(self) -> usize {
+        match self {
+            Self::Fixed(concurrency) => concurrency,
+            Self::Dynamic { default } => default,
+        }
+    }
+
+    pub fn is_dynamic(self) -> bool {
+        matches!(self, Self::Dynamic { .. })
+    }
+
+    pub(crate) fn stored_runtime_default(self) -> QueueRuntimeConfig {
+        QueueRuntimeConfig {
+            concurrency: self.is_dynamic().then_some(self.default_concurrency()),
+            state: QueueState::Active,
+        }
+    }
+
+    pub(crate) fn effective_runtime_config(
+        self,
+        runtime_config: QueueRuntimeConfig,
+    ) -> QueueRuntimeConfig {
+        let concurrency = match self {
+            Self::Fixed(concurrency) => concurrency,
+            Self::Dynamic { default } => runtime_config.concurrency.unwrap_or(default),
+        };
+
+        QueueRuntimeConfig {
+            concurrency: Some(concurrency),
+            state: runtime_config.state,
         }
     }
 }
@@ -127,6 +186,49 @@ impl QueueKind {
 pub struct QueueThrottle {
     pub window_ms: i64,
     pub limit: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueState {
+    #[default]
+    Active,
+    Paused,
+}
+
+impl QueueState {
+    pub fn is_active(self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Active => "Active",
+            Self::Paused => "Paused",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct QueueRuntimeConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<usize>,
+    #[serde(default)]
+    pub state: QueueState,
+}
+
+impl QueueRuntimeConfig {
+    pub fn new(concurrency: usize) -> Self {
+        Self {
+            concurrency: Some(concurrency),
+            state: QueueState::Active,
+        }
+    }
+
+    pub fn with_defaults(mut self, defaults: Self) -> Self {
+        self.concurrency = self.concurrency.or(defaults.concurrency);
+        self
+    }
 }
 
 fn value_to_queue_key(value: serde_json::Value) -> String {
@@ -203,21 +305,48 @@ mod tests {
         struct DefaultQueue;
 
         assert_eq!(DefaultQueue.key(), "default_queue");
-        assert_eq!(DefaultQueue.config().concurrency, 1);
+        assert_eq!(
+            DefaultQueue.config().concurrency,
+            QueueConcurrency::Fixed(1)
+        );
 
         #[derive(Serialize, oxana::Queue)]
         #[oxana(key = "static_queue")]
         struct QueueWithKey;
 
         assert_eq!(QueueWithKey.key(), "static_queue");
-        assert_eq!(QueueWithKey.config().concurrency, 1);
+        assert_eq!(
+            QueueWithKey.config().concurrency,
+            QueueConcurrency::Fixed(1)
+        );
 
         #[derive(Serialize, oxana::Queue)]
         #[oxana(concurrency = 2)]
         struct QueueWithConcurrency;
 
         assert_eq!(QueueWithConcurrency.key(), "queue_with_concurrency");
-        assert_eq!(QueueWithConcurrency.config().concurrency, 2);
+        assert_eq!(
+            QueueWithConcurrency.config().concurrency,
+            QueueConcurrency::Fixed(2)
+        );
+
+        #[derive(Serialize, oxana::Queue)]
+        #[oxana(concurrency = Fixed(2))]
+        struct QueueWithFixedConcurrency;
+
+        assert_eq!(
+            QueueWithFixedConcurrency.config().concurrency,
+            QueueConcurrency::Fixed(2)
+        );
+
+        #[derive(Serialize, oxana::Queue)]
+        #[oxana(concurrency = Dynamic(2))]
+        struct QueueWithDynamicConcurrency;
+
+        assert_eq!(
+            QueueWithDynamicConcurrency.config().concurrency,
+            QueueConcurrency::Dynamic { default: 2 }
+        );
 
         #[derive(Serialize, oxana::Queue)]
         #[oxana(concurrency = 2)]
@@ -225,7 +354,10 @@ mod tests {
         struct QueueWithThrottle;
 
         assert_eq!(QueueWithThrottle.key(), "queue_with_throttle");
-        assert_eq!(QueueWithThrottle.config().concurrency, 2);
+        assert_eq!(
+            QueueWithThrottle.config().concurrency,
+            QueueConcurrency::Fixed(2)
+        );
         assert_eq!(QueueWithThrottle.config().throttle.unwrap().window_ms, 3);
         assert_eq!(QueueWithThrottle.config().throttle.unwrap().limit, 4);
 
@@ -235,14 +367,20 @@ mod tests {
         struct QueueWithKeyAndConcurrency;
 
         assert_eq!(QueueWithKeyAndConcurrency.key(), "static_queue_key");
-        assert_eq!(QueueWithKeyAndConcurrency.config().concurrency, 2);
+        assert_eq!(
+            QueueWithKeyAndConcurrency.config().concurrency,
+            QueueConcurrency::Fixed(2)
+        );
 
         #[derive(Serialize, oxana::Queue)]
         #[oxana(key = "static_queue_key", concurrency = 3)]
         struct QueueWithKeyAndConcurrency1 {}
 
         assert_eq!(QueueWithKeyAndConcurrency1 {}.key(), "static_queue_key");
-        assert_eq!(QueueWithKeyAndConcurrency1 {}.config().concurrency, 3);
+        assert_eq!(
+            QueueWithKeyAndConcurrency1 {}.config().concurrency,
+            QueueConcurrency::Fixed(3)
+        );
 
         #[derive(Serialize, oxana::Queue)]
         #[oxana(prefix = "dyn_queue", concurrency = 2)]
@@ -251,6 +389,40 @@ mod tests {
         }
 
         assert_eq!(DynQueue { i: 2 }.key(), "dyn_queue#i=2");
-        assert_eq!(DynQueue::to_config().concurrency, 2);
+        assert_eq!(
+            DynQueue::to_config().concurrency,
+            QueueConcurrency::Fixed(2)
+        );
+
+        #[derive(Serialize, oxana::Queue)]
+        #[oxana(key = "runtime_queue", concurrency = Dynamic(4))]
+        struct RuntimeQueue;
+
+        assert_eq!(RuntimeQueue.key(), "runtime_queue");
+        assert_eq!(
+            RuntimeQueue.config().concurrency,
+            QueueConcurrency::Dynamic { default: 4 }
+        );
+    }
+
+    #[test]
+    fn runtime_config_can_store_state_without_concurrency() {
+        let config = QueueRuntimeConfig {
+            state: QueueState::Paused,
+            ..QueueRuntimeConfig::default()
+        };
+
+        assert_eq!(
+            serde_json::to_string(&config).unwrap(),
+            r#"{"state":"paused"}"#
+        );
+        assert_eq!(config.concurrency.unwrap_or(4), 4);
+        assert_eq!(
+            config.with_defaults(QueueRuntimeConfig::new(4)),
+            QueueRuntimeConfig {
+                concurrency: Some(4),
+                state: QueueState::Paused,
+            }
+        );
     }
 }

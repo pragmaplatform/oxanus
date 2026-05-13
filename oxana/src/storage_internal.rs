@@ -22,6 +22,7 @@ use crate::{
         histogram_bitfield_increment_args, histogram_buckets_from_counts, metric_minutes,
         queue_length_series_from_hashes, queue_metric_field,
     },
+    queue::{QueueRuntimeConfig, QueueState},
     result_collector::QueueResultStats,
     stats::{
         DynamicQueueStats, Process, QueueRateStats, QueueStats, Stats, StatsGlobal, StatsProcessing,
@@ -170,14 +171,126 @@ impl StorageInternal {
         Ok(keys.into_iter().collect())
     }
 
+    #[cfg(test)]
     pub async fn queue_keys(&self, pattern: &str) -> Result<HashSet<String>, OxanaError> {
         let mut conn = self.connection().await?;
         self.scan_keys_w_conn(&mut conn, &self.namespace_queue(pattern))
             .await
     }
 
-    #[allow(dead_code)]
-    async fn queues(&self, pattern: &str) -> Result<Vec<String>, OxanaError> {
+    pub async fn ensure_queue_config(
+        &self,
+        queue: &str,
+        default_config: QueueRuntimeConfig,
+    ) -> Result<QueueRuntimeConfig, OxanaError> {
+        let mut redis = self.connection().await?;
+        self.ensure_queue_config_w_conn(&mut redis, queue, default_config)
+            .await
+    }
+
+    async fn ensure_queue_config_w_conn(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        queue: &str,
+        default_config: QueueRuntimeConfig,
+    ) -> Result<QueueRuntimeConfig, OxanaError> {
+        let inserted: bool = redis::cmd("HSETNX")
+            .arg(&self.keys.queue_configs)
+            .arg(queue)
+            .arg(serde_json::to_string(&default_config)?)
+            .query_async(redis)
+            .await?;
+
+        if inserted {
+            Ok(default_config)
+        } else {
+            let config = self.queue_config_w_conn(redis, queue).await?;
+            Ok(config
+                .map(|config| config.with_defaults(default_config.clone()))
+                .unwrap_or(default_config))
+        }
+    }
+
+    pub async fn queue_config(
+        &self,
+        queue: &str,
+    ) -> Result<Option<QueueRuntimeConfig>, OxanaError> {
+        let mut redis = self.connection().await?;
+        self.queue_config_w_conn(&mut redis, queue).await
+    }
+
+    async fn queue_config_w_conn(
+        &self,
+        redis: &mut deadpool_redis::Connection,
+        queue: &str,
+    ) -> Result<Option<QueueRuntimeConfig>, OxanaError> {
+        let config: Option<String> = (*redis).hget(&self.keys.queue_configs, queue).await?;
+        config
+            .map(|config| serde_json::from_str(&config).map_err(OxanaError::from))
+            .transpose()
+    }
+
+    pub async fn queue_configs(
+        &self,
+        queues: &[String],
+    ) -> Result<HashMap<String, QueueRuntimeConfig>, OxanaError> {
+        if queues.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut redis = self.connection().await?;
+        let configs: Vec<Option<String>> = redis::cmd("HMGET")
+            .arg(&self.keys.queue_configs)
+            .arg(queues)
+            .query_async(&mut redis)
+            .await?;
+        let mut map = HashMap::new();
+
+        for (queue, config) in queues.iter().zip(configs) {
+            if let Some(config) = config {
+                map.insert(queue.clone(), serde_json::from_str(&config)?);
+            }
+        }
+
+        Ok(map)
+    }
+
+    pub async fn set_queue_config(
+        &self,
+        queue: &str,
+        config: &QueueRuntimeConfig,
+    ) -> Result<(), OxanaError> {
+        let mut redis = self.connection().await?;
+        let _: () = (*redis)
+            .hset(
+                &self.keys.queue_configs,
+                queue,
+                serde_json::to_string(config)?,
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_queue_concurrency(
+        &self,
+        queue: &str,
+        concurrency: usize,
+    ) -> Result<(), OxanaError> {
+        let mut config = self
+            .queue_config(queue)
+            .await?
+            .unwrap_or_else(|| QueueRuntimeConfig::new(concurrency));
+        config.concurrency = Some(concurrency);
+        self.set_queue_config(queue, &config).await
+    }
+
+    pub async fn set_queue_state(&self, queue: &str, state: QueueState) -> Result<(), OxanaError> {
+        let mut config = self.queue_config(queue).await?.unwrap_or_default();
+        config.state = state;
+        self.set_queue_config(queue, &config).await
+    }
+
+    pub(crate) async fn queues(&self, pattern: &str) -> Result<Vec<String>, OxanaError> {
         let mut redis = self.connection().await?;
         self.queues_w_conn(&mut redis, pattern).await
     }
@@ -2289,6 +2402,69 @@ mod tests {
                 "prefix-a".to_string(),
             ]
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_queue_config_defaults_and_updates() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        let default_config = QueueRuntimeConfig::new(3);
+        let config = storage
+            .ensure_queue_config(&queue, default_config.clone())
+            .await?;
+        assert_eq!(config, default_config);
+
+        storage.set_queue_concurrency(&queue, 7).await?;
+        storage.set_queue_state(&queue, QueueState::Paused).await?;
+
+        let config = storage
+            .queue_config(&queue)
+            .await?
+            .expect("queue config should exist");
+        assert_eq!(config.concurrency, Some(7));
+        assert_eq!(config.state, QueueState::Paused);
+
+        let preserved = storage
+            .ensure_queue_config(&queue, QueueRuntimeConfig::new(1))
+            .await?;
+        assert_eq!(preserved.concurrency, Some(7));
+        assert_eq!(preserved.state, QueueState::Paused);
+
+        let configs = storage.queue_configs(std::slice::from_ref(&queue)).await?;
+        assert_eq!(configs.get(&queue), Some(&preserved));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_queue_state_update_without_config_does_not_store_concurrency() -> TestResult {
+        let storage = StorageInternal::new(redis_pool().await?, Some(random_string()));
+        let queue = random_string();
+
+        storage.set_queue_state(&queue, QueueState::Paused).await?;
+
+        let stored = storage
+            .queue_config(&queue)
+            .await?
+            .expect("queue config should exist");
+        assert_eq!(stored.concurrency, None);
+        assert_eq!(stored.state, QueueState::Paused);
+
+        let runtime_config = storage
+            .ensure_queue_config(&queue, QueueRuntimeConfig::new(4))
+            .await?;
+        assert_eq!(runtime_config.concurrency, Some(4));
+        assert_eq!(runtime_config.state, QueueState::Paused);
+
+        let stored = storage
+            .queue_config(&queue)
+            .await?
+            .expect("queue config should still exist");
+        assert_eq!(stored.concurrency, None);
+        assert_eq!(stored.state, QueueState::Paused);
 
         Ok(())
     }

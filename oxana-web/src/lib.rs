@@ -3,8 +3,6 @@ mod filters;
 mod handlers;
 mod templates;
 
-use std::collections::HashMap;
-
 use axum::{
     Router,
     extract::Extension,
@@ -18,21 +16,14 @@ pub struct OxanaWebState {
     pub storage: oxana::Storage,
     pub catalog: oxana::Catalog,
     pub base_path: String,
-    pub concurrency_map: HashMap<String, usize>,
 }
 
 impl OxanaWebState {
     pub fn new(storage: oxana::Storage, catalog: oxana::Catalog, base_path: String) -> Self {
-        let concurrency_map = catalog
-            .queues
-            .iter()
-            .map(|q| (q.key.clone(), q.concurrency))
-            .collect();
         Self {
             storage,
             catalog,
             base_path,
-            concurrency_map,
         }
     }
 }
@@ -55,6 +46,8 @@ pub fn router(state: OxanaWebState) -> Router {
         .route("/jobs/{job_id}", get(handlers::job_detail))
         .route("/queues/{queue_key}", get(handlers::queue_detail))
         .route("/enqueue", post(handlers::enqueue_job))
+        .route("/queues/{queue_key}/pause", post(handlers::pause_queue))
+        .route("/queues/{queue_key}/unpause", post(handlers::unpause_queue))
         .route("/queues/{queue_key}/wipe", post(handlers::wipe_queue))
         .route(
             "/queues/{queue_key}/jobs/{job_id}/delete",

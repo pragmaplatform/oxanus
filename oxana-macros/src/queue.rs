@@ -3,7 +3,7 @@ use heck::ToSnakeCase;
 use proc_macro_error2::abort;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, Path};
+use syn::{Data, DeriveInput, Expr, ExprCall, ExprLit, ExprPath, Fields, Lit, Path};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(oxana), supports(struct_any))]
@@ -11,8 +11,82 @@ struct OxanaArgs {
     registry: Option<Path>,
     key: Option<String>,
     prefix: Option<String>,
-    concurrency: Option<usize>,
+    concurrency: Option<ConcurrencyArg>,
     throttle: Option<ThrottleArgs>,
+}
+
+#[derive(Debug)]
+enum ConcurrencyArg {
+    Fixed(usize),
+    Dynamic(usize),
+}
+
+impl FromMeta for ConcurrencyArg {
+    fn from_expr(expr: &Expr) -> darling::Result<Self> {
+        match expr {
+            Expr::Lit(expr_lit) => parse_concurrency_value(expr_lit).map(Self::Fixed),
+            Expr::Call(expr_call) => parse_concurrency_call(expr_call),
+            Expr::Group(group) => Self::from_expr(&group.expr),
+            _ => Err(darling::Error::custom(
+                "expected integer literal, Fixed(<integer>), or Dynamic(<integer>)",
+            )
+            .with_span(expr)),
+        }
+    }
+}
+
+fn parse_concurrency_call(expr_call: &ExprCall) -> darling::Result<ConcurrencyArg> {
+    let Expr::Path(ExprPath { path, .. }) = expr_call.func.as_ref() else {
+        return Err(
+            darling::Error::custom("expected Fixed(<integer>) or Dynamic(<integer>)")
+                .with_span(expr_call),
+        );
+    };
+    let Some(ident) = path.get_ident() else {
+        return Err(
+            darling::Error::custom("expected Fixed(<integer>) or Dynamic(<integer>)")
+                .with_span(path),
+        );
+    };
+    let mut args = expr_call.args.iter();
+    let Some(arg) = args.next() else {
+        return Err(
+            darling::Error::custom("expected exactly one integer argument").with_span(expr_call),
+        );
+    };
+    if args.next().is_some() {
+        return Err(
+            darling::Error::custom("expected exactly one integer argument").with_span(expr_call),
+        );
+    }
+
+    let value = parse_concurrency_expr(arg)?;
+    match ident.to_string().as_str() {
+        "Fixed" => Ok(ConcurrencyArg::Fixed(value)),
+        "Dynamic" => Ok(ConcurrencyArg::Dynamic(value)),
+        _ => Err(
+            darling::Error::custom("expected Fixed(<integer>) or Dynamic(<integer>)")
+                .with_span(ident),
+        ),
+    }
+}
+
+fn parse_concurrency_expr(expr: &Expr) -> darling::Result<usize> {
+    match expr {
+        Expr::Lit(expr_lit) => parse_concurrency_value(expr_lit),
+        Expr::Group(group) => parse_concurrency_expr(&group.expr),
+        _ => Err(darling::Error::custom("expected integer literal").with_span(expr)),
+    }
+}
+
+fn parse_concurrency_value(expr_lit: &ExprLit) -> darling::Result<usize> {
+    let Lit::Int(value) = &expr_lit.lit else {
+        return Err(darling::Error::custom("expected integer literal").with_span(expr_lit));
+    };
+
+    value
+        .base10_parse()
+        .map_err(|err| darling::Error::custom(err.to_string()).with_span(value))
 }
 
 #[derive(Debug, FromMeta)]
@@ -64,7 +138,8 @@ pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
     };
 
     let concurrency = match args.concurrency {
-        Some(v) => quote!(.concurrency(#v)),
+        Some(ConcurrencyArg::Fixed(v)) => quote!(.concurrency(#v)),
+        Some(ConcurrencyArg::Dynamic(v)) => quote!(.dynamic_concurrency(#v)),
         None => quote!(),
     };
 

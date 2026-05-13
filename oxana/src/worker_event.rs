@@ -1,7 +1,7 @@
-use tokio::sync::OwnedSemaphorePermit;
+use crate::semaphores_map::QueuePermit;
 
 #[derive(Debug)]
 pub struct WorkerJob {
     pub job_id: String,
-    pub permit: OwnedSemaphorePermit,
+    pub permit: QueuePermit,
 }

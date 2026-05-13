@@ -62,6 +62,7 @@
                         <tr class="border-b border-gray-800 text-left text-xs text-gray-400 uppercase tracking-wide">
                             <th class="pb-3 pr-4">Queue</th>
                             <th class="pb-3 pr-4 text-right">Concurrency</th>
+                            <th class="pb-3 pr-4 text-right">State</th>
                             <th class="pb-3 pr-4 text-right">Busy</th>
                             <th class="pb-3 pr-4 text-right">Enqueued</th>
                             <th class="pb-3 text-right">Latency</th>
@@ -74,15 +75,18 @@
                         <tr class="border-b border-gray-800/50 hover:bg-gray-900/50">
                             <td class="py-3 pr-4 font-mono text-sm">{% if queue.queues.is_empty() %}<a href="{{ base_path }}/queues/{{ queue.key|urlencode }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ queue.key }}</a>{% else %}{{ queue.key }}{% endif %}</td>
                             <td class="py-3 pr-4 text-right text-gray-400">{{ self.concurrency_for(&queue.key) }}</td>
+                            <td class="py-3 pr-4 text-right {{ self.state_class_for(&queue.key) }}">{{ self.state_for(&queue.key) }}</td>
                             <td class="py-3 pr-4 text-right text-purple-400">{{ busy }}</td>
                             <td class="py-3 pr-4 text-right text-blue-400">{{ queue.enqueued }}</td>
                             <td class="py-3 text-right text-purple-400">{{ queue.latency_s|format_latency }}</td>
                         </tr>
                         {% for dq in &queue.queues %}
                         {% if dq.enqueued > 0 %}
+                        {% let dq_key = self.dynamic_queue_key(&queue.key, &dq.suffix) %}
                         <tr class="border-b border-gray-800/50 hover:bg-gray-900/50 text-gray-500">
                             <td class="py-2 pr-4 pl-10 font-mono text-xs">&#8627; <a href="{{ base_path }}/queues/{{ queue.key }}%23{{ dq.suffix|urlencode }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ dq.suffix }}</a></td>
-                            <td class="py-2 pr-4 text-right text-xs text-gray-500">{{ self.concurrency_for(&queue.key) }}</td>
+                            <td class="py-2 pr-4 text-right text-xs text-gray-500">{{ self.concurrency_for(&dq_key) }}</td>
+                            <td class="py-2 pr-4 text-right text-xs {{ self.state_class_for(&dq_key) }}">{{ self.state_for(&dq_key) }}</td>
                             <td class="py-2 pr-4 text-right text-xs text-purple-400"></td>
                             <td class="py-2 pr-4 text-right text-xs text-blue-400">{{ dq.enqueued }}</td>
                             <td class="py-2 text-right text-xs text-purple-400">{{ dq.latency_s|format_latency }}</td>

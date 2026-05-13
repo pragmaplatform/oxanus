@@ -55,6 +55,8 @@ pub struct QueueInfo {
     pub dynamic: bool,
     /// The concurrency limit for this queue.
     pub concurrency: usize,
+    /// Whether queue concurrency can be changed at runtime.
+    pub dynamic_concurrency: bool,
     /// Throttle configuration, if any.
     pub throttle: Option<QueueThrottleInfo>,
 }

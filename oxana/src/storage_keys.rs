@@ -27,6 +27,9 @@ pub(crate) struct StorageKeys {
     /// Redis hash that stores per-queue counters (processed, succeeded, panicked,
     /// failed) keyed as `<queue_full_key>:<metric>`.
     pub(crate) stats: String,
+    /// Redis hash that stores serialized runtime queue configuration keyed by
+    /// queue name.
+    pub(crate) queue_configs: String,
     /// Prefix for Redis keys that store Sidekiq-style job execution metrics.
     pub(crate) metrics_prefix: String,
 }
@@ -52,6 +55,7 @@ impl StorageKeys {
             processes: format!("{namespace}:processes"),
             processes_data: format!("{namespace}:processes_data"),
             stats: format!("{namespace}:stats"),
+            queue_configs: format!("{namespace}:queue_configs"),
             metrics_prefix: format!("{namespace}:metrics"),
             namespace,
         }

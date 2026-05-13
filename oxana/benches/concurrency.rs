@@ -49,7 +49,7 @@ impl oxana::Queue for QueueOne {
             kind: oxana::QueueKind::Static {
                 key: "one".to_string(),
             },
-            concurrency: 1,
+            concurrency: oxana::QueueConcurrency::Fixed(1),
             throttle: None,
         }
     }

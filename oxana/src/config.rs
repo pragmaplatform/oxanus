@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::Storage;
-use crate::queue::{Queue, QueueConfig};
+use crate::queue::{Queue, QueueConcurrency, QueueConfig};
 use crate::storage_types::{
     Catalog, CronWorkerInfo, OnDemandJobInfo, QueueInfo, QueueThrottleInfo, WorkerInfo,
 };
@@ -60,7 +60,7 @@ impl<DT, ET> Config<DT, ET> {
         Q: Queue,
     {
         let mut config = Q::to_config();
-        config.concurrency = concurrency;
+        config.concurrency = QueueConcurrency::Fixed(concurrency);
         self.register_queue_with(config);
         self
     }
@@ -212,7 +212,8 @@ impl<DT, ET> Config<DT, ET> {
                 QueueInfo {
                     key,
                     dynamic,
-                    concurrency: q.concurrency,
+                    concurrency: q.concurrency.default_concurrency(),
+                    dynamic_concurrency: q.concurrency.is_dynamic(),
                     throttle: q.throttle.as_ref().map(|t| QueueThrottleInfo {
                         window_ms: t.window_ms,
                         limit: t.limit,

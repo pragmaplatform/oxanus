@@ -117,7 +117,9 @@ pub use crate::job_envelope::{JobConflictStrategy, JobData, JobEnvelope, JobId, 
 pub use crate::job_state::{JobProgress, JobProgressIterator, JobState};
 pub use crate::launcher::run;
 pub use crate::metrics::*;
-pub use crate::queue::{Queue, QueueConfig, QueueKind, QueueThrottle};
+pub use crate::queue::{
+    Queue, QueueConcurrency, QueueConfig, QueueKind, QueueRuntimeConfig, QueueState, QueueThrottle,
+};
 pub use crate::stats::*;
 pub use crate::storage::Storage;
 pub use crate::storage_builder::{StorageBuilder, StorageBuilderTimeouts};

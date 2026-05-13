@@ -79,6 +79,7 @@
                     <tr class="border-b border-gray-800 text-left text-xs text-gray-400 uppercase tracking-wide">
                         <th class="pb-3 pr-4"><a href="{{ self.sort_href("key") }}" class="hover:text-gray-200">Queue{{ self.sort_arrow("key") }}</a></th>
                         <th class="pb-3 pr-4 text-right"><a href="{{ self.sort_href("concurrency") }}" class="hover:text-gray-200">Concurrency{{ self.sort_arrow("concurrency") }}</a></th>
+                        <th class="pb-3 pr-4 text-right"><a href="{{ self.sort_href("state") }}" class="hover:text-gray-200">State{{ self.sort_arrow("state") }}</a></th>
                         <th class="pb-3 pr-4 text-right"><a href="{{ self.sort_href("enqueued") }}" class="hover:text-gray-200">Enqueued{{ self.sort_arrow("enqueued") }}</a></th>
                         <th class="pb-3 pr-4 text-right"><a href="{{ self.sort_href("rate") }}" class="hover:text-gray-200">Rate{{ self.sort_arrow("rate") }}</a></th>
                         <th class="pb-3 pr-4 text-right"><a href="{{ self.sort_href("eta") }}" class="hover:text-gray-200">ETA{{ self.sort_arrow("eta") }}</a></th>
@@ -94,6 +95,7 @@
                     <tr class="border-b border-gray-800/50 hover:bg-gray-900/50">
                         <td class="py-3 pr-4 font-mono text-sm">{% if queue.queues.is_empty() %}<a href="{{ base_path }}/queues/{{ queue.key|urlencode }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ queue.key }}</a>{% else %}{{ queue.key }}{% endif %}</td>
                         <td class="py-3 pr-4 text-right text-gray-400">{{ self.concurrency_for(&queue.key) }}</td>
+                        <td class="py-3 pr-4 text-right {{ self.state_class_for(&queue.key) }}">{{ self.state_for(&queue.key) }}</td>
                         <td class="py-3 pr-4 text-right text-blue-400">{{ queue.enqueued }}</td>
                         <td class="py-3 pr-4 text-right text-cyan-400">{{ queue.rate.processed_per_minute|format_rate_per_minute }}</td>
                         <td class="py-3 pr-4 text-right text-yellow-400">{{ queue.rate.eta_s|format_eta_s }}</td>
@@ -104,9 +106,11 @@
                         <td class="py-3 text-right text-purple-400">{{ queue.latency_s|format_latency }}</td>
                     </tr>
                     {% for dq in &queue.queues %}
+                    {% let dq_key = self.dynamic_queue_key(&queue.key, &dq.suffix) %}
                     <tr class="border-b border-gray-800/50 hover:bg-gray-900/50 text-gray-500">
                         <td class="py-2 pr-4 pl-10 font-mono text-xs">&#8627; <a href="{{ base_path }}/queues/{{ queue.key }}%23{{ dq.suffix|urlencode }}" class="text-blue-400 hover:text-blue-300 hover:underline">{{ dq.suffix }}</a></td>
-                        <td class="py-2 pr-4 text-right text-xs text-gray-500">{{ self.concurrency_for(&queue.key) }}</td>
+                        <td class="py-2 pr-4 text-right text-xs text-gray-500">{{ self.concurrency_for(&dq_key) }}</td>
+                        <td class="py-2 pr-4 text-right text-xs {{ self.state_class_for(&dq_key) }}">{{ self.state_for(&dq_key) }}</td>
                         <td class="py-2 pr-4 text-right text-xs">{{ dq.enqueued }}</td>
                         <td class="py-2 pr-4 text-right text-xs text-cyan-400">{{ dq.rate.processed_per_minute|format_rate_per_minute }}</td>
                         <td class="py-2 pr-4 text-right text-xs text-yellow-400">{{ dq.rate.eta_s|format_eta_s }}</td>

@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, mpsc};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinSet;
+use tokio::time::MissedTickBehavior;
 
 use crate::WorkerBatchConfig;
 use crate::config::Config;
@@ -9,9 +10,9 @@ use crate::context::ContextValue;
 use crate::error::OxanaError;
 use crate::executor::{ExecutionError, ExecutionOutcome};
 use crate::job_envelope::JobEnvelope;
-use crate::queue::{QueueConfig, QueueKind};
+use crate::queue::{QueueConfig, QueueKind, QueueRuntimeConfig};
 use crate::result_collector::{WorkerResult, WorkerResultKind};
-use crate::semaphores_map::SemaphoresMap;
+use crate::semaphores_map::{QueueControlsMap, QueuePermit};
 use crate::worker_event::WorkerJob;
 use crate::{
     dispatcher, executor,
@@ -28,11 +29,11 @@ where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
-    let concurrency = queue_config.concurrency;
-    let (result_tx, result_rx) = mpsc::channel::<WorkerResult>(concurrency);
-    let (job_tx, mut job_rx) = mpsc::channel::<WorkerJob>(concurrency);
-    let (batch_error_tx, mut batch_error_rx) = mpsc::channel::<OxanaError>(concurrency.max(1));
-    let semaphores = Arc::new(SemaphoresMap::new(concurrency));
+    let channel_capacity = queue_config.concurrency.default_concurrency().max(1);
+    let (result_tx, result_rx) = mpsc::channel::<WorkerResult>(channel_capacity);
+    let (job_tx, mut job_rx) = mpsc::channel::<WorkerJob>(channel_capacity);
+    let (batch_error_tx, mut batch_error_rx) = mpsc::channel::<OxanaError>(channel_capacity);
+    let queue_controls = Arc::new(QueueControlsMap::new());
     let mut joinset = JoinSet::new();
     let mut batchers: HashMap<BatchKey, mpsc::Sender<PendingJob>> = HashMap::new();
 
@@ -45,7 +46,7 @@ where
         Arc::clone(&config),
         queue_config.clone(),
         job_tx.clone(),
-        Arc::clone(&semaphores),
+        Arc::clone(&queue_controls),
     ));
 
     loop {
@@ -79,7 +80,7 @@ where
     }
 
     drop(batchers);
-    wait_for_workers_to_finish(config, Arc::clone(&semaphores)).await;
+    wait_for_workers_to_finish(config, Arc::clone(&queue_controls)).await;
     drop(result_tx);
     drop(batch_error_tx);
 
@@ -107,7 +108,7 @@ impl BatchKey {
 
 struct PendingJob {
     envelope: JobEnvelope,
-    permit: OwnedSemaphorePermit,
+    permit: QueuePermit,
 }
 
 async fn route_job<DT, ET>(
@@ -613,13 +614,22 @@ async fn run_queue_watcher<DT, ET>(
     config: Arc<Config<DT, ET>>,
     queue_config: QueueConfig,
     job_tx: mpsc::Sender<WorkerJob>,
-    semaphores: Arc<SemaphoresMap>,
+    queue_controls: Arc<QueueControlsMap>,
 ) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
 {
     let mut tracked_queues = HashSet::new();
+    let queue_concurrency = queue_config.concurrency;
+    let default_runtime_config = queue_concurrency.stored_runtime_default();
+    let base_queue_key = queue_config.key_or_prefix();
+
+    config
+        .storage
+        .internal
+        .ensure_queue_config(&base_queue_key, default_runtime_config.clone())
+        .await?;
 
     loop {
         let all_queues: HashSet<String> = match &queue_config.kind {
@@ -627,13 +637,8 @@ where
             QueueKind::Dynamic { prefix, .. } => config
                 .storage
                 .internal
-                .track_redis_result(
-                    config
-                        .storage
-                        .internal
-                        .queue_keys(&format!("{prefix}*"))
-                        .await,
-                )?
+                .track_redis_result(config.storage.internal.queues(&format!("{prefix}*")).await)?
+                .map(|queues| queues.into_iter().collect())
                 .unwrap_or_default(),
         };
         let new_queues: HashSet<String> = all_queues.difference(&tracked_queues).cloned().collect();
@@ -645,10 +650,49 @@ where
                 "Tracking queue"
             );
 
+            let queue_default_config = if queue == base_queue_key {
+                default_runtime_config.clone()
+            } else {
+                config
+                    .storage
+                    .internal
+                    .queue_config(&base_queue_key)
+                    .await?
+                    .unwrap_or_else(|| default_runtime_config.clone())
+            };
+            let runtime_config = config
+                .storage
+                .internal
+                .ensure_queue_config(&queue, queue_default_config.clone())
+                .await?;
+            let runtime_config = queue_concurrency.effective_runtime_config(runtime_config);
+            let queue_control = queue_controls
+                .get_or_create(queue.clone(), runtime_config.clone())
+                .await;
+            queue_control.apply_config(runtime_config);
+
+            let watcher_config = Arc::clone(&config);
+            let watcher_queue = queue.clone();
+            let watcher_control = Arc::clone(&queue_control);
+            let watcher_default_config = queue_default_config;
+            tokio::spawn(async move {
+                if let Err(e) = run_queue_config_watcher(
+                    watcher_config,
+                    watcher_queue,
+                    watcher_default_config,
+                    queue_concurrency,
+                    watcher_control,
+                )
+                .await
+                {
+                    tracing::error!(error = %e, "Queue config watcher exited with error");
+                }
+            });
+
             let dispatcher_config = Arc::clone(&config);
             let dispatcher_queue_config = queue_config.clone();
             let dispatcher_job_tx = job_tx.clone();
-            let dispatcher_semaphores = Arc::clone(&semaphores);
+            let dispatcher_queue_control = Arc::clone(&queue_control);
             let dispatcher_queue = queue.clone();
             tokio::spawn(async move {
                 if let Err(e) = dispatcher::run(
@@ -656,7 +700,7 @@ where
                     dispatcher_queue_config,
                     dispatcher_queue,
                     dispatcher_job_tx,
-                    dispatcher_semaphores,
+                    dispatcher_queue_control,
                 )
                 .await
                 {
@@ -669,17 +713,52 @@ where
 
         if config.cancel_token.is_cancelled() {
             return Ok(());
-        } else if let QueueKind::Dynamic { sleep_period, .. } = queue_config.kind {
-            tokio::time::sleep(sleep_period).await;
+        } else if let QueueKind::Dynamic { sleep_period, .. } = &queue_config.kind {
+            tokio::time::sleep(*sleep_period).await;
         } else {
             return Ok(());
         }
     }
 }
 
+async fn run_queue_config_watcher<DT, ET>(
+    config: Arc<Config<DT, ET>>,
+    queue_key: String,
+    default_config: QueueRuntimeConfig,
+    queue_concurrency: crate::QueueConcurrency,
+    queue_control: Arc<crate::semaphores_map::QueueControl>,
+) -> Result<(), OxanaError>
+where
+    DT: Send + Sync + Clone + 'static,
+    ET: std::error::Error + Send + Sync + 'static,
+{
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+    loop {
+        tokio::select! {
+            _ = config.cancel_token.cancelled() => {
+                return Ok(());
+            }
+            _ = interval.tick() => {
+                if let Some(runtime_config) = config.storage.internal.track_redis_result(
+                    config
+                        .storage
+                        .internal
+                        .ensure_queue_config(&queue_key, default_config.clone())
+                        .await,
+                )? {
+                    let runtime_config = queue_concurrency.effective_runtime_config(runtime_config);
+                    queue_control.apply_config(runtime_config);
+                }
+            }
+        }
+    }
+}
+
 async fn wait_for_workers_to_finish<DT, ET>(
     config: Arc<Config<DT, ET>>,
-    semaphores: Arc<SemaphoresMap>,
+    queue_controls: Arc<QueueControlsMap>,
 ) where
     DT: Send + Sync + Clone + 'static,
     ET: std::error::Error + Send + Sync + 'static,
@@ -690,7 +769,7 @@ async fn wait_for_workers_to_finish<DT, ET>(
     loop {
         ticks += 1;
 
-        let busy_count = semaphores.busy_count().await;
+        let busy_count = queue_controls.busy_count().await;
         if busy_count == 0 {
             break;
         }
@@ -711,13 +790,15 @@ async fn wait_for_workers_to_finish<DT, ET>(
 #[cfg(test)]
 mod tests {
     use super::{PendingJob, process_pending_batch};
+    use crate::QueueRuntimeConfig;
+    use crate::semaphores_map::QueueControlsMap;
     use crate::test_helper::{random_string, redis_pool};
     use crate::worker_registry::{self, BatchBuild, InvalidBatchJob, WorkerConfigKind};
     use crate::{Config, ContextValue, Job, JobEnvelope, Storage, Worker, WorkerConfig};
     use serde::{Deserialize, Serialize};
     use std::sync::Arc;
     use testresult::TestResult;
-    use tokio::sync::{Semaphore, mpsc};
+    use tokio::sync::mpsc;
 
     #[derive(Debug, Serialize, Deserialize)]
     struct UnsortedInvalidJob;
@@ -803,12 +884,15 @@ mod tests {
             storage.internal.dequeue(&queue).await?;
         }
 
-        let semaphore = Arc::new(Semaphore::new(envelopes.len()));
+        let queue_controls = QueueControlsMap::new();
+        let queue_control = queue_controls
+            .get_or_create(queue.clone(), QueueRuntimeConfig::new(envelopes.len()))
+            .await;
         let mut pending = Vec::with_capacity(envelopes.len());
         for envelope in envelopes {
             pending.push(PendingJob {
                 envelope,
-                permit: Arc::clone(&semaphore).acquire_owned().await?,
+                permit: queue_control.acquire().await,
             });
         }
         let (result_tx, _result_rx) = mpsc::channel(1);

@@ -22,10 +22,31 @@ fn busy_for_process(stats: &oxana::Stats, process: &oxana::Process) -> usize {
         .count()
 }
 
-fn concurrency_for(concurrency_map: &HashMap<String, usize>, key: &str) -> String {
-    concurrency_map
+fn concurrency_for(
+    queue_configs: &HashMap<String, oxana::QueueRuntimeConfig>,
+    key: &str,
+) -> String {
+    queue_configs
         .get(key)
-        .map_or_else(|| "—".to_string(), |c| c.to_string())
+        .and_then(|config| config.concurrency)
+        .map_or_else(|| "—".to_string(), |concurrency| concurrency.to_string())
+}
+
+fn state_for(queue_configs: &HashMap<String, oxana::QueueRuntimeConfig>, key: &str) -> String {
+    queue_configs.get(key).map_or_else(
+        || "Active".to_string(),
+        |config| config.state.label().to_string(),
+    )
+}
+
+fn state_class_for(
+    queue_configs: &HashMap<String, oxana::QueueRuntimeConfig>,
+    key: &str,
+) -> &'static str {
+    match queue_configs.get(key).map(|config| config.state) {
+        Some(oxana::QueueState::Paused) => "text-yellow-300",
+        _ => "text-green-300",
+    }
 }
 
 #[derive(Template, WebTemplate)]
@@ -34,12 +55,24 @@ pub(crate) struct DashboardTemplate {
     pub base_path: String,
     pub active_tab: &'static str,
     pub stats: oxana::Stats,
-    pub concurrency_map: HashMap<String, usize>,
+    pub queue_configs: HashMap<String, oxana::QueueRuntimeConfig>,
 }
 
 impl DashboardTemplate {
     pub fn concurrency_for(&self, key: &str) -> String {
-        concurrency_for(&self.concurrency_map, key)
+        concurrency_for(&self.queue_configs, key)
+    }
+
+    pub fn state_for(&self, key: &str) -> String {
+        state_for(&self.queue_configs, key)
+    }
+
+    pub fn state_class_for(&self, key: &str) -> &'static str {
+        state_class_for(&self.queue_configs, key)
+    }
+
+    pub fn dynamic_queue_key(&self, key: &str, suffix: &str) -> String {
+        format!("{key}#{suffix}")
     }
 
     pub fn busy_for(&self, key: &str) -> usize {
@@ -57,12 +90,24 @@ pub(crate) struct BusyTemplate {
     pub base_path: String,
     pub active_tab: &'static str,
     pub stats: oxana::Stats,
-    pub concurrency_map: HashMap<String, usize>,
+    pub queue_configs: HashMap<String, oxana::QueueRuntimeConfig>,
 }
 
 impl BusyTemplate {
     pub fn concurrency_for(&self, key: &str) -> String {
-        concurrency_for(&self.concurrency_map, key)
+        concurrency_for(&self.queue_configs, key)
+    }
+
+    pub fn state_for(&self, key: &str) -> String {
+        state_for(&self.queue_configs, key)
+    }
+
+    pub fn state_class_for(&self, key: &str) -> &'static str {
+        state_class_for(&self.queue_configs, key)
+    }
+
+    pub fn dynamic_queue_key(&self, key: &str, suffix: &str) -> String {
+        format!("{key}#{suffix}")
     }
 
     pub fn busy_for(&self, key: &str) -> usize {
@@ -80,7 +125,7 @@ pub(crate) struct QueuesTemplate {
     pub base_path: String,
     pub active_tab: &'static str,
     pub stats: oxana::Stats,
-    pub concurrency_map: HashMap<String, usize>,
+    pub queue_configs: HashMap<String, oxana::QueueRuntimeConfig>,
     pub queue_lengths: oxana::QueueLengthMetricsSnapshot,
     pub sort: String,
     pub dir: String,
@@ -118,7 +163,19 @@ impl QueuesTemplate {
     }
 
     pub fn concurrency_for(&self, key: &str) -> String {
-        concurrency_for(&self.concurrency_map, key)
+        concurrency_for(&self.queue_configs, key)
+    }
+
+    pub fn state_for(&self, key: &str) -> String {
+        state_for(&self.queue_configs, key)
+    }
+
+    pub fn state_class_for(&self, key: &str) -> &'static str {
+        state_class_for(&self.queue_configs, key)
+    }
+
+    pub fn dynamic_queue_key(&self, key: &str, suffix: &str) -> String {
+        format!("{key}#{suffix}")
     }
 
     pub fn queue_length_chart_data_json(&self) -> String {
@@ -175,7 +232,7 @@ mod tests {
                 processing: Vec::new(),
                 queues: Vec::new(),
             },
-            concurrency_map: HashMap::new(),
+            queue_configs: HashMap::new(),
             queue_lengths,
             sort: "key".to_string(),
             dir: "asc".to_string(),
@@ -602,6 +659,7 @@ pub(crate) struct QueueDetailTemplate {
     pub active_tab: &'static str,
     pub queue_key: String,
     pub queue_stats: Option<oxana::QueueStats>,
+    pub queue_config: oxana::QueueRuntimeConfig,
     pub active_jobs: Vec<oxana::StatsProcessing>,
     pub busy: usize,
     pub jobs: Vec<oxana::JobEnvelope>,
@@ -611,6 +669,27 @@ pub(crate) struct QueueDetailTemplate {
 }
 
 impl QueueDetailTemplate {
+    pub fn state_label(&self) -> &'static str {
+        self.queue_config.state.label()
+    }
+
+    pub fn state_class(&self) -> &'static str {
+        match self.queue_config.state {
+            oxana::QueueState::Active => "text-green-300 border-green-800 bg-green-900/30",
+            oxana::QueueState::Paused => "text-yellow-300 border-yellow-800 bg-yellow-900/30",
+        }
+    }
+
+    pub fn is_paused(&self) -> bool {
+        matches!(self.queue_config.state, oxana::QueueState::Paused)
+    }
+
+    pub fn concurrency_label(&self) -> String {
+        self.queue_config
+            .concurrency
+            .map_or_else(|| "—".to_string(), |concurrency| concurrency.to_string())
+    }
+
     pub fn range_start(&self) -> usize {
         (self.page - 1) * JOBS_PER_PAGE + 1
     }
