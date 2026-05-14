@@ -21,6 +21,7 @@ Oxana focuses on simplicity and depth over breadth - one backend, done well.
 - **Scheduled Jobs** - run jobs at specific times or after delays
 - **Cron Jobs** - periodic jobs using cron expressions
 - **Dynamic Queues** - create and manage queues at runtime
+- **Runtime Queue Controls** - pause queues and adjust dynamic concurrency without restarting workers
 - **Throttling** - rate-limit job processing per queue
 - **Unique Jobs** - deduplicate jobs so only one instance runs at a time
 - **Resumable Jobs** - resume from where a job left off on retry
@@ -117,7 +118,7 @@ The dashboard exposes these pages:
 - `/retries` - Jobs pending retry
 - `/dead` - Dead letter queue
 
-It also provides management actions for wiping queues and deleting individual jobs.
+It also provides management actions for pausing and unpausing queues, changing dynamic queue concurrency from queue detail pages, wiping queues, and deleting individual jobs.
 
 ## Core Concepts
 
@@ -156,7 +157,8 @@ Queue attributes:
 
 - `#[oxana(key = "my_queue")]` - Set static queue key
 - `#[oxana(prefix = "dynamic")]` - Set prefix for dynamic queues
-- `#[oxana(concurrency = 2)]` - Set concurrency limit
+- `#[oxana(concurrency = 2)]` - Set a fixed concurrency limit
+- `#[oxana(concurrency = Dynamic(2))]` - Set a runtime-adjustable concurrency limit with default `2`
 - `#[oxana(throttle(window_ms = 2000, limit = 5))]` - Configure throttling
 
 ### Component Registry
