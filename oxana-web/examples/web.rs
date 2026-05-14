@@ -186,6 +186,25 @@ struct PriorityQueue;
 #[oxana(key = "progress", concurrency = 1)]
 struct ProgressQueue;
 
+#[derive(Serialize)]
+struct TenantQueueBase;
+
+impl oxana::Queue for TenantQueueBase {
+    fn key(&self) -> String {
+        "tenant".to_string()
+    }
+
+    fn to_config() -> oxana::QueueConfig {
+        oxana::QueueConfig::as_dynamic("tenant").dynamic_concurrency(1)
+    }
+}
+
+#[derive(Serialize, oxana::Queue)]
+#[oxana(prefix = "tenant", concurrency = Dynamic(1))]
+struct TenantQueue {
+    tenant: &'static str,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = oxana::Storage::builder().build_from_env()?;
@@ -356,17 +375,57 @@ async fn seed_sample_jobs(storage: &oxana::Storage) -> Result<(), oxana::OxanaEr
         .await?;
     storage
         .enqueue(
-            DefaultQueue,
+            PriorityQueue,
             SyncCustomerProfileJob {
-                duration_ms: seconds(150),
+                duration_ms: seconds(100),
             },
         )
         .await?;
+    seed_dynamic_tenant_jobs(storage).await?;
     storage
         .enqueue(ProgressQueue, LongRunningProgressJob { duration_s: 150 })
         .await?;
 
-    println!("Seeded sample jobs across default and priority queues");
+    println!("Seeded sample jobs across default, priority, and tenant dynamic queues");
+
+    Ok(())
+}
+
+async fn seed_dynamic_tenant_jobs(storage: &oxana::Storage) -> Result<(), oxana::OxanaError> {
+    storage.set_queue_concurrency(TenantQueueBase, 2).await?;
+    storage
+        .set_queue_concurrency(TenantQueue { tenant: "acme" }, 3)
+        .await?;
+    storage
+        .set_queue_state(TenantQueue { tenant: "globex" }, oxana::QueueState::Paused)
+        .await?;
+
+    for duration_ms in [seconds(45), seconds(90), seconds(135), seconds(180)] {
+        storage
+            .enqueue(
+                TenantQueue { tenant: "acme" },
+                SyncCustomerProfileJob { duration_ms },
+            )
+            .await?;
+    }
+
+    for duration_ms in [seconds(60), seconds(120), seconds(180)] {
+        storage
+            .enqueue(
+                TenantQueue { tenant: "globex" },
+                GenerateInvoiceJob { duration_ms },
+            )
+            .await?;
+    }
+
+    for duration_ms in [seconds(30), seconds(75), seconds(150)] {
+        storage
+            .enqueue(
+                TenantQueue { tenant: "initech" },
+                SendReceiptEmailJob { duration_ms },
+            )
+            .await?;
+    }
 
     Ok(())
 }
