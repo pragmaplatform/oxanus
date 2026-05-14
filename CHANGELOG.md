@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.0.0-rc.6]
+## [2.0.0-rc]
 
 ### Breaking Changes
 
@@ -23,6 +23,11 @@ All notable changes to this project will be documented in this file.
 - Add structured job progress state with `ctx.state.update_progress(...)`, `ctx.state.progress()`, and dashboard progress bars for long-running jobs.
 - Add `ctx.state.iter_with_progress(...)` and `JobProgressIterator` for resumable iterator-style jobs that should restart from the saved cursor and advance progress as items complete.
 - Show scalar job arguments as compact dashboard pills while preserving raw JSON for complex arguments.
+- Add runtime queue configuration storage for queue state and dynamic concurrency overrides.
+- Add dynamic queue concurrency through `QueueConfig::dynamic_concurrency(...)` and `#[oxana(concurrency = Dynamic(...))]`.
+- Add `Storage::set_queue_concurrency`, `Storage::set_queue_state`, `Storage::pause_queue`, `Storage::unpause_queue`, and `Storage::reset_queue_config` for changing queue runtime behavior without restarting workers.
+- Add dashboard controls for pausing queues and changing dynamic queue concurrency from queue detail pages.
+- Add dynamic concurrency examples, including seeded dynamic tenant queues in the web dashboard example.
 
 ### Changed
 
@@ -31,6 +36,14 @@ All notable changes to this project will be documented in this file.
 - Reduce Redis pressure by replacing `KEYS` with cursor-based `SCAN`, batching result counter writes, and snapshotting active queue lengths during worker refreshes.
 - Improve on-demand registration so the dashboard can prefill arguments, keep job hooks intact, and choose a sensible default queue.
 - Refresh examples, package metadata, CI paths, documentation references, and dependency versions for the Oxana rename and 2.0 release candidate.
+- Apply runtime queue state and dynamic concurrency changes while dispatchers are running.
+- Clear persisted concurrency overrides when a dynamic queue is set back to its effective default.
+- Treat a dynamic child queue's effective concurrency default as the inherited base queue runtime concurrency.
+- Show dashboard concurrency overrides with the default value struck through.
+
+### Fixed
+
+- Avoid persisting runtime queue config when a queue is only using its default configuration.
 
 ## [1.1.1]
 
