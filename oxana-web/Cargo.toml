@@ -1,6 +1,6 @@
 [package]
 name = "oxana-web"
-version = "2.0.0-rc.7"
+version = "2.0.0-rc.8"
 edition = "2024"
 license = "MIT"
 description = "Web UI for Oxana job queue system."
