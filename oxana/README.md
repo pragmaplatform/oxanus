@@ -34,7 +34,7 @@ Oxana focuses on simplicity and depth over breadth - one backend, done well.
 ## Quick Start
 
 ```bash
-cargo add oxana@2.0.0-rc.6
+cargo add oxana@2.0.0-rc.8
 ```
 
 ```rust
