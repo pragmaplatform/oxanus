@@ -26,11 +26,10 @@ pub async fn test_stats() -> TestResult {
     let ctx = oxana::ContextValue::new(());
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool)?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool)?
         .register_queue::<QueueDynamic>()
         .register_queue::<QueueStatic>()
-        .register_worker::<WorkerNoop, WorkerNoopJob>()
+        .register_worker::<WorkerNoop, WorkerNoopJob, ()>()
         .exit_when_processed(8);
 
     storage.enqueue(QueueDynamic(1), WorkerNoopJob {}).await?;
@@ -127,7 +126,7 @@ pub async fn test_stats() -> TestResult {
     let queue_stats = storage.stats_queues_for(&["nonexistent"]).await?;
     assert_eq!(queue_stats.len(), 0);
 
-    let stats = oxana::run(config, ctx).await?;
+    let stats = storage.clone().run(ctx).await?;
 
     assert_eq!(stats.processed, 8);
 

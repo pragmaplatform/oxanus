@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[derive(oxana::Registry)]
-struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext, WorkerError>);
+struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext>);
 
 #[derive(Debug, thiserror::Error)]
 enum WorkerError {}
@@ -38,14 +38,15 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
 
     let ctx = oxana::ContextValue::new(WorkerContext {});
     let storage = oxana::Storage::builder().build_from_env()?;
-    let config = ComponentRegistry::build_config(&storage)
+    let storage = storage
+        .register::<ComponentRegistry>()
         .with_graceful_shutdown(tokio::signal::ctrl_c())
         .exit_when_processed(1);
 
     storage.enqueue(QueueOne, TestJob { sleep_s: 10 }).await?;
     storage.enqueue(QueueOne, TestJob { sleep_s: 5 }).await?;
 
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
 
     Ok(())
 }

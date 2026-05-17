@@ -48,10 +48,9 @@ pub async fn test_standard() -> TestResult {
 
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool.clone())?
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerRedisSet, WorkerRedisSetJob>()
+        .register_worker::<WorkerRedisSet, WorkerRedisSetJob, WorkerState>()
         .exit_when_processed(1);
 
     let random_key = uuid::Uuid::new_v4().to_string();
@@ -69,7 +68,7 @@ pub async fn test_standard() -> TestResult {
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 1);
 
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
 
     let value: Option<String> = redis_conn.get(random_key).await?;
 
@@ -91,15 +90,13 @@ pub async fn test_paused_queue_resumes_after_runtime_config_update() -> TestResu
 
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool.clone())?;
+        .build_from_pool(redis_pool.clone())?
+        .register_queue::<QueueOne>()
+        .register_worker::<WorkerRedisSet, WorkerRedisSetJob, WorkerState>()
+        .exit_when_processed(1);
     storage
         .set_queue_state(QueueOne, oxana::QueueState::Paused)
         .await?;
-
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueOne>()
-        .register_worker::<WorkerRedisSet, WorkerRedisSetJob>()
-        .exit_when_processed(1);
 
     let random_key = uuid::Uuid::new_v4().to_string();
     let random_value = uuid::Uuid::new_v4().to_string();
@@ -114,7 +111,8 @@ pub async fn test_paused_queue_resumes_after_runtime_config_update() -> TestResu
         )
         .await?;
 
-    let handle = tokio::spawn(async move { oxana::run(config, ctx).await });
+    let run_storage = storage.clone();
+    let handle = tokio::spawn(async move { run_storage.run(ctx).await });
 
     tokio::time::sleep(Duration::from_millis(500)).await;
     let value: Option<String> = redis_conn.get(&random_key).await?;

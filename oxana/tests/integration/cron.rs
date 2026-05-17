@@ -59,12 +59,11 @@ pub async fn test_cron() -> TestResult {
 
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
-        .register_worker::<CronWorkerRedisCounter, CronWorkerRedisCounterJob>()
+        .build_from_pool(redis_pool.clone())?
+        .register_worker::<CronWorkerRedisCounter, CronWorkerRedisCounterJob, WorkerState>()
         .exit_when_processed(2);
 
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
 
     let value: Option<i64> = redis_conn.get("cron:counter").await?;
 

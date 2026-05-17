@@ -42,12 +42,12 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         .init();
 
     let ctx = oxana::ContextValue::new(WorkerContext {});
-    let storage = oxana::Storage::builder().build_from_env()?;
-    let config = oxana::Config::new(&storage)
-        .register_worker::<TestWorker, TestJob>()
+    let storage = oxana::Storage::builder()
+        .build_from_env()?
+        .register_worker::<TestWorker, TestJob, WorkerContext>()
         .with_graceful_shutdown(tokio::signal::ctrl_c());
 
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
 
     Ok(())
 }

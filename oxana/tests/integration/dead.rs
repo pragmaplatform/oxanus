@@ -47,17 +47,16 @@ pub async fn test_dead() -> TestResult {
     let ctx = oxana::ContextValue::new(());
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool.clone())?
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerFail, WorkerFailJob>()
+        .register_worker::<WorkerFail, WorkerFailJob, ()>()
         .exit_when_processed(1);
 
     storage.enqueue(QueueOne, WorkerFailJob {}).await?;
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 1);
 
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
 
     assert_eq!(storage.dead_count().await?, 1);
     assert_eq!(storage.enqueued_count(QueueOne).await?, 0);

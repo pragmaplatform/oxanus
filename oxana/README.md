@@ -42,7 +42,7 @@ use oxana::Storage;
 use serde::{Serialize, Deserialize};
 
 #[derive(oxana::Registry)]
-struct ComponentRegistry(oxana::ComponentRegistry<MyContext, MyError>);
+struct ComponentRegistry(oxana::ComponentRegistry<MyContext>);
 
 #[derive(Debug, thiserror::Error)]
 enum MyError {}
@@ -72,12 +72,13 @@ struct MyQueue;
 #[tokio::main]
 async fn main() -> Result<(), oxana::OxanaError> {
     let ctx = oxana::ContextValue::new(MyContext {});
-    let storage = Storage::builder().build_from_env()?;
-    let config = ComponentRegistry::build_config(&storage)
+    let storage = Storage::builder()
+        .build_from_env()?
+        .register::<ComponentRegistry>()
         .with_graceful_shutdown(tokio::signal::ctrl_c());
 
     storage.enqueue(MyQueue, MyJob { data: "hello".into() }).await?;
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
     Ok(())
 }
 ```
@@ -91,12 +92,14 @@ The `oxana-web` crate provides a built-in dashboard for monitoring jobs, queues,
 ```rust
 use oxana_web::OxanaWebState;
 
-let config = ComponentRegistry::build_config(&storage)
+let storage = storage
+    .register::<ComponentRegistry>()
     .with_graceful_shutdown(tokio::signal::ctrl_c());
+let catalog = storage.catalog();
 
 let oxana_router = oxana_web::router(OxanaWebState::new(
-    config.storage.clone(),
-    config.catalog(),
+    storage.clone(),
+    catalog,
     "/oxana".to_string(),
 ));
 
@@ -163,7 +166,7 @@ Queue attributes:
 
 ### Component Registry
 
-The component registry automatically discovers and registers all workers and queues in your application. Use `#[derive(oxana::Registry)]` to create a registry and `ComponentRegistry::build_config()` to build the configuration.
+The component registry automatically discovers and registers all workers and queues in your application. Use `#[derive(oxana::Registry)]` to create a registry and `storage.register::<ComponentRegistry>()` to register them on `Storage`.
 
 ### Storage
 
@@ -171,6 +174,7 @@ The component registry automatically discovers and registers all workers and que
 
 Build it with `Storage::builder().build_from_env()` which reads the `REDIS_URL` environment variable.
 Set `REDIS_STATS_URL` to store counters and metrics in a separate Redis instance; when it is not set, stats use `REDIS_URL`.
+Call `storage.run(ctx)` on the configured `Storage` handle when starting workers.
 
 ### Context
 
@@ -201,13 +205,15 @@ ctx.state
 shown as normal state in the dashboard. `ctx.state.progress().await?` reloads the
 latest stored progress for the current job.
 
-### Configuration
+### Runtime Configuration
 
-Configuration is done through the `Config` builder, which allows you to:
+Runtime configuration is done directly on `Storage`, which allows you to:
 
 - Automatically register queues and workers via the component registry
 - Set up graceful shutdown
-- Configure exit conditions
+- Configure exit conditions and runtime timing/backoff knobs
+
+`Storage` is the single public setup object for enqueueing, monitoring, and running workers.
 
 ### Error Handling
 

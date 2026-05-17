@@ -68,10 +68,9 @@ pub async fn test_retry() -> TestResult {
 
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool.clone())?
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerRedisSetWithRetry, WorkerRedisSetWithRetryJob>()
+        .register_worker::<WorkerRedisSetWithRetry, WorkerRedisSetWithRetryJob, WorkerState>()
         .exit_when_processed(2);
 
     let random_key = uuid::Uuid::new_v4().to_string();
@@ -91,7 +90,7 @@ pub async fn test_retry() -> TestResult {
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 1);
 
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
 
     let value: Option<String> = redis_conn.get(random_key).await?;
 
@@ -278,10 +277,9 @@ where
     });
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool.clone())?
         .register_queue::<QueueOne>()
-        .register_worker::<W, A>()
+        .register_worker::<W, A, WorkerState>()
         .exit_when_processed(2);
 
     let attempts_key = uuid::Uuid::new_v4().to_string();
@@ -291,7 +289,7 @@ where
         .enqueue(QueueOne, build_job(attempts_key, observations_key.clone()))
         .await?;
 
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
 
     let observations: Vec<String> = redis_conn.lrange(observations_key, 0, -1).await?;
     let expected_observations = expected_observations

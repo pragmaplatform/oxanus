@@ -3,75 +3,44 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::Config;
+use crate::config::{Config, RuntimeSettings};
 use crate::context::ContextValue;
 use crate::coordinator;
 use crate::error::OxanaError;
 use crate::result_collector::Stats;
+use crate::runtime::Runtime;
+use crate::storage::Storage;
 use crate::storage_internal::StorageInternal;
 use crate::worker_registry::CronJob;
 
-/// Runs the Oxana worker system with the given configuration and context.
-///
-/// This is the main entry point for running Oxana workers. It sets up all necessary
-/// background tasks and starts processing jobs from the configured queues.
-///
-/// # Arguments
-///
-/// * `config` - The worker configuration, including queue and worker registrations
-/// * `ctx` - The context value that will be shared across all worker instances
-///
-/// # Returns
-///
-/// Returns statistics about the worker run, or an [`OxanaError`] if the operation fails.
-///
-/// # Examples
-///
-/// ```rust
-/// use oxana::{Config, Context, Storage, Queue, Worker};
-///
-/// async fn run_worker() -> Result<(), oxana::OxanaError> {
-///     let ctx = Context::value(MyContext {});
-///     let storage = Storage::builder().from_env()?.build()?;
-///
-///     let config = Config::new(&storage)
-///         .register_queue::<MyQueue>()
-///         .register_worker::<MyWorker>()
-///         .with_graceful_shutdown(tokio::signal::ctrl_c());
-///
-///     let stats = oxana::run(config, ctx).await?;
-///     println!("Processed {} jobs", stats.processed);
-///
-///     Ok(())
-/// }
-/// ```
-pub async fn run<DT, ET>(config: Config<DT, ET>, ctx: ContextValue<DT>) -> Result<Stats, OxanaError>
+pub(crate) async fn run<DT>(
+    storage: Storage,
+    config: Config<DT>,
+    settings: RuntimeSettings,
+    ctx: ContextValue<DT>,
+) -> Result<Stats, OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
-    tracing::info!(
-        "Starting worker (namespace: {})",
-        config.storage.namespace()
-    );
+    tracing::info!("Starting worker (namespace: {})", storage.namespace());
 
-    let mut config = config;
-    let shutdown_signal = config.consume_shutdown_signal();
-    let config: Arc<Config<DT, ET>> = Arc::new(config);
+    let runtime = Runtime::new(storage, config, settings);
+    let shutdown_signal = runtime.settings.consume_shutdown_signal();
+    let runtime: Arc<Runtime<DT>> = Arc::new(runtime);
     let mut joinset = JoinSet::new();
     let mut coordinator_joinset = JoinSet::new();
     let stats = Arc::new(Mutex::new(Stats::default()));
 
-    joinset.spawn(ping_loop(Arc::clone(&config)));
-    joinset.spawn(retry_loop(Arc::clone(&config)));
-    joinset.spawn(schedule_loop(Arc::clone(&config)));
-    joinset.spawn(resurrect_loop(Arc::clone(&config)));
-    joinset.spawn(cron_loop(Arc::clone(&config)));
-    joinset.spawn(cleanup_loop(Arc::clone(&config)));
+    joinset.spawn(ping_loop(Arc::clone(&runtime)));
+    joinset.spawn(retry_loop(Arc::clone(&runtime)));
+    joinset.spawn(schedule_loop(Arc::clone(&runtime)));
+    joinset.spawn(resurrect_loop(Arc::clone(&runtime)));
+    joinset.spawn(cron_loop(Arc::clone(&runtime)));
+    joinset.spawn(cleanup_loop(Arc::clone(&runtime)));
 
-    for queue_config in &config.queues {
+    for queue_config in &runtime.queues {
         coordinator_joinset.spawn(coordinator::run(
-            Arc::clone(&config),
+            Arc::clone(&runtime),
             Arc::clone(&stats),
             ctx.clone(),
             queue_config.clone(),
@@ -88,7 +57,7 @@ where
                 tracing::info!("Background task unexpectedly finished");
             }
 
-            config.cancel_token.cancel();
+            runtime.cancel_token.cancel();
         }
         Some(task_result) = coordinator_joinset.join_next() => {
             result = task_result?;
@@ -97,12 +66,12 @@ where
                 tracing::info!("Background task unexpectedly finished");
             }
 
-            config.cancel_token.cancel();
+            runtime.cancel_token.cancel();
         }
-        _ = config.cancel_token.cancelled() => {}
+        _ = runtime.cancel_token.cancelled() => {}
         _ = shutdown_signal => {
             tracing::info!("Received shutdown signal");
-            config.cancel_token.cancel();
+            runtime.cancel_token.cancel();
         }
     }
 
@@ -110,7 +79,7 @@ where
 
     coordinator_joinset.join_all().await;
 
-    config.storage.internal.self_cleanup().await?;
+    runtime.storage.internal.self_cleanup().await?;
 
     let stats = Arc::try_unwrap(stats)
         .expect("Failed to unwrap Arc - there are still references to stats")
@@ -128,15 +97,18 @@ where
     }
 }
 
-async fn retry_loop<DT, ET>(config: Arc<Config<DT, ET>>) -> Result<(), OxanaError>
+async fn retry_loop<DT>(runtime: Arc<Runtime<DT>>) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
-    config
+    runtime
         .storage
         .internal
-        .retry_loop(config.cancel_token.clone())
+        .retry_loop(
+            runtime.cancel_token.clone(),
+            runtime.settings.retry_poll_interval,
+            runtime.settings.redis_failure_tolerance,
+        )
         .await?;
 
     tracing::trace!("Retry loop finished");
@@ -144,15 +116,17 @@ where
     Ok(())
 }
 
-async fn cleanup_loop<DT, ET>(config: Arc<Config<DT, ET>>) -> Result<(), OxanaError>
+async fn cleanup_loop<DT>(runtime: Arc<Runtime<DT>>) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
-    config
+    runtime
         .storage
         .internal
-        .cleanup_loop(config.cancel_token.clone())
+        .cleanup_loop(
+            runtime.cancel_token.clone(),
+            runtime.settings.redis_failure_tolerance,
+        )
         .await?;
 
     tracing::trace!("Cleanup loop finished");
@@ -160,15 +134,18 @@ where
     Ok(())
 }
 
-async fn schedule_loop<DT, ET>(config: Arc<Config<DT, ET>>) -> Result<(), OxanaError>
+async fn schedule_loop<DT>(runtime: Arc<Runtime<DT>>) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
-    config
+    runtime
         .storage
         .internal
-        .schedule_loop(config.cancel_token.clone())
+        .schedule_loop(
+            runtime.cancel_token.clone(),
+            runtime.settings.schedule_poll_interval,
+            runtime.settings.redis_failure_tolerance,
+        )
         .await?;
 
     tracing::trace!("Schedule loop finished");
@@ -176,15 +153,18 @@ where
     Ok(())
 }
 
-async fn ping_loop<DT, ET>(config: Arc<Config<DT, ET>>) -> Result<(), OxanaError>
+async fn ping_loop<DT>(runtime: Arc<Runtime<DT>>) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
-    config
+    runtime
         .storage
         .internal
-        .ping_loop(config.cancel_token.clone())
+        .ping_loop(
+            runtime.cancel_token.clone(),
+            runtime.settings.heartbeat_interval,
+            runtime.settings.redis_failure_tolerance,
+        )
         .await?;
 
     tracing::trace!("Ping loop finished");
@@ -192,15 +172,19 @@ where
     Ok(())
 }
 
-async fn resurrect_loop<DT, ET>(config: Arc<Config<DT, ET>>) -> Result<(), OxanaError>
+async fn resurrect_loop<DT>(runtime: Arc<Runtime<DT>>) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
-    config
+    runtime
         .storage
         .internal
-        .resurrect_loop(config.cancel_token.clone())
+        .resurrect_loop(
+            runtime.cancel_token.clone(),
+            runtime.settings.resurrect_scan_interval,
+            runtime.settings.dead_process_threshold,
+            runtime.settings.redis_failure_tolerance,
+        )
         .await?;
 
     tracing::trace!("Resurrect loop finished");
@@ -208,24 +192,24 @@ where
     Ok(())
 }
 
-async fn cron_loop<DT, ET>(config: Arc<Config<DT, ET>>) -> Result<(), OxanaError>
+async fn cron_loop<DT>(runtime: Arc<Runtime<DT>>) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     let mut set = JoinSet::new();
 
-    for (name, cron_job) in &config.registry.schedules {
+    for (name, cron_job) in &runtime.registry.schedules {
         set.spawn(cron_job_loop(
-            config.storage.internal.clone(),
-            config.cancel_token.clone(),
+            runtime.storage.internal.clone(),
+            runtime.cancel_token.clone(),
+            runtime.settings.clone(),
             name.clone(),
             cron_job.clone(),
         ));
     }
 
     if set.is_empty() {
-        config.cancel_token.cancelled().await;
+        runtime.cancel_token.cancelled().await;
     } else {
         set.join_all().await;
     }
@@ -235,11 +219,12 @@ where
 async fn cron_job_loop(
     storage: StorageInternal,
     cancel_token: CancellationToken,
+    settings: RuntimeSettings,
     job_name: String,
     cron_job: CronJob,
 ) -> Result<(), OxanaError> {
     storage
-        .cron_job_loop(cancel_token, job_name.clone(), cron_job)
+        .cron_job_loop(cancel_token, settings, job_name.clone(), cron_job)
         .await?;
 
     tracing::trace!("Cron job loop finished for {}", job_name);

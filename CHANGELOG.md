@@ -8,6 +8,7 @@ All notable changes to this project will be documented in this file.
 
 - Rename the project and crates from Oxanus to Oxana. Use `oxana`, `oxana-macros`, `oxana-web`, and `#[oxana(...)]` in manifests, imports, derive attributes, examples, and dashboard integrations.
 - Move enqueue-time metadata onto `#[derive(oxana::Job)]`. Job identity, conflict handling, resurrection, throttle cost, on-demand exposure, and worker binding now belong to the job type; custom job hooks now resolve `Self` as the job type.
+- Replace the public `Config` setup path with a single `Storage` API: register workers and queues on `Storage`, run with `storage.run(ctx)`, drain with `storage.drain(ctx, queue)`, and inspect registrations with `storage.catalog()`.
 - Route every worker through the batch-capable execution path. Manual worker implementations now provide `run_batch`, while derive users can keep writing `process` for single-job workers or opt into `process_batch`.
 - Own job values during execution instead of borrowing them, so job payload types no longer need to implement `Sync`.
 - Simplify structured job progress to cursor/total values. `JobProgress` no longer exposes a separate `processed` field, and `update_progress` tuple helpers now use `(cursor, total)` or `(cursor, total, note)`.
@@ -28,6 +29,7 @@ All notable changes to this project will be documented in this file.
 - Add `Storage::set_queue_concurrency`, `Storage::set_queue_state`, `Storage::pause_queue`, `Storage::unpause_queue`, and `Storage::reset_queue_config` for changing queue runtime behavior without restarting workers.
 - Add dashboard controls for pausing queues and changing dynamic queue concurrency from queue detail pages.
 - Add dynamic concurrency examples, including seeded dynamic tenant queues in the web dashboard example.
+- Add runtime tuning setters for worker heartbeats, resurrection/failover thresholds, retry/schedule/cron polling, dequeue/dispatcher backoff, shutdown timeout, and Redis response timeout.
 
 ### Changed
 

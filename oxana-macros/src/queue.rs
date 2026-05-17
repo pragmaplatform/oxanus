@@ -12,6 +12,7 @@ struct OxanaArgs {
     key: Option<String>,
     prefix: Option<String>,
     concurrency: Option<ConcurrencyArg>,
+    discovery_interval_ms: Option<u64>,
     throttle: Option<ThrottleArgs>,
 }
 
@@ -143,6 +144,11 @@ pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
         None => quote!(),
     };
 
+    let discovery_interval = match args.discovery_interval_ms {
+        Some(v) => quote!(.discovery_interval(std::time::Duration::from_millis(#v))),
+        None => quote!(),
+    };
+
     let throttle = match args.throttle {
         Some(ThrottleArgs { window_ms, limit }) => quote! {
             .throttle(oxana::QueueThrottle {
@@ -182,6 +188,7 @@ pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
             fn to_config() -> oxana::QueueConfig {
                 oxana::QueueConfig::#kind(#key)
                     #concurrency
+                    #discovery_interval
                     #throttle
             }
         }

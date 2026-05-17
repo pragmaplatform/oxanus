@@ -3,16 +3,17 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
+use crate::JobId;
 use crate::error::OxanaError;
 use crate::queue::{QueueConfig, QueueThrottle};
+use crate::runtime::Runtime;
 use crate::semaphores_map::QueueControl;
 use crate::storage_internal::StorageInternal;
 use crate::throttler::Throttler;
 use crate::worker_event::WorkerJob;
-use crate::{Config, JobId};
 
-pub async fn run<DT, ET>(
-    config: Arc<Config<DT, ET>>,
+pub async fn run<DT>(
+    config: Arc<Runtime<DT>>,
     queue_config: QueueConfig,
     queue_key: String,
     job_tx: mpsc::Sender<WorkerJob>,
@@ -20,7 +21,6 @@ pub async fn run<DT, ET>(
 ) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     loop {
         let permit = tokio::select! {
@@ -32,8 +32,8 @@ where
         };
 
         tokio::select! {
-            result = pop_queue_message(&config.storage.internal, &queue_config, &queue_key) => {
-                match config.storage.internal.track_redis_result(result)? {
+            result = pop_queue_message(&config.storage.internal, &queue_config, &queue_key, config.settings.dequeue_timeout, config.settings.throttled_queue_fallback_wait) => {
+                match config.storage.internal.track_redis_result(result, config.settings.redis_failure_tolerance)? {
                     Some(Some(job_id)) => {
                         let job = WorkerJob { job_id, permit };
                         job_tx
@@ -46,7 +46,7 @@ where
                     }
                     None => {
                         drop(permit);
-                        sleep(Duration::from_secs(1)).await;
+                        sleep(config.settings.dispatcher_idle_sleep).await;
                     }
                 }
             }
@@ -65,25 +65,38 @@ async fn pop_queue_message(
     storage: &StorageInternal,
     queue_config: &QueueConfig,
     queue_key: &str,
+    dequeue_timeout: std::time::Duration,
+    throttled_queue_fallback_wait: std::time::Duration,
 ) -> Result<Option<JobId>, OxanaError> {
     match &queue_config.throttle {
-        Some(throttle) => pop_queue_message_w_throttle(storage, queue_key, throttle).await,
-        None => pop_queue_message_wo_throttle(storage, queue_key, 1.0).await,
+        Some(throttle) => {
+            pop_queue_message_w_throttle(
+                storage,
+                queue_key,
+                throttle,
+                throttled_queue_fallback_wait,
+            )
+            .await
+        }
+        None => pop_queue_message_wo_throttle(storage, queue_key, dequeue_timeout).await,
     }
 }
 
 async fn pop_queue_message_wo_throttle(
     storage: &StorageInternal,
     queue_key: &str,
-    timeout: f64,
+    timeout: Duration,
 ) -> Result<Option<JobId>, OxanaError> {
-    storage.blocking_dequeue(queue_key, timeout).await
+    storage
+        .blocking_dequeue(queue_key, timeout.as_secs_f64())
+        .await
 }
 
 async fn pop_queue_message_w_throttle(
     storage: &StorageInternal,
     queue_key: &str,
     throttle: &QueueThrottle,
+    fallback_wait: Duration,
 ) -> Result<Option<JobId>, OxanaError> {
     let pool = storage.pool().await?;
     let throttler = Throttler::new(pool, queue_key, throttle.limit, throttle.window_ms);
@@ -101,9 +114,10 @@ async fn pop_queue_message_w_throttle(
         return Ok(Some(job_id));
     }
 
-    sleep(Duration::from_millis(
-        u64::try_from(state.throttled_for.unwrap_or(100)).unwrap_or(100),
-    ))
-    .await;
+    let wait = state
+        .throttled_for
+        .and_then(|millis| u64::try_from(millis).ok())
+        .map_or(fallback_wait, Duration::from_millis);
+    sleep(wait).await;
     Ok(None)
 }

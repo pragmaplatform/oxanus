@@ -119,10 +119,9 @@ pub async fn test_unique_skip() -> TestResult {
     });
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool.clone())?
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerUniqueSkip, WorkerUniqueSkipJob>()
+        .register_worker::<WorkerUniqueSkip, WorkerUniqueSkipJob, WorkerState>()
         .exit_when_processed(2);
     let key1 = random_string();
     let key2 = random_string();
@@ -170,7 +169,7 @@ pub async fn test_unique_skip() -> TestResult {
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 2);
 
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
 
     assert_eq!(storage.dead_count().await?, 0);
     assert_eq!(storage.enqueued_count(QueueOne).await?, 0);
@@ -193,10 +192,9 @@ pub async fn test_unique_replace() -> TestResult {
     });
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool)?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool)?
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerUniqueReplace, WorkerUniqueReplaceJob>()
+        .register_worker::<WorkerUniqueReplace, WorkerUniqueReplaceJob, WorkerState>()
         .exit_when_processed(2);
 
     let key1 = random_string();
@@ -245,7 +243,7 @@ pub async fn test_unique_replace() -> TestResult {
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 2);
 
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
 
     assert_eq!(storage.dead_count().await?, 0);
     assert_eq!(storage.enqueued_count(QueueOne).await?, 0);

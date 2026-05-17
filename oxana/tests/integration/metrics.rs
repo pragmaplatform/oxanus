@@ -165,13 +165,12 @@ async fn test_job_metrics_record_job_counts_execution_counts_and_ttls() -> TestR
     let ctx = oxana::ContextValue::new(());
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool.clone())?
         .register_queue::<MetricsQueueOne>()
         .register_queue::<MetricsQueueTwo>()
-        .register_worker::<MetricSuccessWorker, MetricSuccessJob>()
-        .register_worker::<MetricFailWorker, MetricFailJob>()
-        .register_worker::<MetricPanicWorker, MetricPanicJob>()
+        .register_worker::<MetricSuccessWorker, MetricSuccessJob, ()>()
+        .register_worker::<MetricFailWorker, MetricFailJob, ()>()
+        .register_worker::<MetricPanicWorker, MetricPanicJob, ()>()
         .exit_when_processed(4);
 
     storage
@@ -183,7 +182,7 @@ async fn test_job_metrics_record_job_counts_execution_counts_and_ttls() -> TestR
     storage.enqueue(MetricsQueueOne, MetricFailJob).await?;
     storage.enqueue(MetricsQueueTwo, MetricPanicJob).await?;
 
-    let run_stats = oxana::run(config, ctx).await?;
+    let run_stats = storage.clone().run(ctx).await?;
     assert_eq!(run_stats.processed, 4);
     assert_eq!(run_stats.failed, 2);
     assert_eq!(run_stats.panicked, 1);
@@ -289,10 +288,9 @@ async fn test_batch_metrics_record_one_execution_time_for_the_batch() -> TestRes
     let ctx = oxana::ContextValue::new(());
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool)?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool)?
         .register_queue::<MetricsQueueOne>()
-        .register_worker::<MetricBatchWorker, MetricBatchJob>()
+        .register_worker::<MetricBatchWorker, MetricBatchJob, ()>()
         .exit_when_processed(2);
 
     storage
@@ -302,7 +300,7 @@ async fn test_batch_metrics_record_one_execution_time_for_the_batch() -> TestRes
         .enqueue(MetricsQueueOne, MetricBatchJob { sleep_ms: 250 })
         .await?;
 
-    let run_stats = oxana::run(config, ctx).await?;
+    let run_stats = storage.clone().run(ctx).await?;
     assert_eq!(run_stats.processed, 2);
     assert_eq!(run_stats.succeeded, 2);
 

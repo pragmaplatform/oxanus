@@ -1,52 +1,102 @@
+use std::any::Any;
 use std::collections::HashSet;
 use std::pin::Pin;
-use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use crate::Storage;
-use crate::queue::{Queue, QueueConcurrency, QueueConfig};
+use crate::queue::QueueConfig;
 use crate::storage_types::{
     Catalog, CronWorkerInfo, OnDemandJobInfo, QueueInfo, QueueThrottleInfo, WorkerInfo,
 };
 use crate::worker::{FromContext, Job, Worker};
 use crate::worker_registry::{self, WorkerConfig, WorkerConfigKind, WorkerRegistry};
 
-type RetryDelayOverrideFn<ET> = dyn Fn(&ET, u32, u64) -> Option<u64> + Send + Sync;
+pub(crate) type RetryDelayOverrideFn =
+    dyn Fn(&(dyn std::error::Error + Send + Sync), u32, u64) -> Option<u64> + Send + Sync;
 
-pub struct Config<DT, ET> {
-    pub(crate) registry: WorkerRegistry<DT, ET>,
-    pub(crate) queues: HashSet<QueueConfig>,
+type ShutdownSignal =
+    Pin<Box<dyn Future<Output = Result<(), std::io::Error>> + Send + Sync + 'static>>;
+
+#[derive(Clone)]
+pub(crate) struct RuntimeSettings {
     pub(crate) exit_when_processed: Option<u64>,
-    pub(crate) shutdown_signal:
-        Pin<Box<dyn Future<Output = Result<(), std::io::Error>> + Send + Sync>>,
-    pub(crate) shutdown_timeout: std::time::Duration,
-    pub(crate) cancel_token: CancellationToken,
-    pub(crate) retry_delay_override: Option<Arc<RetryDelayOverrideFn<ET>>>,
-    pub storage: Storage,
+    shutdown_signal: Arc<Mutex<Option<ShutdownSignal>>>,
+    pub(crate) shutdown_timeout: Duration,
+    pub(crate) retry_delay_override: Option<Arc<RetryDelayOverrideFn>>,
+    pub(crate) heartbeat_interval: Duration,
+    pub(crate) dead_process_threshold: Duration,
+    pub(crate) resurrect_scan_interval: Duration,
+    pub(crate) redis_failure_tolerance: u32,
+    pub(crate) retry_poll_interval: Duration,
+    pub(crate) schedule_poll_interval: Duration,
+    pub(crate) cron_initial_offset: Duration,
+    pub(crate) cron_lookahead: Duration,
+    pub(crate) cron_tick_interval: Duration,
+    pub(crate) dequeue_timeout: Duration,
+    pub(crate) dispatcher_idle_sleep: Duration,
+    pub(crate) throttled_queue_fallback_wait: Duration,
 }
 
-impl<DT, ET> Config<DT, ET> {
-    /// Creates a new configuration with default settings.
-    pub fn new(storage: &Storage) -> Self {
+impl RuntimeSettings {
+    pub(crate) fn new() -> Self {
         Self {
-            registry: WorkerRegistry::new(),
-            queues: HashSet::new(),
             exit_when_processed: None,
-            shutdown_signal: Box::pin(default_shutdown_signal()),
-            shutdown_timeout: std::time::Duration::from_secs(180),
-            cancel_token: CancellationToken::new(),
+            shutdown_signal: Arc::new(Mutex::new(Some(Box::pin(default_shutdown_signal())))),
+            shutdown_timeout: Duration::from_secs(180),
             retry_delay_override: None,
-            storage: storage.clone(),
+            heartbeat_interval: Duration::from_millis(500),
+            dead_process_threshold: Duration::from_secs(5),
+            resurrect_scan_interval: Duration::from_secs(2),
+            redis_failure_tolerance: 30,
+            retry_poll_interval: Duration::from_millis(300),
+            schedule_poll_interval: Duration::from_millis(300),
+            cron_initial_offset: Duration::from_secs(3),
+            cron_lookahead: Duration::from_secs(30 * 60),
+            cron_tick_interval: Duration::from_secs(1),
+            dequeue_timeout: Duration::from_secs(10),
+            dispatcher_idle_sleep: Duration::from_secs(1),
+            throttled_queue_fallback_wait: Duration::from_millis(100),
         }
     }
 
-    /// Registers a queue by its type.
-    pub fn register_queue<Q>(mut self) -> Self
-    where
-        Q: Queue,
-    {
-        self.register_queue_with(Q::to_config());
-        self
+    pub(crate) fn replace_shutdown_signal(
+        &mut self,
+        fut: impl Future<Output = Result<(), std::io::Error>> + Send + Sync + 'static,
+    ) {
+        *self
+            .shutdown_signal
+            .lock()
+            .expect("shutdown signal mutex poisoned") = Some(Box::pin(fut));
+    }
+
+    pub(crate) fn consume_shutdown_signal(&self) -> ShutdownSignal {
+        self.shutdown_signal
+            .lock()
+            .expect("shutdown signal mutex poisoned")
+            .take()
+            .unwrap_or_else(no_signal)
+    }
+}
+
+impl Default for RuntimeSettings {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct Config<DT> {
+    pub(crate) registry: WorkerRegistry<DT>,
+    pub(crate) queues: HashSet<QueueConfig>,
+}
+
+impl<DT> Config<DT> {
+    /// Creates a new configuration with default settings.
+    pub fn new() -> Self {
+        Self {
+            registry: WorkerRegistry::new(),
+            queues: HashSet::new(),
+        }
     }
 
     /// Registers a queue from a [`QueueConfig`].
@@ -54,28 +104,16 @@ impl<DT, ET> Config<DT, ET> {
         self.queues.insert(config);
     }
 
-    /// Registers a queue by its type with a custom concurrency limit.
-    pub fn register_queue_with_concurrency<Q>(mut self, concurrency: usize) -> Self
-    where
-        Q: Queue,
-    {
-        let mut config = Q::to_config();
-        config.concurrency = QueueConcurrency::Fixed(concurrency);
-        self.register_queue_with(config);
-        self
-    }
-
     /// Registers a worker and its associated job type.
     pub fn register_worker<W, A>(mut self) -> Self
     where
-        W: Worker<A, Error = ET> + FromContext<DT> + 'static,
+        W: Worker<A> + FromContext<DT> + 'static,
         A: Job + serde::de::DeserializeOwned + Send + 'static,
         DT: Clone + Send + Sync + 'static,
-        ET: std::error::Error + Send + Sync + 'static,
     {
         let name = A::worker_name().to_string();
-        let factory = worker_registry::job_factory::<W, A, DT, ET>;
-        let batch_factory = worker_registry::job_batch_factory::<W, A, DT, ET>;
+        let factory = worker_registry::job_factory::<W, A, DT>;
+        let batch_factory = worker_registry::job_batch_factory::<W, A, DT>;
         let kind = <W as Worker<A>>::to_config();
         let batch_config = W::batch_config();
         let on_demand = A::on_demand_args_template().map(|args_template| {
@@ -109,74 +147,17 @@ impl<DT, ET> Config<DT, ET> {
     }
 
     /// Registers a worker from a [`WorkerConfig`].
-    pub fn register_worker_with(&mut self, config: WorkerConfig<DT, ET>) {
+    pub fn register_worker_with(&mut self, config: WorkerConfig<DT>) {
         self.registry.register_worker_with(config);
     }
 
-    /// Stops processing after the given number of jobs have been processed. Useful for testing.
-    pub fn exit_when_processed(mut self, processed: u64) -> Self {
-        self.exit_when_processed = Some(processed);
-        self
-    }
-
-    /// Sets a future that triggers graceful shutdown when it completes.
-    /// Defaults to listening for SIGTERM/SIGINT on Unix and Ctrl+C on Windows.
-    pub fn with_graceful_shutdown(
-        mut self,
-        fut: impl Future<Output = Result<(), std::io::Error>> + Send + Sync + 'static,
-    ) -> Self {
-        self.shutdown_signal = Box::pin(fut);
-        self
-    }
-
-    /// Sets a global callback to override the retry delay when a job fails.
-    ///
-    /// The callback receives `(error, retry_count, default_delay)` and returns
-    /// `Some(seconds)` to override or `None` to use the worker's default.
-    pub fn with_retry_delay_override(
-        mut self,
-        f: impl Fn(&ET, u32, u64) -> Option<u64> + Send + Sync + 'static,
-    ) -> Self {
-        self.retry_delay_override = Some(Arc::new(f));
-        self
-    }
-
-    pub fn consume_shutdown_signal(
-        &mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<(), std::io::Error>> + Send + Sync + 'static>> {
-        let mut shutdown_signal = no_signal();
-        std::mem::swap(&mut self.shutdown_signal, &mut shutdown_signal);
-        shutdown_signal
-    }
-
-    /// Returns `true` if the given queue type has been registered.
-    pub fn has_registered_queue<Q: Queue>(&self) -> bool {
-        self.queues.contains(&Q::to_config())
-    }
-
-    /// Returns `true` if a worker with the given name has been registered.
-    pub fn has_registered_worker(&self, name: &str) -> bool {
-        self.registry.has_registered(name)
-    }
-
-    /// Returns `true` if a worker of the given type has been registered.
-    pub fn has_registered_worker_type<W: 'static>(&self) -> bool {
-        self.registry.has_registered(std::any::type_name::<W>())
-    }
-
-    /// Returns `true` if a cron worker with the given name has been registered.
-    pub fn has_registered_cron_worker(&self, name: &str) -> bool {
-        self.registry.has_registered_cron(name)
-    }
-
-    /// Returns `true` if a cron worker of the given type has been registered.
-    pub fn has_registered_cron_worker_type<W: 'static>(&self) -> bool {
-        self.registry
-            .has_registered_cron(std::any::type_name::<W>())
-    }
-
     /// Returns a catalog of all registered workers.
+    #[cfg(test)]
     pub fn catalog(&self) -> Catalog {
+        self.catalog_with_queues(&HashSet::new())
+    }
+
+    pub(crate) fn catalog_with_queues(&self, extra_queues: &HashSet<QueueConfig>) -> Catalog {
         let mut cron_workers: Vec<CronWorkerInfo> = self
             .registry
             .schedules
@@ -203,7 +184,7 @@ impl<DT, ET> Config<DT, ET> {
 
         let mut queues: Vec<QueueInfo> = self
             .queues
-            .iter()
+            .union(extra_queues)
             .map(|q| {
                 let (key, dynamic) = match &q.kind {
                     crate::queue::QueueKind::Static { key } => (key.clone(), false),
@@ -241,6 +222,35 @@ impl<DT, ET> Config<DT, ET> {
             queues,
             on_demand_jobs,
         }
+    }
+}
+
+impl<DT> Default for Config<DT> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub(crate) trait RuntimeConfigBox: Send + Sync {
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn catalog(&self, extra_queues: &HashSet<QueueConfig>) -> Catalog;
+}
+
+impl<DT> RuntimeConfigBox for Config<DT>
+where
+    DT: Clone + Send + Sync + 'static,
+{
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn catalog(&self, extra_queues: &HashSet<QueueConfig>) -> Catalog {
+        self.catalog_with_queues(extra_queues)
     }
 }
 
@@ -371,16 +381,9 @@ mod tests {
 
     impl_test_worker!(AlphaWorker, AlphaJob);
 
-    fn test_storage() -> Storage {
-        Storage::builder()
-            .build_from_redis_url("redis://127.0.0.1/0")
-            .expect("test storage pool should build")
-    }
-
     #[test]
     fn catalog_lists_only_on_demand_jobs_sorted() {
-        let storage = test_storage();
-        let config = Config::<(), WorkerError>::new(&storage)
+        let config = Config::<()>::new()
             .register_worker::<PlainWorker, PlainJob>()
             .register_worker::<ZetaWorker, ZetaJob>()
             .register_worker::<AlphaWorker, AlphaJob>();
@@ -403,8 +406,7 @@ mod tests {
 
     #[test]
     fn on_demand_factory_preserves_job_hooks() {
-        let storage = test_storage();
-        let catalog = Config::<(), WorkerError>::new(&storage)
+        let catalog = Config::<()>::new()
             .register_worker::<AlphaWorker, AlphaJob>()
             .catalog();
         let job = catalog

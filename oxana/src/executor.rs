@@ -4,33 +4,33 @@ use std::sync::Arc;
 
 use crate::job_envelope::JobEnvelope;
 use crate::job_state::JobState;
-use crate::worker::BoxedProcessable;
-use crate::{Config, JobContext, OxanaError};
+use crate::runtime::Runtime;
+use crate::worker::{BoxedProcessable, WorkerError};
+use crate::{JobContext, OxanaError};
 
 #[derive(Debug)]
-enum ExecutionResult<ET> {
-    NotPanic(Result<(), ET>),
+enum ExecutionResult {
+    NotPanic(Result<(), WorkerError>),
     Panic(String),
 }
 
-pub(crate) enum ExecutionError<ET> {
-    NotPanic(ET),
+pub(crate) enum ExecutionError {
+    NotPanic,
     Panic(),
 }
 
-pub(crate) struct ExecutionOutcome<ET> {
-    pub(crate) result: Result<(), ExecutionError<ET>>,
+pub(crate) struct ExecutionOutcome {
+    pub(crate) result: Result<(), ExecutionError>,
     pub(crate) duration_ms: u64,
 }
 
-pub async fn run<DT, ET>(
-    config: Arc<Config<DT, ET>>,
-    worker: BoxedProcessable<ET>,
+pub async fn run<DT>(
+    config: Arc<Runtime<DT>>,
+    worker: BoxedProcessable,
     envelope: &mut JobEnvelope,
-) -> Result<ExecutionOutcome<ET>, OxanaError>
+) -> Result<ExecutionOutcome, OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     if !worker.should_resume() {
         envelope.meta.state = None;
@@ -70,14 +70,13 @@ where
     })
 }
 
-pub async fn run_batch<DT, ET>(
-    config: Arc<Config<DT, ET>>,
-    worker: BoxedProcessable<ET>,
+pub async fn run_batch<DT>(
+    config: Arc<Runtime<DT>>,
+    worker: BoxedProcessable,
     envelopes: &mut [JobEnvelope],
-) -> Result<ExecutionOutcome<ET>, OxanaError>
+) -> Result<ExecutionOutcome, OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     if envelopes.is_empty() {
         return Ok(ExecutionOutcome {
@@ -153,28 +152,22 @@ struct JobExecutionPolicy {
     retry_delay: u64,
 }
 
-fn execution_policy<ET>(
-    worker: &BoxedProcessable<ET>,
+fn execution_policy(
+    worker: &BoxedProcessable,
     index: usize,
     envelope: &JobEnvelope,
-) -> JobExecutionPolicy
-where
-    ET: std::error::Error + Send + Sync + 'static,
-{
+) -> JobExecutionPolicy {
     JobExecutionPolicy {
         max_retries: worker.max_retries(index),
         retry_delay: worker.retry_delay(index, envelope.meta.retries),
     }
 }
 
-async fn run_process<ET>(
-    worker: BoxedProcessable<ET>,
+async fn run_process(
+    worker: BoxedProcessable,
     job_contexts: Vec<JobContext>,
     envelope: &JobEnvelope,
-) -> ExecutionResult<ET>
-where
-    ET: std::error::Error + Send + Sync + 'static,
-{
+) -> ExecutionResult {
     match AssertUnwindSafe(process(worker, job_contexts, envelope))
         .catch_unwind()
         .await
@@ -194,15 +187,14 @@ fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-async fn finish_job_result<DT, ET>(
-    config: &Config<DT, ET>,
-    result: ExecutionResult<ET>,
+async fn finish_job_result<DT>(
+    config: &Runtime<DT>,
+    result: ExecutionResult,
     envelope: &JobEnvelope,
     policy: &JobExecutionPolicy,
-) -> Result<(), ExecutionError<ET>>
+) -> Result<(), ExecutionError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     match result {
         ExecutionResult::NotPanic(Ok(())) => {
@@ -212,10 +204,10 @@ where
             Ok(())
         }
         ExecutionResult::NotPanic(Err(e)) => {
-            let retry_delay = retry_delay(config, &e, envelope, policy);
+            let retry_delay = retry_delay(config, e.as_ref(), envelope, policy);
 
             #[cfg(feature = "sentry")]
-            sentry_core::capture_error(&e);
+            sentry_core::capture_error(e.as_ref());
 
             tracing::error!(
                 job_id = envelope.id,
@@ -233,7 +225,7 @@ where
             )
             .await;
 
-            Err(ExecutionError::NotPanic(e))
+            Err(ExecutionError::NotPanic)
         }
         ExecutionResult::Panic(panic_msg) => {
             #[cfg(feature = "sentry")]
@@ -253,15 +245,14 @@ where
     }
 }
 
-async fn finish_batch_result<DT, ET>(
-    config: &Config<DT, ET>,
-    result: ExecutionResult<ET>,
+async fn finish_batch_result<DT>(
+    config: &Runtime<DT>,
+    result: ExecutionResult,
     envelopes: &[JobEnvelope],
     policies: &[JobExecutionPolicy],
-) -> Result<(), ExecutionError<ET>>
+) -> Result<(), ExecutionError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     match result {
         ExecutionResult::NotPanic(Ok(())) => {
@@ -277,7 +268,7 @@ where
         }
         ExecutionResult::NotPanic(Err(e)) => {
             #[cfg(feature = "sentry")]
-            sentry_core::capture_error(&e);
+            sentry_core::capture_error(e.as_ref());
 
             if let Some(envelope) = envelopes.first() {
                 tracing::error!(
@@ -294,13 +285,13 @@ where
                     config,
                     &err_msg,
                     envelope,
-                    retry_delay(config, &e, envelope, policy),
+                    retry_delay(config, e.as_ref(), envelope, policy),
                     policy.max_retries,
                 )
                 .await;
             }
 
-            Err(ExecutionError::NotPanic(e))
+            Err(ExecutionError::NotPanic)
         }
         ExecutionResult::Panic(panic_msg) => {
             #[cfg(feature = "sentry")]
@@ -322,16 +313,14 @@ where
     }
 }
 
-fn retry_delay<DT, ET>(
-    config: &Config<DT, ET>,
-    error: &ET,
+fn retry_delay<DT>(
+    config: &Runtime<DT>,
+    error: &(dyn std::error::Error + Send + Sync),
     envelope: &JobEnvelope,
     policy: &JobExecutionPolicy,
-) -> u64
-where
-    ET: std::error::Error + Send + Sync + 'static,
-{
+) -> u64 {
     config
+        .settings
         .retry_delay_override
         .as_ref()
         .and_then(|f| f(error, envelope.meta.retries, policy.retry_delay))
@@ -347,15 +336,12 @@ where
     latency_ms = envelope.meta.latency_millis(),
     success = false,
 )))]
-async fn process<ET>(
-    worker: BoxedProcessable<ET>,
+async fn process(
+    worker: BoxedProcessable,
     job_contexts: Vec<JobContext>,
     #[cfg_attr(not(feature = "tracing-instrument"), allow(unused_variables))]
     envelope: &JobEnvelope,
-) -> Result<(), ET>
-where
-    ET: std::error::Error + Send + Sync + 'static,
-{
+) -> Result<(), WorkerError> {
     #[cfg(feature = "tracing-instrument")]
     let span = tracing::Span::current();
 
@@ -384,15 +370,14 @@ fn job_contexts(storage: &crate::Storage, envelopes: &[JobEnvelope]) -> Vec<JobC
         .map(|envelope| job_context(storage, envelope))
         .collect()
 }
-async fn handle_err<DT, ET>(
-    config: &Config<DT, ET>,
+async fn handle_err<DT>(
+    config: &Runtime<DT>,
     err_msg: &str,
     envelope: &JobEnvelope,
     retry_delay: u64,
     max_retries: u32,
 ) where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     if envelope.meta.retries < max_retries {
         if let Err(e) = config.storage.internal.finish_with_failure(envelope).await {

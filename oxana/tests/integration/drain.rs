@@ -26,10 +26,10 @@ pub async fn test_drain() -> TestResult {
     let ctx = oxana::ContextValue::new(());
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool)?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool)?
         .register_queue::<QueueDynamic>()
-        .register_worker::<WorkerNoop, WorkerNoopJob>()
+        .register_queue::<QueueStatic>()
+        .register_worker::<WorkerNoop, WorkerNoopJob, ()>()
         .exit_when_processed(2);
 
     storage.enqueue(QueueDynamic(1), WorkerNoopJob {}).await?;
@@ -43,7 +43,7 @@ pub async fn test_drain() -> TestResult {
     assert_eq!(storage.enqueued_count(QueueDynamic(3)).await?, 0);
     assert_eq!(storage.enqueued_count(QueueStatic).await?, 2);
 
-    let stats = oxana::drain(&config, ctx.clone(), QueueDynamic(1)).await?;
+    let stats = storage.drain(ctx.clone(), QueueDynamic(1)).await?;
 
     assert_eq!(storage.jobs_count().await?, 3);
     assert_eq!(stats.processed, 1);
@@ -54,7 +54,7 @@ pub async fn test_drain() -> TestResult {
     assert_eq!(storage.enqueued_count(QueueDynamic(3)).await?, 0);
     assert_eq!(storage.enqueued_count(QueueStatic).await?, 2);
 
-    let stats = oxana::drain(&config, ctx.clone(), QueueDynamic(2)).await?;
+    let stats = storage.drain(ctx.clone(), QueueDynamic(2)).await?;
 
     assert_eq!(storage.jobs_count().await?, 2);
     assert_eq!(stats.processed, 1);
@@ -65,7 +65,7 @@ pub async fn test_drain() -> TestResult {
     assert_eq!(storage.enqueued_count(QueueDynamic(3)).await?, 0);
     assert_eq!(storage.enqueued_count(QueueStatic).await?, 2);
 
-    let stats = oxana::drain(&config, ctx, QueueStatic).await?;
+    let stats = storage.drain(ctx, QueueStatic).await?;
 
     assert_eq!(storage.jobs_count().await?, 0);
     assert_eq!(stats.processed, 2);

@@ -1,7 +1,8 @@
 use crate::config::Config;
+use crate::context::ContextValue;
 use crate::error::OxanaError;
-use crate::{JobContext, JobId, Queue};
-use crate::{context::ContextValue, job_state::JobState};
+use crate::job_state::JobState;
+use crate::{JobContext, JobId, Queue, Storage};
 
 enum ProcessJobResult {
     Success,
@@ -25,6 +26,7 @@ pub struct DrainStats {
 ///
 /// # Arguments
 ///
+/// * `storage` - The job storage to drain from
 /// * `config` - The worker configuration, including queue and worker registrations
 /// * `ctx` - The context value that will be shared across all worker instances
 /// * `queue` - The queue to drain
@@ -32,20 +34,20 @@ pub struct DrainStats {
 /// # Returns
 ///
 /// Returns statistics about the drain operation, or an [`OxanaError`] if the operation fails.
-pub async fn drain<DT, ET>(
-    config: &Config<DT, ET>,
+pub async fn drain<DT>(
+    storage: &Storage,
+    config: &Config<DT>,
     ctx: ContextValue<DT>,
     queue: impl Queue,
 ) -> Result<DrainStats, OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     let queue_key = queue.key();
     let mut stats = DrainStats::default();
 
-    while let Some(job_id) = config.storage.internal.dequeue(&queue_key).await? {
-        let result = process_job(config, ctx.clone(), job_id).await?;
+    while let Some(job_id) = storage.internal.dequeue(&queue_key).await? {
+        let result = process_job(storage, config, ctx.clone(), job_id).await?;
         match result {
             ProcessJobResult::Success => stats.succeeded += 1,
             ProcessJobResult::Failed => stats.failed += 1,
@@ -57,16 +59,16 @@ where
     Ok(stats)
 }
 
-async fn process_job<DT, ET>(
-    config: &Config<DT, ET>,
+async fn process_job<DT>(
+    storage: &Storage,
+    config: &Config<DT>,
     ctx: ContextValue<DT>,
     job_id: JobId,
 ) -> Result<ProcessJobResult, OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
-    let mut envelope = match config.storage.internal.get_job(&job_id).await? {
+    let mut envelope = match storage.internal.get_job(&job_id).await? {
         Some(envelope) => envelope,
         None => return Ok(ProcessJobResult::Missing),
     };
@@ -78,37 +80,25 @@ where
     let should_resume = job.should_resume();
     if !should_resume {
         envelope.meta.state = None;
-        config.storage.internal.update_job(&envelope).await?;
+        storage.internal.update_job(&envelope).await?;
     }
 
     let job_ctx = JobContext {
         meta: envelope.meta.clone(),
-        state: JobState::new(config.storage.clone(), job_id, envelope.meta.state.clone()),
+        state: JobState::new(storage.clone(), job_id, envelope.meta.state.clone()),
     };
 
     let job_result = job.process(vec![job_ctx]).await;
 
     match job_result {
         Ok(()) => {
-            config
-                .storage
-                .internal
-                .finish_with_success(&envelope)
-                .await?;
+            storage.internal.finish_with_success(&envelope).await?;
             Ok(ProcessJobResult::Success)
         }
         Err(e) => {
             tracing::error!("Job failed: {}", e);
-            config
-                .storage
-                .internal
-                .finish_with_failure(&envelope)
-                .await?;
-            config
-                .storage
-                .internal
-                .kill(&envelope, e.to_string())
-                .await?;
+            storage.internal.finish_with_failure(&envelope).await?;
+            storage.internal.kill(&envelope, e.to_string()).await?;
             Ok(ProcessJobResult::Failed)
         }
     }

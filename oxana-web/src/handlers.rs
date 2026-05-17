@@ -1236,14 +1236,12 @@ mod tests {
     }
 
     fn on_demand_catalog() -> oxana::Catalog {
-        let storage = oxana::Storage::builder()
+        oxana::Storage::builder()
             .build_from_redis_url("redis://127.0.0.1/0")
-            .expect("test storage pool should build");
-
-        oxana::Config::<(), WorkerError>::new(&storage)
+            .expect("test storage should build")
             .register_queue::<StaticQueue>()
             .register_queue::<DynamicQueue>()
-            .register_worker::<OnDemandWorker, OnDemandJob>()
+            .register_worker::<OnDemandWorker, OnDemandJob, ()>()
             .catalog()
     }
 

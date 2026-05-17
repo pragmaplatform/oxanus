@@ -70,7 +70,7 @@ pub struct BatchItem<Args> {
 
 #[async_trait::async_trait]
 pub trait Worker<Args: Send + 'static>: Send + Sync {
-    type Error: std::error::Error + Send + Sync;
+    type Error: std::error::Error + Send + Sync + 'static;
 
     async fn run_batch(&self, jobs: Vec<BatchItem<Args>>) -> Result<(), Self::Error>;
 
@@ -139,9 +139,7 @@ pub trait FromContext<T> {
 
 #[async_trait::async_trait]
 pub trait Processable: Send {
-    type Error: std::error::Error + Send + Sync;
-
-    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), Self::Error>;
+    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), WorkerError>;
     fn len(&self) -> usize;
     fn max_retries(&self, index: usize) -> u32;
     fn retry_delay(&self, index: usize, retries: u32) -> u64;
@@ -150,7 +148,8 @@ pub trait Processable: Send {
     }
 }
 
-pub type BoxedProcessable<ET> = Box<dyn Processable<Error = ET>>;
+pub(crate) type WorkerError = Box<dyn std::error::Error + Send + Sync + 'static>;
+pub type BoxedProcessable = Box<dyn Processable>;
 
 pub(crate) struct BoundJob<W, A> {
     pub worker: W,
@@ -168,9 +167,7 @@ where
     W: Worker<A> + Send + Sync + 'static,
     A: Job + Send + 'static,
 {
-    type Error = W::Error;
-
-    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), Self::Error> {
+    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), WorkerError> {
         assert_eq!(contexts.len(), 1, "single job must have one context");
         let ctx = contexts
             .into_iter()
@@ -179,6 +176,7 @@ where
         self.worker
             .run_batch(vec![BatchItem { job: self.job, ctx }])
             .await
+            .map_err(|err| Box::new(err) as WorkerError)
     }
 
     fn len(&self) -> usize {
@@ -206,9 +204,7 @@ where
     W: Worker<A> + Send + Sync + 'static,
     A: Job + Send + 'static,
 {
-    type Error = W::Error;
-
-    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), Self::Error> {
+    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), WorkerError> {
         assert_eq!(
             self.jobs.len(),
             contexts.len(),
@@ -220,7 +216,10 @@ where
             .zip(contexts)
             .map(|(job, ctx)| BatchItem { job, ctx })
             .collect();
-        self.worker.run_batch(items).await
+        self.worker
+            .run_batch(items)
+            .await
+            .map_err(|err| Box::new(err) as WorkerError)
     }
 
     fn len(&self) -> usize {
@@ -255,11 +254,11 @@ mod tests {
 
     #[derive(oxana::Registry)]
     #[allow(dead_code)]
-    struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext, WorkerError>);
+    struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext>);
 
     #[derive(oxana::Registry)]
     #[allow(dead_code)]
-    struct ComponentRegistryFmt(oxana::ComponentRegistry<WorkerContext, std::fmt::Error>);
+    struct ComponentRegistryFmt(oxana::ComponentRegistry<WorkerContext>);
 
     #[tokio::test]
     async fn test_define_worker_with_macro() {

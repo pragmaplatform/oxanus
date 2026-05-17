@@ -41,17 +41,16 @@ pub async fn test_panic() -> TestResult {
     let ctx = oxana::ContextValue::new(());
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool)?;
-    let config = oxana::Config::new(&storage)
+        .build_from_pool(redis_pool)?
         .register_queue::<QueueOne>()
-        .register_worker::<WorkerPanic, WorkerPanicJob>()
+        .register_worker::<WorkerPanic, WorkerPanicJob, ()>()
         .exit_when_processed(1);
 
     storage.enqueue(QueueOne, WorkerPanicJob {}).await?;
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 1);
 
-    let stats = oxana::run(config, ctx).await?;
+    let stats = storage.clone().run(ctx).await?;
 
     assert_eq!(stats.panicked, 1);
     assert_eq!(stats.failed, 1);

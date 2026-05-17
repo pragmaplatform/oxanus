@@ -224,7 +224,7 @@ fn expand_registry(
     struct_ident: &Ident,
     type_args: &TokenStream,
     type_context: &TokenStream,
-    type_error: &TokenStream,
+    _type_error: &TokenStream,
     args: &OxanaArgs,
 ) -> TokenStream {
     let component_registry = match &args.registry {
@@ -241,8 +241,8 @@ fn expand_registry(
                     definition: || {
                         oxana::ComponentDefinition::Worker(oxana::WorkerConfig {
                             name: std::any::type_name::<#struct_ident>().to_owned(),
-                            factory: oxana::job_factory::<#struct_ident, #type_args, #type_context, #type_error>,
-                            batch_factory: oxana::job_batch_factory::<#struct_ident, #type_args, #type_context, #type_error>,
+                            factory: oxana::job_factory::<#struct_ident, #type_args, #type_context>,
+                            batch_factory: oxana::job_batch_factory::<#struct_ident, #type_args, #type_context>,
                             batch_config: <#struct_ident as oxana::Worker<#type_args>>::batch_config(),
                             on_demand: <#type_args as oxana::Job>::on_demand_args_template().map(|args_template| {
                                 oxana::OnDemandJobRegistration {

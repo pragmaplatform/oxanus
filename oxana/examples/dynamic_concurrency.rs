@@ -3,7 +3,7 @@ use std::time::Duration;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[derive(oxana::Registry)]
-struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext, WorkerError>);
+struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext>);
 
 #[derive(Debug, thiserror::Error)]
 enum WorkerError {}
@@ -40,11 +40,12 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         .init();
 
     let ctx = oxana::ContextValue::new(WorkerContext {});
-    let storage = oxana::Storage::builder().build_from_env()?;
+    let storage = oxana::Storage::builder()
+        .build_from_env()?
+        .register::<ComponentRegistry>()
+        .exit_when_processed(30);
 
     storage.reset_queue_config(DynamicConcurrencyQueue).await?;
-
-    let config = ComponentRegistry::build_config(&storage).exit_when_processed(30);
 
     for id in 1..=30 {
         storage
@@ -72,7 +73,7 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         })
     });
 
-    let run_result = oxana::run(config, ctx).await;
+    let run_result = storage.run(ctx).await;
     let update_result = update_thread.join().map_err(|_| {
         oxana::OxanaError::GenericError("concurrency update thread panicked".into())
     })?;

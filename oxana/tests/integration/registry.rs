@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use testresult::TestResult;
 
 #[derive(oxana::Registry)]
-struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext, WorkerError>);
+struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext>);
 
 #[derive(Serialize, oxana::Queue)]
 #[oxana(key = "two")]
@@ -70,13 +70,26 @@ pub async fn test_registry() -> TestResult {
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
 
-    let config = ComponentRegistry::build_config(&storage).exit_when_processed(2);
+    let storage = storage
+        .register::<ComponentRegistry>()
+        .exit_when_processed(2);
 
     // no need to manually register, here we verify they were registered
-    assert!(config.has_registered_queue::<QueueTwo>());
-    assert!(config.has_registered_worker_type::<WorkerCounter>());
-    assert!(config.has_registered_cron_worker_type::<CronWorkerCounter>());
-    assert!(config.catalog().on_demand_jobs.iter().any(|job| {
+    let catalog = storage.catalog();
+    assert!(catalog.queues.iter().any(|queue| queue.key == "two"));
+    assert!(
+        catalog
+            .workers
+            .iter()
+            .any(|worker| worker.name == std::any::type_name::<WorkerCounter>())
+    );
+    assert!(
+        catalog
+            .cron_workers
+            .iter()
+            .any(|worker| worker.name == std::any::type_name::<CronWorkerCounter>())
+    );
+    assert!(catalog.on_demand_jobs.iter().any(|job| {
         job.name == std::any::type_name::<WorkerCounter>()
             && job.args_template == serde_json::json!({ "key": "" })
     }));
@@ -90,7 +103,7 @@ pub async fn test_registry() -> TestResult {
         )
         .await?;
 
-    oxana::run(config, ctx).await?;
+    storage.clone().run(ctx).await?;
 
     let mut redis_conn = redis_pool.get().await?;
     let value: Option<i64> = redis_conn.get("test_worker:counter").await?;

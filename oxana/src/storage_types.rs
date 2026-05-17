@@ -13,7 +13,7 @@ pub struct QueueListOpts {
 }
 
 /// Catalog of all registered workers and queues.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Catalog {
     /// Regular (non-cron) workers.
     pub workers: Vec<WorkerInfo>,

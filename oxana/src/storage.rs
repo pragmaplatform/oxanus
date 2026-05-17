@@ -1,6 +1,12 @@
 use chrono::{DateTime, Utc};
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::{
+    config::{Config, RetryDelayOverrideFn, RuntimeConfigBox, RuntimeSettings},
+    context::ContextValue,
+    drainer::{self, DrainStats},
     error::OxanaError,
     job_envelope::{JobEnvelope, JobId},
     metrics::{
@@ -8,12 +14,17 @@ use crate::{
         QueueLengthMetricsSnapshot,
     },
     queue::{Queue, QueueConcurrency, QueueKind, QueueRuntimeConfig, QueueState},
+    result_collector::Stats as RunStats,
     stats::{Process, QueueStats, Stats},
     storage_builder::StorageBuilder,
     storage_internal::StorageInternal,
+    storage_types::Catalog,
     storage_types::QueueListOpts,
-    worker::Job,
+    worker::{FromContext, Job, Worker},
 };
+
+#[cfg(feature = "registry")]
+use crate::registry::RegisterComponents;
 
 #[cfg(feature = "prometheus")]
 use crate::prometheus::PrometheusMetrics;
@@ -29,7 +40,7 @@ use crate::prometheus::PrometheusMetrics;
 /// use oxana::{Storage, Queue, Job};
 ///
 /// async fn example() -> Result<(), oxana::OxanaError> {
-///     let storage = Storage::builder().from_env()?.build()?;
+///     let storage = Storage::builder().build_from_env()?;
 ///
 ///     // Enqueue a job
 ///     storage.enqueue(MyQueue, MyJob { data: "hello" }).await?;
@@ -43,9 +54,21 @@ use crate::prometheus::PrometheusMetrics;
 #[derive(Clone)]
 pub struct Storage {
     pub(crate) internal: StorageInternal,
+    pub(crate) runtime_config: Arc<Mutex<Option<Box<dyn RuntimeConfigBox>>>>,
+    pub(crate) runtime_queues: Arc<Mutex<HashSet<crate::QueueConfig>>>,
+    pub(crate) runtime_settings: Arc<Mutex<RuntimeSettings>>,
 }
 
 impl Storage {
+    pub(crate) fn new(internal: StorageInternal) -> Self {
+        Self {
+            internal,
+            runtime_config: Arc::new(Mutex::new(None)),
+            runtime_queues: Arc::new(Mutex::new(HashSet::new())),
+            runtime_settings: Arc::new(Mutex::new(RuntimeSettings::new())),
+        }
+    }
+
     /// Creates a new [`StorageBuilder`] for configuring and building a Storage instance.
     ///
     /// # Examples
@@ -54,10 +77,313 @@ impl Storage {
     /// use oxana::Storage;
     ///
     /// let builder = Storage::builder();
-    /// let storage = builder.from_env()?.build()?;
+    /// let storage = builder.build_from_env()?;
     /// ```
     pub fn builder() -> StorageBuilder {
         StorageBuilder::new()
+    }
+
+    fn with_config_mut<DT>(&self, f: impl FnOnce(&mut Config<DT>))
+    where
+        DT: Clone + Send + Sync + 'static,
+    {
+        let mut slot = self
+            .runtime_config
+            .lock()
+            .expect("runtime config mutex poisoned");
+
+        if slot.is_none() {
+            *slot = Some(Box::new(Config::<DT>::new()));
+        }
+
+        let config = slot
+            .as_deref_mut()
+            .expect("runtime config exists")
+            .as_any_mut()
+            .downcast_mut::<Config<DT>>()
+            .expect("storage runtime context type mismatch");
+
+        f(config);
+    }
+
+    fn config_for_run<DT>(&self) -> Config<DT>
+    where
+        DT: Clone + Send + Sync + 'static,
+    {
+        let mut config = {
+            let slot = self
+                .runtime_config
+                .lock()
+                .expect("runtime config mutex poisoned");
+
+            match slot.as_deref() {
+                Some(config) => config
+                    .as_any()
+                    .downcast_ref::<Config<DT>>()
+                    .expect("storage runtime context type mismatch")
+                    .clone(),
+                None => Config::new(),
+            }
+        };
+
+        config.queues.extend(
+            self.runtime_queues
+                .lock()
+                .expect("runtime queues mutex poisoned")
+                .iter()
+                .cloned(),
+        );
+
+        config
+    }
+
+    fn settings(&self) -> RuntimeSettings {
+        self.runtime_settings
+            .lock()
+            .expect("runtime settings mutex poisoned")
+            .clone()
+    }
+
+    fn update_settings(&self, f: impl FnOnce(&mut RuntimeSettings)) {
+        f(&mut self
+            .runtime_settings
+            .lock()
+            .expect("runtime settings mutex poisoned"));
+    }
+
+    /// Registers all components from a derived component registry.
+    #[cfg(feature = "registry")]
+    pub fn register<R>(self) -> Self
+    where
+        R: RegisterComponents,
+    {
+        R::register_components(self)
+    }
+
+    /// Registers a queue from a [`crate::QueueConfig`].
+    pub fn register_queue_with(self, config: crate::QueueConfig) -> Self {
+        self.runtime_queues
+            .lock()
+            .expect("runtime queues mutex poisoned")
+            .insert(config);
+        self
+    }
+
+    /// Registers a queue by its type.
+    pub fn register_queue<Q>(self) -> Self
+    where
+        Q: Queue,
+    {
+        self.register_queue_with(Q::to_config())
+    }
+
+    /// Registers a queue by its type with a custom concurrency limit.
+    pub fn register_queue_with_concurrency<Q>(self, concurrency: usize) -> Self
+    where
+        Q: Queue,
+    {
+        let mut config = Q::to_config();
+        config.concurrency = QueueConcurrency::Fixed(concurrency);
+        self.register_queue_with(config)
+    }
+
+    /// Registers a worker and its associated job type.
+    pub fn register_worker<W, A, DT>(self) -> Self
+    where
+        W: Worker<A> + FromContext<DT> + 'static,
+        A: Job + serde::de::DeserializeOwned + Send + 'static,
+        DT: Clone + Send + Sync + 'static,
+    {
+        self.with_config_mut::<DT>(|config| {
+            let updated = std::mem::take(config).register_worker::<W, A>();
+            *config = updated;
+        });
+        self
+    }
+
+    /// Registers a worker from a [`crate::WorkerConfig`].
+    pub fn register_worker_with<DT>(self, worker: crate::WorkerConfig<DT>) -> Self
+    where
+        DT: Clone + Send + Sync + 'static,
+    {
+        self.with_config_mut::<DT>(|config| config.register_worker_with(worker));
+        self
+    }
+
+    /// Stops processing after the given number of jobs have been processed. Useful for testing.
+    pub fn exit_when_processed(self, processed: u64) -> Self {
+        self.update_settings(|settings| settings.exit_when_processed = Some(processed));
+        self
+    }
+
+    /// Sets a future that triggers graceful shutdown when it completes.
+    pub fn with_graceful_shutdown(
+        self,
+        fut: impl Future<Output = Result<(), std::io::Error>> + Send + Sync + 'static,
+    ) -> Self {
+        self.update_settings(|settings| settings.replace_shutdown_signal(fut));
+        self
+    }
+
+    /// Sets the maximum time to wait for in-flight workers during shutdown.
+    ///
+    /// Defaults to 180 seconds.
+    pub fn shutdown_timeout(self, timeout: Duration) -> Self {
+        self.update_settings(|settings| settings.shutdown_timeout = timeout);
+        self
+    }
+
+    /// Sets a global callback to override the retry delay when a job fails.
+    pub fn with_retry_delay_override(
+        self,
+        f: impl Fn(&(dyn std::error::Error + Send + Sync), u32, u64) -> Option<u64>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.update_settings(|settings| {
+            settings.retry_delay_override = Some(Arc::new(f) as Arc<RetryDelayOverrideFn>);
+        });
+        self
+    }
+
+    /// Sets how often this process refreshes its worker heartbeat in Redis.
+    ///
+    /// Defaults to 500 milliseconds. Shorter intervals improve failover detection
+    /// latency at the cost of more Redis writes.
+    pub fn heartbeat_interval(self, interval: Duration) -> Self {
+        self.update_settings(|settings| settings.heartbeat_interval = interval);
+        self
+    }
+
+    /// Sets how old a process heartbeat may be before the process is treated as dead.
+    ///
+    /// Defaults to 5 seconds. This threshold is used by process listings, stats, and
+    /// resurrection logic.
+    pub fn dead_process_threshold(self, threshold: Duration) -> Self {
+        self.update_settings(|settings| settings.dead_process_threshold = threshold);
+        self
+    }
+
+    /// Sets how often the runtime scans for jobs owned by dead processes.
+    ///
+    /// Defaults to 2 seconds.
+    pub fn resurrect_scan_interval(self, interval: Duration) -> Self {
+        self.update_settings(|settings| settings.resurrect_scan_interval = interval);
+        self
+    }
+
+    /// Sets how many consecutive Redis failures runtime loops tolerate before failing.
+    ///
+    /// Defaults to 30.
+    pub fn redis_failure_tolerance(self, tolerance: u32) -> Self {
+        self.update_settings(|settings| settings.redis_failure_tolerance = tolerance);
+        self
+    }
+
+    /// Sets how often failed jobs are checked for retry eligibility.
+    ///
+    /// Defaults to 300 milliseconds.
+    pub fn retry_poll_interval(self, interval: Duration) -> Self {
+        self.update_settings(|settings| settings.retry_poll_interval = interval);
+        self
+    }
+
+    /// Sets how often scheduled jobs are checked for promotion into queues.
+    ///
+    /// Defaults to 300 milliseconds.
+    pub fn schedule_poll_interval(self, interval: Duration) -> Self {
+        self.update_settings(|settings| settings.schedule_poll_interval = interval);
+        self
+    }
+
+    /// Sets the delay before cron scheduling starts after the runtime launches.
+    ///
+    /// Defaults to 3 seconds.
+    pub fn cron_initial_offset(self, offset: Duration) -> Self {
+        self.update_settings(|settings| settings.cron_initial_offset = offset);
+        self
+    }
+
+    /// Sets how far ahead cron jobs are scheduled.
+    ///
+    /// Defaults to 30 minutes.
+    pub fn cron_lookahead(self, lookahead: Duration) -> Self {
+        self.update_settings(|settings| settings.cron_lookahead = lookahead);
+        self
+    }
+
+    /// Sets the cron scheduler sleep and retry cadence.
+    ///
+    /// Defaults to 1 second.
+    pub fn cron_tick_interval(self, interval: Duration) -> Self {
+        self.update_settings(|settings| settings.cron_tick_interval = interval);
+        self
+    }
+
+    /// Sets the Redis blocking dequeue timeout for non-throttled queues.
+    ///
+    /// Defaults to 10 seconds.
+    pub fn dequeue_timeout(self, timeout: Duration) -> Self {
+        self.update_settings(|settings| settings.dequeue_timeout = timeout);
+        self
+    }
+
+    /// Sets how long a dispatcher sleeps after transient idle or Redis-failure states.
+    ///
+    /// Defaults to 1 second.
+    pub fn dispatcher_idle_sleep(self, sleep: Duration) -> Self {
+        self.update_settings(|settings| settings.dispatcher_idle_sleep = sleep);
+        self
+    }
+
+    /// Sets how long a dispatcher waits before retrying when throttled queues cannot dequeue.
+    ///
+    /// Defaults to 100 milliseconds.
+    pub fn throttled_queue_fallback_wait(self, wait: Duration) -> Self {
+        self.update_settings(|settings| settings.throttled_queue_fallback_wait = wait);
+        self
+    }
+
+    /// Returns a catalog of all registered workers and queues.
+    pub fn catalog(&self) -> Catalog {
+        let extra_queues = self
+            .runtime_queues
+            .lock()
+            .expect("runtime queues mutex poisoned")
+            .clone();
+        self.runtime_config
+            .lock()
+            .expect("runtime config mutex poisoned")
+            .as_deref()
+            .map_or_else(Catalog::default, |config| config.catalog(&extra_queues))
+    }
+
+    /// Runs the Oxana worker system with this storage's registered runtime setup.
+    pub async fn run<DT>(self, ctx: ContextValue<DT>) -> Result<RunStats, OxanaError>
+    where
+        DT: Send + Sync + Clone + 'static,
+    {
+        crate::launcher::run(
+            self.clone(),
+            self.config_for_run::<DT>(),
+            self.settings(),
+            ctx,
+        )
+        .await
+    }
+
+    /// Drains a queue of jobs using this storage's registered runtime setup.
+    pub async fn drain<DT>(
+        &self,
+        ctx: ContextValue<DT>,
+        queue: impl Queue,
+    ) -> Result<DrainStats, OxanaError>
+    where
+        DT: Send + Sync + Clone + 'static,
+    {
+        let config = self.config_for_run::<DT>();
+        drainer::drain(self, &config, ctx, queue).await
     }
 
     /// Enqueues a job to be processed immediately.
@@ -283,7 +609,9 @@ impl Storage {
     ///
     /// The full stats, or an [`OxanaError`] if the operation fails.
     pub async fn stats(&self) -> Result<Stats, OxanaError> {
-        self.internal.stats().await
+        self.internal
+            .stats(self.settings().dead_process_threshold)
+            .await
     }
 
     /// Returns Sidekiq-style job execution metrics for all workers.
@@ -447,7 +775,9 @@ impl Storage {
     ///
     /// The list of processes, or an [`OxanaError`] if the operation fails.
     pub async fn processes(&self) -> Result<Vec<Process>, OxanaError> {
-        self.internal.processes().await
+        self.internal
+            .processes(self.settings().dead_process_threshold)
+            .await
     }
 
     /// Returns the namespace this storage instance is using.
@@ -606,5 +936,78 @@ fn validate_dynamic_concurrency(
         Err(OxanaError::ConfigError(format!(
             "Queue {queue_key} has fixed concurrency and cannot be overridden"
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_storage() -> Storage {
+        Storage::builder()
+            .build_from_redis_url("redis://127.0.0.1/0")
+            .expect("test storage should build")
+    }
+
+    #[test]
+    fn runtime_settings_defaults_match_existing_behavior() {
+        let settings = test_storage().settings();
+
+        assert_eq!(settings.heartbeat_interval, Duration::from_millis(500));
+        assert_eq!(settings.dead_process_threshold, Duration::from_secs(5));
+        assert_eq!(settings.resurrect_scan_interval, Duration::from_secs(2));
+        assert_eq!(settings.redis_failure_tolerance, 30);
+        assert_eq!(settings.retry_poll_interval, Duration::from_millis(300));
+        assert_eq!(settings.schedule_poll_interval, Duration::from_millis(300));
+        assert_eq!(settings.cron_initial_offset, Duration::from_secs(3));
+        assert_eq!(settings.cron_lookahead, Duration::from_secs(30 * 60));
+        assert_eq!(settings.cron_tick_interval, Duration::from_secs(1));
+        assert_eq!(settings.dequeue_timeout, Duration::from_secs(10));
+        assert_eq!(settings.dispatcher_idle_sleep, Duration::from_secs(1));
+        assert_eq!(
+            settings.throttled_queue_fallback_wait,
+            Duration::from_millis(100)
+        );
+        assert_eq!(settings.shutdown_timeout, Duration::from_secs(180));
+        assert_eq!(settings.exit_when_processed, None);
+    }
+
+    #[test]
+    fn runtime_setting_setters_override_defaults() {
+        let storage = test_storage()
+            .heartbeat_interval(Duration::from_millis(11))
+            .dead_process_threshold(Duration::from_millis(12))
+            .resurrect_scan_interval(Duration::from_millis(13))
+            .redis_failure_tolerance(14)
+            .retry_poll_interval(Duration::from_millis(15))
+            .schedule_poll_interval(Duration::from_millis(16))
+            .cron_initial_offset(Duration::from_millis(17))
+            .cron_lookahead(Duration::from_millis(18))
+            .cron_tick_interval(Duration::from_millis(19))
+            .dequeue_timeout(Duration::from_millis(20))
+            .dispatcher_idle_sleep(Duration::from_millis(21))
+            .throttled_queue_fallback_wait(Duration::from_millis(22))
+            .shutdown_timeout(Duration::from_millis(23))
+            .exit_when_processed(24);
+
+        let settings = storage.settings();
+
+        assert_eq!(settings.heartbeat_interval, Duration::from_millis(11));
+        assert_eq!(settings.dead_process_threshold, Duration::from_millis(12));
+        assert_eq!(settings.resurrect_scan_interval, Duration::from_millis(13));
+        assert_eq!(settings.redis_failure_tolerance, 14);
+        assert_eq!(settings.retry_poll_interval, Duration::from_millis(15));
+        assert_eq!(settings.schedule_poll_interval, Duration::from_millis(16));
+        assert_eq!(settings.cron_initial_offset, Duration::from_millis(17));
+        assert_eq!(settings.cron_lookahead, Duration::from_millis(18));
+        assert_eq!(settings.cron_tick_interval, Duration::from_millis(19));
+        assert_eq!(settings.dequeue_timeout, Duration::from_millis(20));
+        assert_eq!(settings.dispatcher_idle_sleep, Duration::from_millis(21));
+        assert_eq!(
+            settings.throttled_queue_fallback_wait,
+            Duration::from_millis(22)
+        );
+        assert_eq!(settings.shutdown_timeout, Duration::from_millis(23));
+        assert_eq!(settings.exit_when_processed, Some(24));
     }
 }

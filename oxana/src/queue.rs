@@ -46,7 +46,7 @@ impl QueueConfig {
         Self {
             kind: QueueKind::Dynamic {
                 prefix: prefix.into(),
-                sleep_period: Duration::from_millis(500),
+                discovery_interval: Duration::from_millis(500),
             },
             concurrency: QueueConcurrency::Fixed(1),
             throttle: None,
@@ -79,6 +79,16 @@ impl QueueConfig {
 
     pub fn throttle(mut self, throttle: QueueThrottle) -> Self {
         self.throttle = Some(throttle);
+        self
+    }
+
+    pub fn discovery_interval(mut self, interval: Duration) -> Self {
+        if let QueueKind::Dynamic {
+            discovery_interval, ..
+        } = &mut self.kind
+        {
+            *discovery_interval = interval;
+        }
         self
     }
 
@@ -145,7 +155,7 @@ pub enum QueueKind {
     },
     Dynamic {
         prefix: String,
-        sleep_period: Duration,
+        discovery_interval: Duration,
     },
 }
 
@@ -299,7 +309,7 @@ mod tests {
 
         #[derive(oxana::Registry)]
         #[allow(dead_code)]
-        struct ComponentRegistry(oxana::ComponentRegistry<(), ()>);
+        struct ComponentRegistry(oxana::ComponentRegistry<()>);
 
         #[derive(Serialize, oxana::Queue)]
         struct DefaultQueue;
@@ -383,7 +393,7 @@ mod tests {
         );
 
         #[derive(Serialize, oxana::Queue)]
-        #[oxana(prefix = "dyn_queue", concurrency = 2)]
+        #[oxana(prefix = "dyn_queue", concurrency = 2, discovery_interval_ms = 250)]
         struct DynQueue {
             i: i32,
         }
@@ -393,6 +403,13 @@ mod tests {
             DynQueue::to_config().concurrency,
             QueueConcurrency::Fixed(2)
         );
+        let QueueKind::Dynamic {
+            discovery_interval, ..
+        } = DynQueue::to_config().kind
+        else {
+            panic!("expected dynamic queue");
+        };
+        assert_eq!(discovery_interval, Duration::from_millis(250));
 
         #[derive(Serialize, oxana::Queue)]
         #[oxana(key = "runtime_queue", concurrency = Dynamic(4))]

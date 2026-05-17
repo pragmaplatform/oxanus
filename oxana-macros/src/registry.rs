@@ -1,7 +1,7 @@
 use proc_macro_error2::abort;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, PathArguments, Type};
+use syn::{Data, DeriveInput, Fields, GenericArgument, PathArguments, Type};
 
 pub fn expand_derive_registry(input: DeriveInput) -> TokenStream {
     if !cfg!(feature = "registry") {
@@ -24,13 +24,13 @@ pub fn expand_derive_registry(input: DeriveInput) -> TokenStream {
         _ => abort!(input.ident, "Expected a struct with inner type",),
     };
 
-    let generics = match type_path.path.segments.last() {
+    let context_ty = match type_path.path.segments.last() {
         Some(segment) => match &segment.arguments {
-            PathArguments::AngleBracketed(args) => args,
-            _ => abort!(
-                inner_type,
-                "Expected generic arguments <WorkerContext, WorkerError>",
-            ),
+            PathArguments::AngleBracketed(args) => match args.args.first() {
+                Some(GenericArgument::Type(context_ty)) => context_ty,
+                _ => abort!(inner_type, "Expected generic argument <WorkerContext>",),
+            },
+            _ => abort!(inner_type, "Expected generic argument <WorkerContext>",),
         },
         _ => abort!(input.ident, "Expected a struct with inner type",),
     };
@@ -40,10 +40,12 @@ pub fn expand_derive_registry(input: DeriveInput) -> TokenStream {
     quote! {
         oxana::create_component_registry!(#struct_ident);
 
-        impl #struct_ident {
-            pub fn build_config(storage: &oxana::Storage) -> oxana::Config::#generics {
-                oxana::ComponentRegistry::#generics::build_config(
-                    &storage,
+        impl oxana::RegisterComponents for #struct_ident {
+            type Context = #context_ty;
+
+            fn register_components(storage: oxana::Storage) -> oxana::Storage {
+                oxana::ComponentRegistry::<#context_ty>::register_components(
+                    storage,
                     oxana::iterate_components::<#struct_ident>().map(|x| &x.0),
                 )
             }

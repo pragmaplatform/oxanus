@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 #[derive(oxana::Registry)]
-struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext, WorkerError>);
+struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext>);
 
 #[derive(Debug, thiserror::Error)]
 enum WorkerError {
@@ -208,15 +208,17 @@ struct TenantQueue {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = oxana::Storage::builder().build_from_env()?;
-    let config =
-        ComponentRegistry::build_config(&storage).with_graceful_shutdown(tokio::signal::ctrl_c());
-    let catalog = config.catalog();
+    let storage = storage
+        .register::<ComponentRegistry>()
+        .with_graceful_shutdown(tokio::signal::ctrl_c());
+    let catalog = storage.catalog();
     let worker_ctx = oxana::ContextValue::new(WorkerContext {});
 
     seed_sample_jobs(&storage).await?;
 
+    let worker_storage = storage.clone();
     let mut worker = tokio::spawn(async move {
-        if let Err(err) = oxana::run(config, worker_ctx).await {
+        if let Err(err) = worker_storage.run(worker_ctx).await {
             eprintln!("Oxana worker exited with error: {err}");
         }
     });

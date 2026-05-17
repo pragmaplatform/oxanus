@@ -88,6 +88,7 @@ mod launcher;
 mod metrics;
 mod queue;
 mod result_collector;
+mod runtime;
 mod semaphores_map;
 mod stats;
 mod storage;
@@ -109,13 +110,10 @@ pub mod prometheus;
 #[cfg(test)]
 mod test_helper;
 
-pub use crate::config::Config;
 pub use crate::context::{ContextValue, JobContext};
-pub use crate::drainer::drain;
 pub use crate::error::OxanaError;
 pub use crate::job_envelope::{JobConflictStrategy, JobData, JobEnvelope, JobId, JobMeta};
 pub use crate::job_state::{JobProgress, JobProgressIterator, JobState};
-pub use crate::launcher::run;
 pub use crate::metrics::*;
 pub use crate::queue::{
     Queue, QueueConcurrency, QueueConfig, QueueKind, QueueRuntimeConfig, QueueState, QueueThrottle,

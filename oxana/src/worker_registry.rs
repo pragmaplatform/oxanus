@@ -6,10 +6,8 @@ use crate::error::OxanaError;
 use crate::job_envelope::JobEnvelope;
 use crate::worker::{BoundBatchJob, BoundJob, BoxedProcessable, FromContext, Job, Worker};
 
-pub type JobFactory<DT, ET> =
-    fn(serde_json::Value, &DT) -> Result<BoxedProcessable<ET>, OxanaError>;
-pub type JobBatchFactory<DT, ET> =
-    fn(Vec<serde_json::Value>, &DT) -> Result<BatchBuild<ET>, OxanaError>;
+pub type JobFactory<DT> = fn(serde_json::Value, &DT) -> Result<BoxedProcessable, OxanaError>;
+pub type JobBatchFactory<DT> = fn(Vec<serde_json::Value>, &DT) -> Result<BatchBuild, OxanaError>;
 pub type JobEnvelopeFactory = fn(String, serde_json::Value) -> Result<JobEnvelope, OxanaError>;
 
 #[derive(Clone)]
@@ -18,8 +16,8 @@ pub struct OnDemandJobRegistration {
     pub enqueue_factory: JobEnvelopeFactory,
 }
 
-pub struct BatchBuild<ET> {
-    pub job: Option<BoxedProcessable<ET>>,
+pub struct BatchBuild {
+    pub job: Option<BoxedProcessable>,
     pub invalid: Vec<InvalidBatchJob>,
 }
 
@@ -28,16 +26,17 @@ pub struct InvalidBatchJob {
     pub error: String,
 }
 
-pub struct WorkerRegistry<DT, ET> {
-    jobs: HashMap<String, WorkerFactories<DT, ET>>,
+#[derive(Clone)]
+pub struct WorkerRegistry<DT> {
+    jobs: HashMap<String, WorkerFactories<DT>>,
     pub schedules: HashMap<String, CronJob>,
     pub on_demand_jobs: HashMap<String, OnDemandJobRegistration>,
 }
 
-pub struct WorkerConfig<DT, ET> {
+pub struct WorkerConfig<DT> {
     pub name: String,
-    pub factory: JobFactory<DT, ET>,
-    pub batch_factory: JobBatchFactory<DT, ET>,
+    pub factory: JobFactory<DT>,
+    pub batch_factory: JobBatchFactory<DT>,
     pub batch_config: Option<WorkerBatchConfig>,
     pub on_demand: Option<OnDemandJobRegistration>,
     pub kind: WorkerConfigKind,
@@ -59,30 +58,28 @@ pub struct CronJob {
     pub resurrect: bool,
 }
 
-pub fn job_factory<W, A, DT, ET>(
+pub fn job_factory<W, A, DT>(
     value: serde_json::Value,
     ctx: &DT,
-) -> Result<BoxedProcessable<ET>, OxanaError>
+) -> Result<BoxedProcessable, OxanaError>
 where
-    W: Worker<A, Error = ET> + FromContext<DT> + 'static,
+    W: Worker<A> + FromContext<DT> + 'static,
     A: Job + serde::de::DeserializeOwned + Send + 'static,
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     let job: A = serde_json::from_value(value)?;
     let worker = W::from_context(ctx);
     Ok(Box::new(BoundJob { worker, job }))
 }
 
-pub fn job_batch_factory<W, A, DT, ET>(
+pub fn job_batch_factory<W, A, DT>(
     values: Vec<serde_json::Value>,
     ctx: &DT,
-) -> Result<BatchBuild<ET>, OxanaError>
+) -> Result<BatchBuild, OxanaError>
 where
-    W: Worker<A, Error = ET> + FromContext<DT> + 'static,
+    W: Worker<A> + FromContext<DT> + 'static,
     A: Job + serde::de::DeserializeOwned + Send + 'static,
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     let mut jobs = Vec::with_capacity(values.len());
     let mut invalid = Vec::new();
@@ -119,13 +116,14 @@ where
     JobEnvelope::new(queue, job)
 }
 
-struct WorkerFactories<DT, ET> {
-    factory: JobFactory<DT, ET>,
-    batch_factory: JobBatchFactory<DT, ET>,
+#[derive(Clone)]
+struct WorkerFactories<DT> {
+    factory: JobFactory<DT>,
+    batch_factory: JobBatchFactory<DT>,
     batch_config: Option<WorkerBatchConfig>,
 }
 
-impl<DT, ET> WorkerRegistry<DT, ET> {
+impl<DT> WorkerRegistry<DT> {
     pub fn new() -> Self {
         Self {
             jobs: HashMap::new(),
@@ -134,7 +132,7 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
         }
     }
 
-    pub fn register_worker_with(&mut self, config: WorkerConfig<DT, ET>) {
+    pub fn register_worker_with(&mut self, config: WorkerConfig<DT>) {
         let name = config.name;
         let factories = WorkerFactories {
             factory: config.factory,
@@ -178,14 +176,6 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
         self.jobs.keys().map(|s| s.as_str()).collect()
     }
 
-    pub fn has_registered(&self, name: &str) -> bool {
-        self.jobs.contains_key(name)
-    }
-
-    pub fn has_registered_cron(&self, name: &str) -> bool {
-        self.schedules.contains_key(name)
-    }
-
     pub(crate) fn batch_config(&self, name: &str) -> Option<WorkerBatchConfig> {
         self.jobs
             .get(name)
@@ -197,7 +187,7 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
         name: &str,
         json: serde_json::Value,
         ctx: &DT,
-    ) -> Result<BoxedProcessable<ET>, OxanaError> {
+    ) -> Result<BoxedProcessable, OxanaError> {
         let factory = self
             .jobs
             .get(name)
@@ -215,7 +205,7 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
         name: &str,
         json: Vec<serde_json::Value>,
         ctx: &DT,
-    ) -> Result<BatchBuild<ET>, OxanaError> {
+    ) -> Result<BatchBuild, OxanaError> {
         let factories = self
             .jobs
             .get(name)
@@ -229,7 +219,7 @@ impl<DT, ET> WorkerRegistry<DT, ET> {
     }
 }
 
-impl<DT, ET> Default for WorkerRegistry<DT, ET> {
+impl<DT> Default for WorkerRegistry<DT> {
     fn default() -> Self {
         Self::new()
     }

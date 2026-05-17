@@ -131,36 +131,41 @@ storage.enqueue(MyQueue, SendEmail { user_id: 1, subject: "hi".into(), body: "he
 storage.enqueue(MyQueue, SendEmailJob { user_id: 1, subject: "hi".into(), body: "hello".into() }).await?;
 ```
 
-### 5. Update config registration
+### 5. Move runtime registration onto `Storage`
 
 **Before:**
 ```rust
-let config = oxana::Config::new(&storage)
-    .register_queue::<MyQueue>()
-    .register_worker::<SendEmail>();
-```
-
-**After:**
-```rust
-let config = oxana::Config::new(&storage)
+let config = oxana::Config::new()
     .register_queue::<MyQueue>()
     .register_worker::<SendEmail, SendEmailJob>();
-```
 
-### 6. Update `has_registered_worker` / `has_registered_cron_worker`
-
-These methods now take a string name or use `_type` variants:
-
-**Before:**
-```rust
-config.has_registered_worker::<SendEmail>()
-config.has_registered_cron_worker::<MyCronWorker>()
+oxana::run(storage.clone(), config, ctx).await?;
 ```
 
 **After:**
+```rust
+let storage = storage
+    .register_queue::<MyQueue>()
+    .register_worker::<SendEmail, SendEmailJob, MyContext>();
+
+storage.clone().run(ctx).await?;
+```
+
+### 6. Update registration assertions
+
+The public `Config` inspection helpers were removed. Use `storage.catalog()` to inspect registered queues, workers, cron workers, and on-demand jobs.
+
+**Before:**
 ```rust
 config.has_registered_worker_type::<SendEmail>()
 config.has_registered_cron_worker_type::<MyCronWorker>()
+```
+
+**After:**
+```rust
+let catalog = storage.catalog();
+catalog.workers.iter().any(|worker| worker.name == std::any::type_name::<SendEmail>())
+catalog.cron_workers.iter().any(|worker| worker.name == std::any::type_name::<MyCronWorker>())
 ```
 
 ### 7. Update cron worker registration
@@ -169,7 +174,7 @@ config.has_registered_cron_worker_type::<MyCronWorker>()
 
 **Before:**
 ```rust
-let config = oxana::Config::new(&storage)
+let config = oxana::Config::new()
     .register_cron_worker::<MyCronWorker>(MyDynamicQueue(1));
 ```
 
@@ -181,8 +186,7 @@ let config = oxana::Config::new(&storage)
 #[oxana(cron(schedule = "*/5 * * * * *", queue = MyQueue))]
 struct MyCronWorker;
 
-let config = oxana::Config::new(&storage)
-    .register_worker::<MyCronWorker, MyCronJob>();
+let storage = storage.register_worker::<MyCronWorker, MyCronJob, MyContext>();
 ```
 
 ### 8. Update manual Worker trait implementations
@@ -242,23 +246,24 @@ The app context (`ctx.ctx` in 0.9) is no longer on `JobContext`. Instead, it liv
 |------|-------------|
 | `Job` | Trait for job data structs (serializable payloads) |
 | `JobContext` | Replaces `Context<T>` — metadata + state, no generic |
-| `ContextValue<T>` | Wrapper for app context passed to `oxana::run()` |
+| `ContextValue<T>` | Wrapper for app context passed to `storage.run()` |
 | `FromContext<T>` | Trait for constructing workers from app context |
-| `Processable` | Type-erased trait for job execution (internal, but public) |
-| `BoxedProcessable<ET>` | Boxed `Processable` (internal, but public) |
 
 ## Removed types
 
 | Type | Replacement |
 |------|-------------|
 | `Context<T>` | `JobContext` |
-| `BoxedWorker<DT, ET>` | `BoxedProcessable<ET>` |
+| `BoxedWorker<DT, ET>` | Internal type-erased worker execution |
 
 ## Removed methods
 
 | Method | Replacement |
 |--------|-------------|
-| `Config::register_cron_worker()` | `Config::register_worker::<W, J>()` with cron attributes |
-| `Config::has_registered_worker::<W>()` | `Config::has_registered_worker_type::<W>()` |
-| `Config::has_registered_cron_worker::<W>()` | `Config::has_registered_cron_worker_type::<W>()` |
+| `Config::new(...)` | Configure `Storage` directly |
+| `oxana::run(...)` | `storage.run(ctx)` |
+| `oxana::drain(...)` | `storage.drain(ctx, queue)` |
+| `Config::register_cron_worker()` | `storage.register_worker::<W, J, C>()` with cron attributes |
+| `Config::has_registered_worker*()` | Inspect `storage.catalog().workers` |
+| `Config::has_registered_cron_worker*()` | Inspect `storage.catalog().cron_workers` |
 | `Context::value()` | `ContextValue::new()` |
