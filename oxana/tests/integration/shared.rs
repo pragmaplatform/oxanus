@@ -41,11 +41,7 @@ impl oxana::FromContext<()> for WorkerNoop {
     }
 }
 
-impl oxana::Job for WorkerNoopJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<WorkerNoop>()
-    }
-}
+impl oxana::Job for WorkerNoopJob {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WorkerRedisSetJob {
@@ -80,11 +76,7 @@ impl oxana::FromContext<WorkerState> for WorkerRedisSet {
     }
 }
 
-impl oxana::Job for WorkerRedisSetJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<WorkerRedisSet>()
-    }
-}
+impl oxana::Job for WorkerRedisSetJob {}
 
 #[derive(Serialize)]
 pub struct QueueOne;

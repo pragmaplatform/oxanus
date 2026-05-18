@@ -41,13 +41,14 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxana::ContextValue::new(WorkerContext {});
-    let storage = oxana::Storage::builder()
-        .build_from_env()?
-        .register_worker::<TestWorker, TestJob, WorkerContext>()
-        .with_graceful_shutdown(tokio::signal::ctrl_c());
+    let ctx = WorkerContext {};
+    let storage = oxana::Storage::builder().build_from_env()?;
+    let runtime = storage
+        .runtime(ctx)
+        .worker::<TestWorker, TestJob>()
+        .shutdown_on_ctrl_c();
 
-    storage.clone().run(ctx).await?;
+    runtime.run().await?;
 
     Ok(())
 }

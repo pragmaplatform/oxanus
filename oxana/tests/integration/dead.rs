@@ -8,11 +8,7 @@ pub struct WorkerFailJob {}
 
 pub struct WorkerFail;
 
-impl oxana::Job for WorkerFailJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<WorkerFail>()
-    }
-}
+impl oxana::Job for WorkerFailJob {}
 
 impl oxana::FromContext<()> for WorkerFail {
     fn from_context(_ctx: &()) -> Self {
@@ -44,19 +40,21 @@ impl oxana::Worker<WorkerFailJob> for WorkerFail {
 #[tokio::test]
 pub async fn test_dead() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxana::ContextValue::new(());
+    let ctx = ();
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool.clone())?
-        .register_queue::<QueueOne>()
-        .register_worker::<WorkerFail, WorkerFailJob, ()>()
+        .build_from_pool(redis_pool.clone())?;
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueOne>()
+        .worker::<WorkerFail, WorkerFailJob>()
         .exit_when_processed(1);
 
     storage.enqueue(QueueOne, WorkerFailJob {}).await?;
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 1);
 
-    storage.clone().run(ctx).await?;
+    runtime.run().await?;
 
     assert_eq!(storage.dead_count().await?, 1);
     assert_eq!(storage.enqueued_count(QueueOne).await?, 0);

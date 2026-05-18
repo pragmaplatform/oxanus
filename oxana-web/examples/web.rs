@@ -208,17 +208,17 @@ struct TenantQueue {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = oxana::Storage::builder().build_from_env()?;
-    let storage = storage
+    let worker_ctx = WorkerContext {};
+    let runtime = storage
+        .runtime(worker_ctx)
         .register::<ComponentRegistry>()
-        .with_graceful_shutdown(tokio::signal::ctrl_c());
-    let catalog = storage.catalog();
-    let worker_ctx = oxana::ContextValue::new(WorkerContext {});
+        .shutdown_on_ctrl_c();
+    let catalog = runtime.catalog();
 
     seed_sample_jobs(&storage).await?;
 
-    let worker_storage = storage.clone();
     let mut worker = tokio::spawn(async move {
-        if let Err(err) = worker_storage.run(worker_ctx).await {
+        if let Err(err) = runtime.run().await {
             eprintln!("Oxana worker exited with error: {err}");
         }
     });

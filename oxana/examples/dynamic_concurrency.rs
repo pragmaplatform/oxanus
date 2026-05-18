@@ -39,9 +39,10 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxana::ContextValue::new(WorkerContext {});
-    let storage = oxana::Storage::builder()
-        .build_from_env()?
+    let ctx = WorkerContext {};
+    let storage = oxana::Storage::builder().build_from_env()?;
+    let runtime = storage
+        .runtime(ctx)
         .register::<ComponentRegistry>()
         .exit_when_processed(30);
 
@@ -73,7 +74,7 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         })
     });
 
-    let run_result = storage.run(ctx).await;
+    let run_result = runtime.run().await;
     let update_result = update_thread.join().map_err(|_| {
         oxana::OxanaError::GenericError("concurrency update thread panicked".into())
     })?;

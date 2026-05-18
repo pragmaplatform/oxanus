@@ -38,11 +38,12 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxana::ContextValue::new(WorkerContext {});
+    let ctx = WorkerContext {};
     let storage = oxana::Storage::builder().build_from_env()?;
-    let storage = storage
+    let runtime = storage
+        .runtime(ctx)
         .register::<ComponentRegistry>()
-        .with_graceful_shutdown(tokio::signal::ctrl_c())
+        .shutdown_on_ctrl_c()
         .exit_when_processed(2);
 
     let now = Utc::now();
@@ -67,7 +68,7 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         )
         .await?;
 
-    storage.clone().run(ctx).await?;
+    runtime.run().await?;
 
     Ok(())
 }

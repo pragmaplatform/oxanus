@@ -4,17 +4,13 @@ use std::{
     time::Duration,
 };
 
-pub trait Queue: Send + Sync + Serialize {
+pub trait Queue: Send + Sync {
     fn key(&self) -> String {
-        match Self::to_config().kind {
-            QueueKind::Static { key } => key,
-            QueueKind::Dynamic { prefix, .. } => {
-                let value = serde_json::to_value(self).unwrap_or_default();
-                format!("{}#{}", prefix, value_to_queue_key(value))
-            }
-        }
+        Self::to_config().key_or_prefix()
     }
+
     fn to_config() -> QueueConfig;
+
     fn config(&self) -> QueueConfig {
         Self::to_config()
     }
@@ -83,6 +79,7 @@ impl QueueConfig {
     }
 
     pub fn discovery_interval(mut self, interval: Duration) -> Self {
+        let interval = require_non_zero_duration("discovery_interval", interval);
         if let QueueKind::Dynamic {
             discovery_interval, ..
         } = &mut self.kind
@@ -105,6 +102,11 @@ impl QueueConfig {
             QueueKind::Dynamic { prefix, .. } => prefix.clone(),
         }
     }
+}
+
+fn require_non_zero_duration(name: &str, duration: Duration) -> Duration {
+    assert!(!duration.is_zero(), "{name} must be greater than zero");
+    duration
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -241,7 +243,8 @@ impl QueueRuntimeConfig {
     }
 }
 
-fn value_to_queue_key(value: serde_json::Value) -> String {
+#[doc(hidden)]
+pub fn value_to_queue_key(value: serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => "".to_string(),
         serde_json::Value::String(s) => s,
@@ -281,6 +284,13 @@ mod tests {
     }
 
     impl Queue for TestDynamicQueue {
+        fn key(&self) -> String {
+            format!(
+                "test_dynamic_queue#{}",
+                value_to_queue_key(serde_json::to_value(self).unwrap_or_default())
+            )
+        }
+
         fn to_config() -> QueueConfig {
             QueueConfig::as_dynamic("test_dynamic_queue")
         }
@@ -441,5 +451,11 @@ mod tests {
                 state: QueueState::Paused,
             }
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "discovery_interval must be greater than zero")]
+    fn dynamic_queue_discovery_interval_rejects_zero() {
+        let _config = QueueConfig::as_dynamic("tenant").discovery_interval(Duration::ZERO);
     }
 }

@@ -37,15 +37,15 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxana::ContextValue::new(WorkerContext {});
+    let ctx = WorkerContext {};
     let storage = oxana::Storage::builder().build_from_env()?;
-    let storage = storage.register::<ComponentRegistry>();
+    let runtime = storage.runtime(ctx).register::<ComponentRegistry>();
 
     storage.enqueue(QueueOne, TwoSecJob { id: 1 }).await?;
     storage.enqueue(QueueOne, TwoSecJob { id: 1 }).await?;
     storage.enqueue(QueueOne, TwoSecJob { id: 2 }).await?;
 
-    storage.clone().run(ctx).await?;
+    runtime.run().await?;
 
     Ok(())
 }

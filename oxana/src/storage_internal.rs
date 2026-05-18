@@ -2137,17 +2137,51 @@ mod tests {
     #[derive(Serialize)]
     struct TestJob {}
 
-    impl crate::worker::Job for TestJob {
-        fn worker_name() -> &'static str {
-            "TestJob"
-        }
-    }
+    impl crate::worker::Job for TestJob {}
 
     fn assert_close(actual: f64, expected: f64) {
         assert!(
             (actual - expected).abs() < 1e-9,
             "expected {expected}, got {actual}"
         );
+    }
+
+    async fn assert_latency_ms_in_measurement_window(
+        storage: &StorageInternal,
+        queue: &str,
+        scheduled_at_micros: i64,
+    ) -> Result<f64, OxanaError> {
+        let before = chrono::Utc::now().timestamp_micros();
+        let latency_ms = storage.latency_ms(queue).await?;
+        let after = chrono::Utc::now().timestamp_micros();
+
+        let min_ms = (before - scheduled_at_micros) as f64 / 1_000.0;
+        let max_ms = (after - scheduled_at_micros) as f64 / 1_000.0;
+        assert!(
+            (min_ms..=max_ms).contains(&latency_ms),
+            "expected latency_ms {latency_ms} to be between {min_ms} and {max_ms}"
+        );
+
+        Ok(latency_ms)
+    }
+
+    async fn assert_latency_micros_in_measurement_window(
+        storage: &StorageInternal,
+        queue: &str,
+        scheduled_at_micros: i64,
+    ) -> Result<f64, OxanaError> {
+        let before = chrono::Utc::now().timestamp_micros();
+        let latency_micros = storage.latency_micros(queue).await?;
+        let after = chrono::Utc::now().timestamp_micros();
+
+        let min_micros = (before - scheduled_at_micros) as f64;
+        let max_micros = (after - scheduled_at_micros) as f64;
+        assert!(
+            (min_micros..=max_micros).contains(&latency_micros),
+            "expected latency_micros {latency_micros} to be between {min_micros} and {max_micros}"
+        );
+
+        Ok(latency_micros)
     }
 
     #[tokio::test]
@@ -2206,9 +2240,7 @@ mod tests {
         envelope.meta.scheduled_at = past;
         storage.enqueue(envelope).await?;
 
-        let latency = storage.latency_ms(&queue).await?;
-
-        assert!((latency - actual_latency as f64).abs() < 50.0);
+        assert_latency_ms_in_measurement_window(&storage, &queue, past).await?;
 
         Ok(())
     }
@@ -2228,20 +2260,13 @@ mod tests {
         let now = chrono::Utc::now();
         let actual_latency_ms = 7777;
         let actual_latency_micros = actual_latency_ms * 1_000;
-        let actual_latency_s = actual_latency_ms as f64 / 1_000.0;
         let past = now.timestamp_micros() - actual_latency_micros;
         envelope.meta.created_at = past;
         envelope.meta.scheduled_at = past;
         storage.enqueue(envelope).await?;
 
-        let latency_ms = storage.latency_ms(&queue).await?;
-        assert!((latency_ms - actual_latency_ms as f64).abs() < 50.0);
-
-        let latency_micros = storage.latency_micros(&queue).await?;
-        assert!((latency_micros - actual_latency_micros as f64).abs() < 50_000.0);
-
-        let latency_s = latency_micros / 1_000_000.0;
-        assert!((latency_s - actual_latency_s).abs() < 0.05);
+        assert_latency_ms_in_measurement_window(&storage, &queue, past).await?;
+        assert_latency_micros_in_measurement_window(&storage, &queue, past).await?;
 
         let mut envelope2 = JobEnvelope::new(queue.clone(), TestJob {})?;
         let actual_latency_ms2 = 5000;
@@ -2251,11 +2276,8 @@ mod tests {
         envelope2.meta.scheduled_at = past2;
         storage.enqueue(envelope2).await?;
 
-        let latency_ms = storage.latency_ms(&queue).await?;
-        assert!((latency_ms - actual_latency_ms as f64).abs() < 50.0);
-
-        let latency_micros = storage.latency_micros(&queue).await?;
-        assert!((latency_micros - actual_latency_micros as f64).abs() < 50_000.0);
+        assert_latency_ms_in_measurement_window(&storage, &queue, past).await?;
+        assert_latency_micros_in_measurement_window(&storage, &queue, past).await?;
 
         Ok(())
     }

@@ -23,11 +23,7 @@ pub struct WorkerState {}
 #[oxana(context = WorkerState, error = ServiceError, registry = None)]
 pub struct WorkerNoop;
 
-impl oxana::Job for WorkerNoopJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<WorkerNoop>()
-    }
-}
+impl oxana::Job for WorkerNoopJob {}
 
 impl WorkerNoop {
     async fn process(
@@ -99,13 +95,14 @@ async fn execute(
     concurrency: usize,
     jobs_count: u64,
 ) -> Result<(), oxana::OxanaError> {
-    let storage = storage
-        .register_queue_with_concurrency::<QueueOne>(concurrency)
-        .register_worker::<WorkerNoop, WorkerNoopJob, WorkerState>()
+    let ctx = WorkerState {};
+    let runtime = storage
+        .runtime(ctx)
+        .queue_with_concurrency::<QueueOne>(concurrency)
+        .worker::<WorkerNoop, WorkerNoopJob>()
         .exit_when_processed(jobs_count);
-    let ctx = oxana::ContextValue::new(WorkerState {});
 
-    let stats = storage.clone().run(ctx).await?;
+    let stats = runtime.run().await?;
 
     assert_eq!(stats.processed, jobs_count);
     assert_eq!(stats.succeeded, jobs_count);

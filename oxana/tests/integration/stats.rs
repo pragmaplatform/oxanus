@@ -9,6 +9,13 @@ struct QueueDynamic(i32);
 struct QueueStatic;
 
 impl oxana::Queue for QueueDynamic {
+    fn key(&self) -> String {
+        format!(
+            "dynamic#{}",
+            oxana::value_to_queue_key(serde_json::to_value(self).unwrap_or_default())
+        )
+    }
+
     fn to_config() -> oxana::QueueConfig {
         oxana::QueueConfig::as_dynamic("dynamic").concurrency(6)
     }
@@ -23,13 +30,15 @@ impl oxana::Queue for QueueStatic {
 #[tokio::test]
 pub async fn test_stats() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxana::ContextValue::new(());
+    let ctx = ();
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool)?
-        .register_queue::<QueueDynamic>()
-        .register_queue::<QueueStatic>()
-        .register_worker::<WorkerNoop, WorkerNoopJob, ()>()
+        .build_from_pool(redis_pool)?;
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueDynamic>()
+        .queue::<QueueStatic>()
+        .worker::<WorkerNoop, WorkerNoopJob>()
         .exit_when_processed(8);
 
     storage.enqueue(QueueDynamic(1), WorkerNoopJob {}).await?;
@@ -126,7 +135,7 @@ pub async fn test_stats() -> TestResult {
     let queue_stats = storage.stats_queues_for(&["nonexistent"]).await?;
     assert_eq!(queue_stats.len(), 0);
 
-    let stats = storage.clone().run(ctx).await?;
+    let stats = runtime.run().await?;
 
     assert_eq!(stats.processed, 8);
 

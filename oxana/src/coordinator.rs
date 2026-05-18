@@ -803,11 +803,12 @@ mod tests {
     use super::{PendingJob, process_pending_batch};
     use crate::QueueRuntimeConfig;
     use crate::config::{Config, RuntimeSettings};
+    use crate::context::ContextValue;
     use crate::runtime::Runtime;
     use crate::semaphores_map::QueueControlsMap;
     use crate::test_helper::{random_string, redis_pool};
     use crate::worker_registry::{self, BatchBuild, InvalidBatchJob, WorkerConfigKind};
-    use crate::{ContextValue, Job, JobEnvelope, Storage, Worker, WorkerConfig};
+    use crate::{Job, JobEnvelope, Storage, Worker, WorkerConfig};
     use serde::{Deserialize, Serialize};
     use std::sync::Arc;
     use testresult::TestResult;
@@ -816,11 +817,7 @@ mod tests {
     #[derive(Debug, Serialize, Deserialize)]
     struct UnsortedInvalidJob;
 
-    impl Job for UnsortedInvalidJob {
-        fn worker_name() -> &'static str {
-            std::any::type_name::<UnsortedInvalidWorker>()
-        }
-    }
+    impl Job for UnsortedInvalidJob {}
 
     struct UnsortedInvalidWorker;
 
@@ -870,7 +867,8 @@ mod tests {
         let queue = random_string();
         let mut config = Config::new();
         config.register_worker_with(WorkerConfig {
-            name: UnsortedInvalidJob::worker_name().to_string(),
+            name: UnsortedInvalidJob::name().to_string(),
+            legacy_names: Vec::new(),
             factory: worker_registry::job_factory::<UnsortedInvalidWorker, UnsortedInvalidJob, ()>,
             batch_factory: unsorted_invalid_batch_factory,
             batch_config: Some(crate::WorkerBatchConfig::new(

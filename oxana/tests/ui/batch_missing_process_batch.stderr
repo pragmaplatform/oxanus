@@ -1,7 +1,10 @@
-error[E0599]: no method named `process_batch` found for reference `&MissingProcessBatchWorker` in the current scope
+error[E0599]: no function or associated item named `process_batch` found for struct `MissingProcessBatchWorker` in the current scope
   --> tests/ui/batch_missing_process_batch.rs:14:10
    |
 14 | #[derive(oxana::Worker)]
-   |          ^^^^^^^^^^^^^
+   |          ^^^^^^^^^^^^^ function or associated item not found in `MissingProcessBatchWorker`
+...
+17 | struct MissingProcessBatchWorker;
+   | -------------------------------- function or associated item `process_batch` not found for this struct
    |
    = note: this error originates in the derive macro `oxana::Worker` (in Nightly builds, run with -Z macro-backtrace for more info)

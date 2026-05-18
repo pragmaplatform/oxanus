@@ -43,9 +43,11 @@ pub fn expand_derive_registry(input: DeriveInput) -> TokenStream {
         impl oxana::RegisterComponents for #struct_ident {
             type Context = #context_ty;
 
-            fn register_components(storage: oxana::Storage) -> oxana::Storage {
+            fn register_components(
+                runtime: oxana::RuntimeBuilder<#context_ty>
+            ) -> oxana::RuntimeBuilder<#context_ty> {
                 oxana::ComponentRegistry::<#context_ty>::register_components(
-                    storage,
+                    runtime,
                     oxana::iterate_components::<#struct_ident>().map(|x| &x.0),
                 )
             }

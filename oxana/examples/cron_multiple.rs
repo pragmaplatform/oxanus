@@ -48,15 +48,16 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         let mut rx = tx.subscribe();
 
         handles.push(tokio::spawn(async move {
-            let ctx = oxana::ContextValue::new(WorkerContext {});
-            let storage = storage
+            let ctx = WorkerContext {};
+            let runtime = storage
+                .runtime(ctx)
                 .register::<ComponentRegistry>()
-                .with_graceful_shutdown(async move {
+                .shutdown_on(async move {
                     rx.recv().await.ok();
                     Ok(())
                 });
 
-            storage.clone().run(ctx).await
+            runtime.run().await
         }));
     }
 

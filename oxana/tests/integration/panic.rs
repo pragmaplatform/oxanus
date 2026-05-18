@@ -7,11 +7,7 @@ struct WorkerPanicJob {}
 
 struct WorkerPanic;
 
-impl oxana::Job for WorkerPanicJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<WorkerPanic>()
-    }
-}
+impl oxana::Job for WorkerPanicJob {}
 
 impl oxana::FromContext<()> for WorkerPanic {
     fn from_context(_ctx: &()) -> Self {
@@ -38,19 +34,21 @@ impl oxana::Worker<WorkerPanicJob> for WorkerPanic {
 #[tokio::test]
 pub async fn test_panic() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxana::ContextValue::new(());
+    let ctx = ();
     let storage = oxana::Storage::builder()
         .namespace(random_string())
-        .build_from_pool(redis_pool)?
-        .register_queue::<QueueOne>()
-        .register_worker::<WorkerPanic, WorkerPanicJob, ()>()
+        .build_from_pool(redis_pool)?;
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueOne>()
+        .worker::<WorkerPanic, WorkerPanicJob>()
         .exit_when_processed(1);
 
     storage.enqueue(QueueOne, WorkerPanicJob {}).await?;
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 1);
 
-    let stats = storage.clone().run(ctx).await?;
+    let stats = runtime.run().await?;
 
     assert_eq!(stats.panicked, 1);
     assert_eq!(stats.failed, 1);

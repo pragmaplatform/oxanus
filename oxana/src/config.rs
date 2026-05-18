@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -111,7 +110,7 @@ impl<DT> Config<DT> {
         A: Job + serde::de::DeserializeOwned + Send + 'static,
         DT: Clone + Send + Sync + 'static,
     {
-        let name = A::worker_name().to_string();
+        let name = A::name().to_string();
         let factory = worker_registry::job_factory::<W, A, DT>;
         let batch_factory = worker_registry::job_batch_factory::<W, A, DT>;
         let kind = <W as Worker<A>>::to_config();
@@ -137,6 +136,7 @@ impl<DT> Config<DT> {
 
         self.registry.register_worker_with(WorkerConfig {
             name,
+            legacy_names: vec![std::any::type_name::<W>().to_owned()],
             factory,
             batch_factory,
             batch_config,
@@ -231,29 +231,6 @@ impl<DT> Default for Config<DT> {
     }
 }
 
-pub(crate) trait RuntimeConfigBox: Send + Sync {
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn catalog(&self, extra_queues: &HashSet<QueueConfig>) -> Catalog;
-}
-
-impl<DT> RuntimeConfigBox for Config<DT>
-where
-    DT: Clone + Send + Sync + 'static,
-{
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn catalog(&self, extra_queues: &HashSet<QueueConfig>) -> Catalog {
-        self.catalog_with_queues(extra_queues)
-    }
-}
-
 #[cfg(target_family = "unix")]
 async fn default_shutdown_signal() -> Result<(), std::io::Error> {
     let ctrl_c = tokio::signal::ctrl_c();
@@ -311,11 +288,7 @@ mod tests {
 
     struct PlainWorker;
 
-    impl oxana::Job for PlainJob {
-        fn worker_name() -> &'static str {
-            std::any::type_name::<PlainWorker>()
-        }
-    }
+    impl oxana::Job for PlainJob {}
 
     impl_test_worker!(PlainWorker, PlainJob);
 
@@ -327,10 +300,6 @@ mod tests {
     struct ZetaWorker;
 
     impl oxana::Job for ZetaJob {
-        fn worker_name() -> &'static str {
-            std::any::type_name::<ZetaWorker>()
-        }
-
         fn on_demand_args_template() -> Option<serde_json::Value> {
             Some(serde_json::json!({
                 "value": "",
@@ -355,10 +324,6 @@ mod tests {
     struct AlphaWorker;
 
     impl oxana::Job for AlphaJob {
-        fn worker_name() -> &'static str {
-            std::any::type_name::<AlphaWorker>()
-        }
-
         fn unique_id(&self) -> Option<String> {
             Some(format!("alpha_{}", self.id))
         }
@@ -382,6 +347,122 @@ mod tests {
     impl_test_worker!(AlphaWorker, AlphaJob);
 
     #[test]
+    fn worker_registration_accepts_canonical_and_legacy_worker_names() {
+        let config = Config::<()>::new().register_worker::<PlainWorker, PlainJob>();
+        let job = serde_json::json!({
+            "value": "hello",
+        });
+
+        let canonical = config
+            .registry
+            .build(PlainJob::name(), job.clone(), &())
+            .expect("canonical job name should build");
+        assert_eq!(canonical.len(), 1);
+
+        let legacy = config
+            .registry
+            .build(std::any::type_name::<PlainWorker>(), job.clone(), &())
+            .expect("legacy worker name should build");
+        assert_eq!(legacy.len(), 1);
+
+        let batch = config
+            .registry
+            .build_batch(std::any::type_name::<PlainWorker>(), vec![job], &())
+            .expect("legacy worker name should build a batch");
+        assert_eq!(batch.job.expect("batch should contain one job").len(), 1);
+
+        let worker_names = config
+            .catalog()
+            .workers
+            .into_iter()
+            .map(|worker| worker.name)
+            .collect::<Vec<_>>();
+        assert_eq!(worker_names, vec![PlainJob::name().to_string()]);
+    }
+
+    #[test]
+    fn cron_worker_uses_canonical_catalog_and_legacy_consumer_alias() {
+        #[derive(Debug, Serialize, Deserialize)]
+        struct CronCompatJob {}
+
+        impl oxana::Job for CronCompatJob {}
+
+        #[derive(Serialize)]
+        struct CronCompatQueue;
+
+        impl oxana::Queue for CronCompatQueue {
+            fn to_config() -> oxana::QueueConfig {
+                oxana::QueueConfig::as_static("cron_compat")
+            }
+        }
+
+        struct CronCompatWorker;
+
+        impl oxana::FromContext<()> for CronCompatWorker {
+            fn from_context(_ctx: &()) -> Self {
+                Self
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl oxana::Worker<CronCompatJob> for CronCompatWorker {
+            type Error = WorkerError;
+
+            async fn run_batch(
+                &self,
+                _jobs: Vec<oxana::BatchItem<CronCompatJob>>,
+            ) -> Result<(), Self::Error> {
+                Ok(())
+            }
+
+            fn cron_schedule() -> Option<String> {
+                Some("*/5 * * * * *".to_string())
+            }
+
+            fn cron_queue_config() -> Option<oxana::QueueConfig> {
+                Some(<CronCompatQueue as oxana::Queue>::to_config())
+            }
+        }
+
+        let config = Config::<()>::new().register_worker::<CronCompatWorker, CronCompatJob>();
+
+        assert!(
+            config
+                .registry
+                .schedules
+                .contains_key(CronCompatJob::name())
+        );
+        assert!(
+            !config
+                .registry
+                .schedules
+                .contains_key(std::any::type_name::<CronCompatWorker>())
+        );
+
+        let catalog = config.catalog();
+        assert_eq!(catalog.cron_workers.len(), 1);
+        assert_eq!(
+            catalog
+                .cron_workers
+                .first()
+                .expect("one cron worker should be cataloged")
+                .name
+                .as_str(),
+            CronCompatJob::name()
+        );
+
+        let legacy = config
+            .registry
+            .build(
+                std::any::type_name::<CronCompatWorker>(),
+                serde_json::json!({}),
+                &(),
+            )
+            .expect("legacy cron worker name should build");
+        assert_eq!(legacy.len(), 1);
+    }
+
+    #[test]
     fn catalog_lists_only_on_demand_jobs_sorted() {
         let config = Config::<()>::new()
             .register_worker::<PlainWorker, PlainJob>()
@@ -398,8 +479,8 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                std::any::type_name::<AlphaWorker>().to_string(),
-                std::any::type_name::<ZetaWorker>().to_string(),
+                std::any::type_name::<AlphaJob>().to_string(),
+                std::any::type_name::<ZetaJob>().to_string(),
             ]
         );
     }
@@ -412,8 +493,8 @@ mod tests {
         let job = catalog
             .on_demand_jobs
             .iter()
-            .find(|job| job.name == std::any::type_name::<AlphaWorker>())
-            .expect("alpha worker should be registered as on-demand");
+            .find(|job| job.name == std::any::type_name::<AlphaJob>())
+            .expect("alpha job should be registered as on-demand");
 
         let envelope = job
             .enqueue_envelope(
@@ -426,7 +507,7 @@ mod tests {
             .expect("on-demand factory should build typed envelope");
 
         assert_eq!(envelope.queue, "manual");
-        assert_eq!(envelope.id, format!("{}/alpha_7", AlphaJob::worker_name()));
+        assert_eq!(envelope.id, format!("{}/alpha_7", AlphaJob::name()));
         assert!(envelope.meta.unique);
         assert_eq!(
             envelope.meta.on_conflict,

@@ -1,4 +1,4 @@
-use crate::{QueueConfig, Storage, worker_registry::WorkerConfig};
+use crate::{QueueConfig, RuntimeBuilder, worker_registry::WorkerConfig};
 
 pub struct ComponentRegistry<DT> {
     /// `module_path!()`
@@ -16,7 +16,8 @@ pub enum ComponentDefinition<DT> {
 pub trait RegisterComponents {
     type Context: Clone + Send + Sync + 'static;
 
-    fn register_components(storage: Storage) -> Storage;
+    fn register_components(runtime: RuntimeBuilder<Self::Context>)
+    -> RuntimeBuilder<Self::Context>;
 }
 
 /// Macro to create a component registry
@@ -33,9 +34,9 @@ where
     DT: Clone + Send + Sync + 'static,
 {
     pub fn register_components(
-        mut storage: Storage,
+        mut runtime: RuntimeBuilder<DT>,
         items: impl Iterator<Item = &'static Self>,
-    ) -> Storage {
+    ) -> RuntimeBuilder<DT> {
         for component in items {
             tracing::info!(
                 "Registering {}::{}",
@@ -43,10 +44,10 @@ where
                 component.type_name
             );
             match (component.definition)() {
-                ComponentDefinition::Queue(q) => storage = storage.register_queue_with(q),
-                ComponentDefinition::Worker(w) => storage = storage.register_worker_with(w),
+                ComponentDefinition::Queue(q) => runtime = runtime.queue_with(q),
+                ComponentDefinition::Worker(w) => runtime = runtime.worker_with(w),
             }
         }
-        storage
+        runtime
     }
 }

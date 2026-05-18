@@ -14,7 +14,6 @@ use syn::{
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(oxana), supports(struct_any))]
 struct OxanaJobArgs {
-    worker: Option<Path>,
     unique_id: Option<UniqueIdSpec>,
     on_conflict: Option<Ident>,
     resurrect: Option<bool>,
@@ -133,16 +132,6 @@ pub fn expand_derive_job(input: DeriveInput) -> TokenStream {
     };
 
     let struct_ident = &input.ident;
-    let worker = match &args.worker {
-        Some(worker) => quote!(#worker),
-        None => {
-            let name = struct_ident.to_string();
-            let base = name.strip_suffix("Job").unwrap_or(&name);
-            let worker_ident = Ident::new(&format!("{base}Worker"), struct_ident.span());
-            quote!(#worker_ident)
-        }
-    };
-
     let unique_id = match &args.unique_id {
         Some(unique_id) => expand_unique_id(unique_id),
         None => quote!(),
@@ -192,13 +181,6 @@ pub fn expand_derive_job(input: DeriveInput) -> TokenStream {
     quote! {
         #[automatically_derived]
         impl oxana::Job for #struct_ident {
-            fn worker_name() -> &'static str
-            where
-                Self: Sized,
-            {
-                std::any::type_name::<#worker>()
-            }
-
             #unique_id
 
             #on_conflict

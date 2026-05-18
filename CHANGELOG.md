@@ -4,11 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [2.0.0-rc]
 
+**Breaking release.** See [MIGRATION.md](MIGRATION.md) for the 1.x -> 2.x upgrade guide.
+
 ### Breaking Changes
 
 - Rename the project and crates from Oxanus to Oxana. Use `oxana`, `oxana-macros`, `oxana-web`, and `#[oxana(...)]` in manifests, imports, derive attributes, examples, and dashboard integrations.
-- Move enqueue-time metadata onto `#[derive(oxana::Job)]`. Job identity, conflict handling, resurrection, throttle cost, on-demand exposure, and worker binding now belong to the job type; custom job hooks now resolve `Self` as the job type.
-- Replace the public `Config` setup path with a single `Storage` API: register workers and queues on `Storage`, run with `storage.run(ctx)`, drain with `storage.drain(ctx, queue)`, and inspect registrations with `storage.catalog()`.
+- Move enqueue-time metadata onto `#[derive(oxana::Job)]`. Job identity, conflict handling, resurrection, throttle cost, and on-demand exposure now belong to the job type; runtime registration maps job types to workers, and custom job hooks now resolve `Self` as the job type.
+- Replace the public `Config` setup path with a typed runtime API: keep `Storage` for enqueueing/monitoring, register workers and queues with `storage.runtime(ctx)`, run with `runtime.run()`, drain with `runtime.drain(queue)`, and inspect registrations with `runtime.catalog()`.
 - Route every worker through the batch-capable execution path. Manual worker implementations now provide `run_batch`, while derive users can keep writing `process` for single-job workers or opt into `process_batch`.
 - Own job values during execution instead of borrowing them, so job payload types no longer need to implement `Sync`.
 - Simplify structured job progress to cursor/total values. `JobProgress` no longer exposes a separate `processed` field, and `update_progress` tuple helpers now use `(cursor, total)` or `(cursor, total, note)`.
@@ -33,6 +35,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Register temporary legacy worker-name aliases so 2.x runtimes can consume 1.x queued, scheduled, retry, and dead jobs whose envelopes still use worker type names.
 - Make dashboard queue and metrics views more operationally useful: queue length charts now live with queue stats, tooltips use readable worker labels, zero-value tooltip rows are hidden, and unknown ETAs sort after known drain times.
 - Add a 24-hour window to job metrics views, retain metrics long enough to back it, and downsample long-window chart payloads.
 - Show progress-aware job state and ETA estimates in the dashboard while preserving cursor-only resumable state as raw job state.
@@ -106,7 +109,7 @@ All notable changes to this project will be documented in this file.
 
 ## [0.10.0]
 
-**Breaking release.** See [MIGRATION.md](MIGRATION.md) for the upgrade guide.
+**Breaking release.** Historical release notes for the 0.9 -> 0.10 job/worker split.
 
 ### Added
 

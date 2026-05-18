@@ -149,7 +149,8 @@ impl StorageBuilder {
     }
 
     pub fn build_from_env_var(self, var_name: &str) -> Result<Storage, OxanaError> {
-        let url = std::env::var(var_name).unwrap_or_else(|_| panic!("{var_name} is not set"));
+        let url = std::env::var(var_name)
+            .map_err(|err| OxanaError::ConfigError(format!("{var_name} is not set: {err}")))?;
         match std::env::var("REDIS_STATS_URL") {
             Ok(stats_url) => self.build_from_redis_urls(url, stats_url),
             Err(_) => self.build_from_redis_url(url),

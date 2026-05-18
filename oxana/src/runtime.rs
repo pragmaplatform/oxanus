@@ -1,9 +1,229 @@
 use std::ops::Deref;
+use std::sync::Arc;
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::Storage;
-use crate::config::{Config, RuntimeSettings};
+use crate::config::{Config, RetryDelayOverrideFn, RuntimeSettings};
+use crate::context::ContextValue;
+use crate::drainer::{self, DrainStats};
+use crate::error::OxanaError;
+use crate::queue::{Queue, QueueConcurrency};
+use crate::result_collector::Stats as RunStats;
+use crate::storage::Storage;
+use crate::storage_types::Catalog;
+use crate::worker::{FromContext, Job, Worker};
+
+#[cfg(feature = "registry")]
+use crate::registry::RegisterComponents;
+
+pub struct RuntimeBuilder<DT>
+where
+    DT: Clone + Send + Sync + 'static,
+{
+    storage: Storage,
+    config: Config<DT>,
+    settings: RuntimeSettings,
+    ctx: ContextValue<DT>,
+}
+
+impl<DT> RuntimeBuilder<DT>
+where
+    DT: Clone + Send + Sync + 'static,
+{
+    pub(crate) fn new(storage: Storage, ctx: DT) -> Self {
+        Self {
+            storage,
+            config: Config::new(),
+            settings: RuntimeSettings::new(),
+            ctx: ContextValue::new(ctx),
+        }
+    }
+
+    /// Returns the storage handle used by this runtime.
+    pub fn storage(&self) -> &Storage {
+        &self.storage
+    }
+
+    /// Registers all components from a derived component registry.
+    #[cfg(feature = "registry")]
+    pub fn register<R>(self) -> Self
+    where
+        R: RegisterComponents<Context = DT>,
+    {
+        R::register_components(self)
+    }
+
+    /// Registers a queue from a [`crate::QueueConfig`].
+    pub fn queue_with(mut self, config: crate::QueueConfig) -> Self {
+        self.config.register_queue_with(config);
+        self
+    }
+
+    /// Registers a queue by type.
+    pub fn queue<Q>(self) -> Self
+    where
+        Q: Queue,
+    {
+        self.queue_with(Q::to_config())
+    }
+
+    /// Registers a queue by type with a custom fixed concurrency limit.
+    pub fn queue_with_concurrency<Q>(self, concurrency: usize) -> Self
+    where
+        Q: Queue,
+    {
+        let mut config = Q::to_config();
+        config.concurrency = QueueConcurrency::Fixed(concurrency);
+        self.queue_with(config)
+    }
+
+    /// Registers a worker for a job type.
+    pub fn worker<W, A>(mut self) -> Self
+    where
+        W: Worker<A> + FromContext<DT> + 'static,
+        A: Job + serde::de::DeserializeOwned + Send + 'static,
+    {
+        self.config = self.config.register_worker::<W, A>();
+        self
+    }
+
+    /// Registers a worker from a [`crate::WorkerConfig`].
+    pub fn worker_with(mut self, worker: crate::WorkerConfig<DT>) -> Self {
+        self.config.register_worker_with(worker);
+        self
+    }
+
+    /// Stops processing after the given number of jobs have been processed. Useful for tests.
+    pub fn exit_when_processed(mut self, processed: u64) -> Self {
+        self.settings.exit_when_processed = Some(processed);
+        self
+    }
+
+    /// Sets a future that triggers graceful shutdown when it completes.
+    pub fn shutdown_on(
+        mut self,
+        fut: impl Future<Output = Result<(), std::io::Error>> + Send + Sync + 'static,
+    ) -> Self {
+        self.settings.replace_shutdown_signal(fut);
+        self
+    }
+
+    /// Sets Ctrl-C as the shutdown trigger.
+    pub fn shutdown_on_ctrl_c(self) -> Self {
+        self.shutdown_on(tokio::signal::ctrl_c())
+    }
+
+    /// Sets the maximum time to wait for in-flight workers during shutdown.
+    pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
+        self.settings.shutdown_timeout = timeout;
+        self
+    }
+
+    /// Sets a global callback to override the retry delay when a job fails.
+    pub fn retry_delay_override(
+        mut self,
+        f: impl Fn(&(dyn std::error::Error + Send + Sync), u32, u64) -> Option<u64>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.settings.retry_delay_override = Some(Arc::new(f) as Arc<RetryDelayOverrideFn>);
+        self
+    }
+
+    pub fn heartbeat_interval(mut self, interval: Duration) -> Self {
+        self.settings.heartbeat_interval =
+            require_non_zero_duration("heartbeat_interval", interval);
+        self
+    }
+
+    pub fn dead_process_threshold(mut self, threshold: Duration) -> Self {
+        self.settings.dead_process_threshold = threshold;
+        self
+    }
+
+    pub fn resurrect_scan_interval(mut self, interval: Duration) -> Self {
+        self.settings.resurrect_scan_interval =
+            require_non_zero_duration("resurrect_scan_interval", interval);
+        self
+    }
+
+    pub fn redis_failure_tolerance(mut self, tolerance: u32) -> Self {
+        self.settings.redis_failure_tolerance = tolerance;
+        self
+    }
+
+    pub fn retry_poll_interval(mut self, interval: Duration) -> Self {
+        self.settings.retry_poll_interval =
+            require_non_zero_duration("retry_poll_interval", interval);
+        self
+    }
+
+    pub fn schedule_poll_interval(mut self, interval: Duration) -> Self {
+        self.settings.schedule_poll_interval =
+            require_non_zero_duration("schedule_poll_interval", interval);
+        self
+    }
+
+    pub fn cron_initial_offset(mut self, offset: Duration) -> Self {
+        self.settings.cron_initial_offset = offset;
+        self
+    }
+
+    pub fn cron_lookahead(mut self, lookahead: Duration) -> Self {
+        self.settings.cron_lookahead = lookahead;
+        self
+    }
+
+    pub fn cron_tick_interval(mut self, interval: Duration) -> Self {
+        self.settings.cron_tick_interval =
+            require_non_zero_duration("cron_tick_interval", interval);
+        self
+    }
+
+    pub fn dequeue_timeout(mut self, timeout: Duration) -> Self {
+        self.settings.dequeue_timeout = require_non_zero_duration("dequeue_timeout", timeout);
+        self
+    }
+
+    pub fn dispatcher_idle_sleep(mut self, sleep: Duration) -> Self {
+        self.settings.dispatcher_idle_sleep =
+            require_non_zero_duration("dispatcher_idle_sleep", sleep);
+        self
+    }
+
+    pub fn throttled_queue_fallback_wait(mut self, wait: Duration) -> Self {
+        self.settings.throttled_queue_fallback_wait =
+            require_non_zero_duration("throttled_queue_fallback_wait", wait);
+        self
+    }
+
+    /// Returns a catalog of all registered workers and queues.
+    pub fn catalog(&self) -> Catalog {
+        self.config.catalog_with_queues(&Default::default())
+    }
+
+    /// Runs the Oxana worker system.
+    pub async fn run(self) -> Result<RunStats, OxanaError> {
+        crate::launcher::run(self.storage, self.config, self.settings, self.ctx).await
+    }
+
+    /// Drains a queue of jobs using this runtime's registrations.
+    pub async fn drain(&self, queue: impl Queue) -> Result<DrainStats, OxanaError> {
+        drainer::drain(&self.storage, &self.config, self.ctx.clone(), queue).await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn settings(&self) -> RuntimeSettings {
+        self.settings.clone()
+    }
+}
+
+fn require_non_zero_duration(name: &str, duration: Duration) -> Duration {
+    assert!(!duration.is_zero(), "{name} must be greater than zero");
+    duration
+}
 
 pub(crate) struct Runtime<DT> {
     pub(crate) config: Config<DT>,

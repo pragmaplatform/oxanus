@@ -97,9 +97,10 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
         .with(EnvFilter::from_default_env())
         .init();
 
-    let ctx = oxana::ContextValue::new(WorkerContext {});
+    let ctx = WorkerContext {};
     let storage = oxana::Storage::builder().build_from_env()?;
-    let storage = storage
+    let runtime = storage
+        .runtime(ctx)
         .register::<ComponentRegistry>()
         .exit_when_processed(12);
 
@@ -149,7 +150,7 @@ pub async fn main() -> Result<(), oxana::OxanaError> {
     storage.enqueue(QueueThrottled, InstantJob {}).await?;
     storage.enqueue(QueueThrottled, Instant2Job {}).await?;
 
-    storage.clone().run(ctx).await?;
+    runtime.run().await?;
 
     Ok(())
 }
