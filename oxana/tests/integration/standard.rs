@@ -32,6 +32,13 @@ struct DynamicTenantQueue {
 }
 
 impl oxana::Queue for DynamicTenantQueue {
+    fn key(&self) -> String {
+        format!(
+            "tenant#{}",
+            oxana::value_to_queue_key(serde_json::to_value(self).unwrap_or_default())
+        )
+    }
+
     fn to_config() -> oxana::QueueConfig {
         oxana::QueueConfig::as_dynamic("tenant").dynamic_concurrency(3)
     }
@@ -42,16 +49,17 @@ pub async fn test_standard() -> TestResult {
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
 
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueOne>()
-        .register_worker::<WorkerRedisSet, WorkerRedisSetJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueOne>()
+        .worker::<WorkerRedisSet, WorkerRedisSetJob>()
         .exit_when_processed(1);
 
     let random_key = uuid::Uuid::new_v4().to_string();
@@ -69,7 +77,7 @@ pub async fn test_standard() -> TestResult {
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 1);
 
-    oxana::run(config, ctx).await?;
+    runtime.run().await?;
 
     let value: Option<String> = redis_conn.get(random_key).await?;
 
@@ -85,21 +93,21 @@ pub async fn test_paused_queue_resumes_after_runtime_config_update() -> TestResu
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
 
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueOne>()
+        .worker::<WorkerRedisSet, WorkerRedisSetJob>()
+        .exit_when_processed(1);
     storage
         .set_queue_state(QueueOne, oxana::QueueState::Paused)
         .await?;
-
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueOne>()
-        .register_worker::<WorkerRedisSet, WorkerRedisSetJob>()
-        .exit_when_processed(1);
 
     let random_key = uuid::Uuid::new_v4().to_string();
     let random_value = uuid::Uuid::new_v4().to_string();
@@ -114,7 +122,7 @@ pub async fn test_paused_queue_resumes_after_runtime_config_update() -> TestResu
         )
         .await?;
 
-    let handle = tokio::spawn(async move { oxana::run(config, ctx).await });
+    let handle = tokio::spawn(async move { runtime.run().await });
 
     tokio::time::sleep(Duration::from_millis(500)).await;
     let value: Option<String> = redis_conn.get(&random_key).await?;

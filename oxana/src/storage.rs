@@ -1,6 +1,11 @@
 use chrono::{DateTime, Utc};
+use std::{
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use crate::{
+    config::DEFAULT_DEAD_PROCESS_THRESHOLD,
     error::OxanaError,
     job_envelope::{JobEnvelope, JobId},
     metrics::{
@@ -8,6 +13,7 @@ use crate::{
         QueueLengthMetricsSnapshot,
     },
     queue::{Queue, QueueConcurrency, QueueKind, QueueRuntimeConfig, QueueState},
+    runtime::RuntimeBuilder,
     stats::{Process, QueueStats, Stats},
     storage_builder::StorageBuilder,
     storage_internal::StorageInternal,
@@ -29,7 +35,7 @@ use crate::prometheus::PrometheusMetrics;
 /// use oxana::{Storage, Queue, Job};
 ///
 /// async fn example() -> Result<(), oxana::OxanaError> {
-///     let storage = Storage::builder().from_env()?.build()?;
+///     let storage = Storage::builder().build_from_env()?;
 ///
 ///     // Enqueue a job
 ///     storage.enqueue(MyQueue, MyJob { data: "hello" }).await?;
@@ -43,9 +49,33 @@ use crate::prometheus::PrometheusMetrics;
 #[derive(Clone)]
 pub struct Storage {
     pub(crate) internal: StorageInternal,
+    monitoring_settings: Arc<StorageMonitoringSettings>,
 }
 
 impl Storage {
+    pub(crate) fn new(internal: StorageInternal) -> Self {
+        Self {
+            internal,
+            monitoring_settings: Arc::new(StorageMonitoringSettings::default()),
+        }
+    }
+
+    pub(crate) fn set_dead_process_threshold(&self, threshold: Duration) {
+        *self
+            .monitoring_settings
+            .dead_process_threshold
+            .write()
+            .expect("monitoring settings lock poisoned") = threshold;
+    }
+
+    pub(crate) fn dead_process_threshold(&self) -> Duration {
+        *self
+            .monitoring_settings
+            .dead_process_threshold
+            .read()
+            .expect("monitoring settings lock poisoned")
+    }
+
     /// Creates a new [`StorageBuilder`] for configuring and building a Storage instance.
     ///
     /// # Examples
@@ -54,10 +84,28 @@ impl Storage {
     /// use oxana::Storage;
     ///
     /// let builder = Storage::builder();
-    /// let storage = builder.from_env()?.build()?;
+    /// let storage = builder.build_from_env()?;
     /// ```
     pub fn builder() -> StorageBuilder {
         StorageBuilder::new()
+    }
+
+    /// Builds a storage handle from the `REDIS_URL` environment variable.
+    pub fn from_env() -> Result<Self, OxanaError> {
+        Self::builder().build_from_env()
+    }
+
+    /// Builds a storage handle from a Redis URL.
+    pub fn from_url(url: impl Into<String>) -> Result<Self, OxanaError> {
+        Self::builder().build_from_redis_url(url)
+    }
+
+    /// Starts configuring a typed worker runtime for this storage.
+    pub fn runtime<DT>(&self, ctx: DT) -> RuntimeBuilder<DT>
+    where
+        DT: Clone + Send + Sync + 'static,
+    {
+        RuntimeBuilder::new(self.clone(), ctx)
     }
 
     /// Enqueues a job to be processed immediately.
@@ -81,7 +129,11 @@ impl Storage {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn enqueue<T: Job>(&self, queue: impl Queue, job: T) -> Result<JobId, OxanaError> {
+    pub async fn enqueue<T: Job + 'static>(
+        &self,
+        queue: impl Queue,
+        job: T,
+    ) -> Result<JobId, OxanaError> {
         self.enqueue_in(queue, job, 0).await
     }
 
@@ -108,7 +160,7 @@ impl Storage {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn enqueue_in<T: Job>(
+    pub async fn enqueue_in<T: Job + 'static>(
         &self,
         queue: impl Queue,
         job: T,
@@ -149,7 +201,7 @@ impl Storage {
     ///     Ok(())
     /// }
     /// ```
-    pub async fn enqueue_at<T: Job>(
+    pub async fn enqueue_at<T: Job + 'static>(
         &self,
         queue: impl Queue,
         job: T,
@@ -283,7 +335,7 @@ impl Storage {
     ///
     /// The full stats, or an [`OxanaError`] if the operation fails.
     pub async fn stats(&self) -> Result<Stats, OxanaError> {
-        self.internal.stats().await
+        self.internal.stats(self.dead_process_threshold()).await
     }
 
     /// Returns Sidekiq-style job execution metrics for all workers.
@@ -447,7 +499,7 @@ impl Storage {
     ///
     /// The list of processes, or an [`OxanaError`] if the operation fails.
     pub async fn processes(&self) -> Result<Vec<Process>, OxanaError> {
-        self.internal.processes().await
+        self.internal.processes(self.dead_process_threshold()).await
     }
 
     /// Returns the namespace this storage instance is using.
@@ -606,5 +658,145 @@ fn validate_dynamic_concurrency(
         Err(OxanaError::ConfigError(format!(
             "Queue {queue_key} has fixed concurrency and cannot be overridden"
         )))
+    }
+}
+
+struct StorageMonitoringSettings {
+    dead_process_threshold: RwLock<Duration>,
+}
+
+impl Default for StorageMonitoringSettings {
+    fn default() -> Self {
+        Self {
+            dead_process_threshold: RwLock::new(DEFAULT_DEAD_PROCESS_THRESHOLD),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn test_storage() -> Storage {
+        Storage::builder()
+            .build_from_redis_url("redis://127.0.0.1/0")
+            .expect("test storage should build")
+    }
+
+    #[test]
+    fn runtime_settings_defaults_match_existing_behavior() {
+        let settings = test_storage().runtime(()).settings();
+
+        assert_eq!(settings.heartbeat_interval, Duration::from_millis(500));
+        assert_eq!(settings.dead_process_threshold, Duration::from_secs(5));
+        assert_eq!(settings.resurrect_scan_interval, Duration::from_secs(2));
+        assert_eq!(settings.redis_failure_tolerance, 30);
+        assert_eq!(settings.retry_poll_interval, Duration::from_millis(300));
+        assert_eq!(settings.schedule_poll_interval, Duration::from_millis(300));
+        assert_eq!(settings.cron_initial_offset, Duration::from_secs(3));
+        assert_eq!(settings.cron_lookahead, Duration::from_secs(30 * 60));
+        assert_eq!(settings.cron_tick_interval, Duration::from_secs(1));
+        assert_eq!(settings.dequeue_timeout, Duration::from_secs(10));
+        assert_eq!(settings.dispatcher_idle_sleep, Duration::from_secs(1));
+        assert_eq!(
+            settings.throttled_queue_fallback_wait,
+            Duration::from_millis(100)
+        );
+        assert_eq!(settings.shutdown_timeout, Duration::from_secs(180));
+        assert_eq!(settings.exit_when_processed, None);
+    }
+
+    #[test]
+    fn runtime_setting_setters_override_defaults() {
+        let storage = test_storage();
+        let runtime = storage
+            .runtime(())
+            .heartbeat_interval(Duration::from_millis(11))
+            .dead_process_threshold(Duration::from_millis(12))
+            .resurrect_scan_interval(Duration::from_millis(13))
+            .redis_failure_tolerance(14)
+            .retry_poll_interval(Duration::from_millis(15))
+            .schedule_poll_interval(Duration::from_millis(16))
+            .cron_initial_offset(Duration::from_millis(17))
+            .cron_lookahead(Duration::from_millis(18))
+            .cron_tick_interval(Duration::from_millis(19))
+            .dequeue_timeout(Duration::from_millis(20))
+            .dispatcher_idle_sleep(Duration::from_millis(21))
+            .throttled_queue_fallback_wait(Duration::from_millis(22))
+            .shutdown_timeout(Duration::from_millis(23))
+            .exit_when_processed(24);
+
+        let settings = runtime.settings();
+
+        assert_eq!(settings.heartbeat_interval, Duration::from_millis(11));
+        assert_eq!(settings.dead_process_threshold, Duration::from_millis(12));
+        assert_eq!(settings.resurrect_scan_interval, Duration::from_millis(13));
+        assert_eq!(settings.redis_failure_tolerance, 14);
+        assert_eq!(settings.retry_poll_interval, Duration::from_millis(15));
+        assert_eq!(settings.schedule_poll_interval, Duration::from_millis(16));
+        assert_eq!(settings.cron_initial_offset, Duration::from_millis(17));
+        assert_eq!(settings.cron_lookahead, Duration::from_millis(18));
+        assert_eq!(settings.cron_tick_interval, Duration::from_millis(19));
+        assert_eq!(settings.dequeue_timeout, Duration::from_millis(20));
+        assert_eq!(settings.dispatcher_idle_sleep, Duration::from_millis(21));
+        assert_eq!(
+            settings.throttled_queue_fallback_wait,
+            Duration::from_millis(22)
+        );
+        assert_eq!(settings.shutdown_timeout, Duration::from_millis(23));
+        assert_eq!(settings.exit_when_processed, Some(24));
+        assert_eq!(storage.dead_process_threshold(), Duration::from_millis(12));
+    }
+
+    #[test]
+    fn runtime_loop_cadence_setters_reject_zero() {
+        fn assert_zero_duration_panics(f: impl FnOnce() + std::panic::UnwindSafe) {
+            let panic = std::panic::catch_unwind(f)
+                .expect_err("zero duration should be rejected before the runtime starts");
+            let message = panic
+                .downcast::<String>()
+                .expect("panic payload should be a string");
+            assert!(message.contains("must be greater than zero"));
+        }
+
+        assert_zero_duration_panics(|| {
+            let _runtime = test_storage()
+                .runtime(())
+                .heartbeat_interval(Duration::ZERO);
+        });
+        assert_zero_duration_panics(|| {
+            let _runtime = test_storage()
+                .runtime(())
+                .resurrect_scan_interval(Duration::ZERO);
+        });
+        assert_zero_duration_panics(|| {
+            let _runtime = test_storage()
+                .runtime(())
+                .retry_poll_interval(Duration::ZERO);
+        });
+        assert_zero_duration_panics(|| {
+            let _runtime = test_storage()
+                .runtime(())
+                .schedule_poll_interval(Duration::ZERO);
+        });
+        assert_zero_duration_panics(|| {
+            let _runtime = test_storage()
+                .runtime(())
+                .cron_tick_interval(Duration::ZERO);
+        });
+        assert_zero_duration_panics(|| {
+            let _runtime = test_storage().runtime(()).dequeue_timeout(Duration::ZERO);
+        });
+        assert_zero_duration_panics(|| {
+            let _runtime = test_storage()
+                .runtime(())
+                .dispatcher_idle_sleep(Duration::ZERO);
+        });
+        assert_zero_duration_panics(|| {
+            let _runtime = test_storage()
+                .runtime(())
+                .throttled_queue_fallback_wait(Duration::ZERO);
+        });
     }
 }

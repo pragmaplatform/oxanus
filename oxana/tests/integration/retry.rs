@@ -15,11 +15,7 @@ pub struct WorkerRedisSetWithRetry {
     state: WorkerState,
 }
 
-impl oxana::Job for WorkerRedisSetWithRetryJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<WorkerRedisSetWithRetry>()
-    }
-}
+impl oxana::Job for WorkerRedisSetWithRetryJob {}
 
 impl oxana::FromContext<WorkerState> for WorkerRedisSetWithRetry {
     fn from_context(ctx: &WorkerState) -> Self {
@@ -62,16 +58,17 @@ pub async fn test_retry() -> TestResult {
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
 
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueOne>()
-        .register_worker::<WorkerRedisSetWithRetry, WorkerRedisSetWithRetryJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueOne>()
+        .worker::<WorkerRedisSetWithRetry, WorkerRedisSetWithRetryJob>()
         .exit_when_processed(2);
 
     let random_key = uuid::Uuid::new_v4().to_string();
@@ -91,7 +88,7 @@ pub async fn test_retry() -> TestResult {
 
     assert_eq!(storage.enqueued_count(QueueOne).await?, 1);
 
-    oxana::run(config, ctx).await?;
+    runtime.run().await?;
 
     let value: Option<String> = redis_conn.get(random_key).await?;
 
@@ -114,11 +111,7 @@ pub struct WorkerStateResumeDefault {
     state: WorkerState,
 }
 
-impl oxana::Job for WorkerStateResumeDefaultJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<WorkerStateResumeDefault>()
-    }
-}
+impl oxana::Job for WorkerStateResumeDefaultJob {}
 
 impl oxana::FromContext<WorkerState> for WorkerStateResumeDefault {
     fn from_context(ctx: &WorkerState) -> Self {
@@ -168,10 +161,6 @@ pub struct WorkerStateNoResume {
 }
 
 impl oxana::Job for WorkerStateNoResumeJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<WorkerStateNoResume>()
-    }
-
     fn should_resume() -> bool {
         false
     }
@@ -273,15 +262,16 @@ where
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueOne>()
-        .register_worker::<W, A>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueOne>()
+        .worker::<W, A>()
         .exit_when_processed(2);
 
     let attempts_key = uuid::Uuid::new_v4().to_string();
@@ -291,7 +281,7 @@ where
         .enqueue(QueueOne, build_job(attempts_key, observations_key.clone()))
         .await?;
 
-    oxana::run(config, ctx).await?;
+    runtime.run().await?;
 
     let observations: Vec<String> = redis_conn.lrange(observations_key, 0, -1).await?;
     let expected_observations = expected_observations

@@ -24,9 +24,12 @@ impl WorkerBatchConfig {
 }
 
 pub trait Job: Send + serde::Serialize {
-    fn worker_name() -> &'static str
+    fn name() -> &'static str
     where
-        Self: Sized;
+        Self: Sized + 'static,
+    {
+        std::any::type_name::<Self>()
+    }
 
     fn unique_id(&self) -> Option<String> {
         None
@@ -70,9 +73,24 @@ pub struct BatchItem<Args> {
 
 #[async_trait::async_trait]
 pub trait Worker<Args: Send + 'static>: Send + Sync {
-    type Error: std::error::Error + Send + Sync;
+    type Error: IntoWorkerError + Send + Sync + 'static;
 
-    async fn run_batch(&self, jobs: Vec<BatchItem<Args>>) -> Result<(), Self::Error>;
+    async fn process(&self, job: Args, ctx: &JobContext) -> Result<(), Self::Error> {
+        self.run_batch(vec![BatchItem {
+            job,
+            ctx: ctx.clone(),
+        }])
+        .await
+    }
+
+    async fn run_batch(&self, _jobs: Vec<BatchItem<Args>>) -> Result<(), Self::Error> {
+        panic!(
+            "Worker::run_batch is not implemented for worker `{}` and job `{}`; \
+             implement `process` for single-job workers or `run_batch` for batch workers",
+            std::any::type_name::<Self>(),
+            std::any::type_name::<Args>()
+        );
+    }
 
     fn max_retries(&self, _job: &Args) -> u32 {
         2
@@ -139,9 +157,7 @@ pub trait FromContext<T> {
 
 #[async_trait::async_trait]
 pub trait Processable: Send {
-    type Error: std::error::Error + Send + Sync;
-
-    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), Self::Error>;
+    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), WorkerError>;
     fn len(&self) -> usize;
     fn max_retries(&self, index: usize) -> u32;
     fn retry_delay(&self, index: usize, retries: u32) -> u64;
@@ -150,7 +166,45 @@ pub trait Processable: Send {
     }
 }
 
-pub type BoxedProcessable<ET> = Box<dyn Processable<Error = ET>>;
+pub(crate) type WorkerError = Box<dyn std::error::Error + Send + Sync + 'static>;
+pub type BoxedProcessable = Box<dyn Processable>;
+
+#[derive(Debug)]
+pub struct BoxError(WorkerError);
+
+impl std::fmt::Display for BoxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<E> From<E> for BoxError
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn from(error: E) -> Self {
+        Self(Box::new(error))
+    }
+}
+
+pub trait IntoWorkerError {
+    fn into_worker_error(self) -> WorkerError;
+}
+
+impl<E> IntoWorkerError for E
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn into_worker_error(self) -> WorkerError {
+        Box::new(self)
+    }
+}
+
+impl IntoWorkerError for BoxError {
+    fn into_worker_error(self) -> WorkerError {
+        self.0
+    }
+}
 
 pub(crate) struct BoundJob<W, A> {
     pub worker: W,
@@ -168,17 +222,16 @@ where
     W: Worker<A> + Send + Sync + 'static,
     A: Job + Send + 'static,
 {
-    type Error = W::Error;
-
-    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), Self::Error> {
+    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), WorkerError> {
         assert_eq!(contexts.len(), 1, "single job must have one context");
         let ctx = contexts
             .into_iter()
             .next()
             .expect("single job context exists after length check");
         self.worker
-            .run_batch(vec![BatchItem { job: self.job, ctx }])
+            .process(self.job, &ctx)
             .await
+            .map_err(IntoWorkerError::into_worker_error)
     }
 
     fn len(&self) -> usize {
@@ -206,9 +259,7 @@ where
     W: Worker<A> + Send + Sync + 'static,
     A: Job + Send + 'static,
 {
-    type Error = W::Error;
-
-    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), Self::Error> {
+    async fn process(self: Box<Self>, contexts: Vec<JobContext>) -> Result<(), WorkerError> {
         assert_eq!(
             self.jobs.len(),
             contexts.len(),
@@ -220,7 +271,10 @@ where
             .zip(contexts)
             .map(|(job, ctx)| BatchItem { job, ctx })
             .collect();
-        self.worker.run_batch(items).await
+        self.worker
+            .run_batch(items)
+            .await
+            .map_err(IntoWorkerError::into_worker_error)
     }
 
     fn len(&self) -> usize {
@@ -255,11 +309,11 @@ mod tests {
 
     #[derive(oxana::Registry)]
     #[allow(dead_code)]
-    struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext, WorkerError>);
+    struct ComponentRegistry(oxana::ComponentRegistry<WorkerContext>);
 
     #[derive(oxana::Registry)]
     #[allow(dead_code)]
-    struct ComponentRegistryFmt(oxana::ComponentRegistry<WorkerContext, std::fmt::Error>);
+    struct ComponentRegistryFmt(oxana::ComponentRegistry<WorkerContext>);
 
     #[tokio::test]
     async fn test_define_worker_with_macro() {
@@ -283,10 +337,10 @@ mod tests {
             oxana::Worker::<TestJob>::max_retries(&TestWorker, &TestJob {}),
             2
         );
-        assert_eq!(TestJob::worker_name(), std::any::type_name::<TestWorker>());
+        assert_eq!(TestJob::name(), std::any::type_name::<TestJob>());
 
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = TestWorkerCustomError, on_conflict = Replace)]
+        #[oxana(on_conflict = Replace)]
         struct TestWorkerCustomErrorJob {}
 
         #[derive(oxana::Worker)]
@@ -327,7 +381,6 @@ mod tests {
         );
 
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = TestWorkerUniqueId)]
         #[oxana(unique_id = "test_worker_{id}")]
         struct TestWorkerUniqueIdJob {
             id: i32,
@@ -369,7 +422,6 @@ mod tests {
         }
 
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = TestWorkerNestedUniqueId)]
         #[oxana(unique_id(fmt = "test_worker_{id}_{task}", id = self.id, task = self.task.name))]
         struct TestWorkerNestedUniqueIdJob {
             id: i32,
@@ -409,7 +461,6 @@ mod tests {
         );
 
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = TestWorkerCustomUniqueId)]
         #[oxana(unique_id = Self::unique_id)]
         #[oxana(throttle_cost = Self::throttle_cost)]
         struct TestWorkerCustomUniqueIdJob {
@@ -500,7 +551,6 @@ mod tests {
         assert_eq!(envelope.meta.throttle_cost, Some(7));
 
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = TestWorkerExplicitJobHooks)]
         #[oxana(unique_id = TestWorkerExplicitJobHooksJob::unique_id)]
         #[oxana(throttle_cost = TestWorkerExplicitJobHooksJob::throttle_cost)]
         struct TestWorkerExplicitJobHooksJob {
@@ -545,7 +595,6 @@ mod tests {
         assert_eq!(explicit_envelope.meta.throttle_cost, Some(11));
 
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = TestWorkerBatch)]
         struct TestWorkerBatchJob {
             value: u32,
         }
@@ -570,6 +619,58 @@ mod tests {
             batch_config.timeout(),
             std::time::Duration::from_millis(150)
         );
+    }
+
+    #[tokio::test]
+    async fn default_worker_run_batch_panics_instead_of_recursing() {
+        #[derive(Debug, Serialize, Deserialize, oxana::Job)]
+        struct MissingWorkerHookJob;
+
+        struct MissingWorkerHook;
+
+        impl oxana::FromContext<()> for MissingWorkerHook {
+            fn from_context(_ctx: &()) -> Self {
+                Self
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl oxana::Worker<MissingWorkerHookJob> for MissingWorkerHook {
+            type Error = WorkerError;
+        }
+
+        let envelope = JobEnvelope::new("default".to_owned(), MissingWorkerHookJob)
+            .expect("test job should serialize");
+        let ctx = oxana::JobContext {
+            meta: envelope.meta.clone(),
+            state: crate::JobState::new(
+                oxana::Storage::builder()
+                    .build_from_redis_url("redis://127.0.0.1/0")
+                    .expect("test storage should build"),
+                envelope.id,
+                envelope.meta.state,
+            ),
+        };
+
+        let join = tokio::spawn(async move {
+            <MissingWorkerHook as oxana::Worker<MissingWorkerHookJob>>::process(
+                &MissingWorkerHook,
+                MissingWorkerHookJob,
+                &ctx,
+            )
+            .await
+        })
+        .await;
+
+        let panic = join.expect_err("missing worker hook should panic");
+        let message = panic
+            .try_into_panic()
+            .expect("join error should contain panic payload")
+            .downcast::<String>()
+            .expect("panic payload should be a string");
+        assert!(message.contains("Worker::run_batch is not implemented"));
+        assert!(message.contains("MissingWorkerHook"));
+        assert!(message.contains("MissingWorkerHookJob"));
     }
 
     #[tokio::test]
@@ -656,19 +757,13 @@ mod tests {
     fn test_define_job_with_resume_false() {
         use crate as oxana;
 
-        struct NoResumeWorker;
-
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = NoResumeWorker)]
         #[oxana(resume = false)]
         struct NoResumeJob {}
 
         assert!(!<NoResumeJob as oxana::Job>::should_resume());
 
-        struct DefaultResumeWorker;
-
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = DefaultResumeWorker)]
         struct DefaultResumeJob {}
 
         assert!(<DefaultResumeJob as oxana::Job>::should_resume());
@@ -680,10 +775,7 @@ mod tests {
         use serde_json::json;
         use std::collections::HashMap;
 
-        struct DefaultOffWorker;
-
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = DefaultOffWorker)]
         struct DefaultOffJob {
             value: String,
         }
@@ -699,10 +791,7 @@ mod tests {
         #[derive(Debug, Serialize, Deserialize)]
         struct CustomerId(i32);
 
-        struct NamedOnDemandWorker;
-
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = NamedOnDemandWorker)]
         #[oxana(on_demand)]
         #[serde(rename_all = "camelCase")]
         struct NamedOnDemandJob {
@@ -738,10 +827,7 @@ mod tests {
             }))
         );
 
-        struct TupleOnDemandWorker;
-
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = TupleOnDemandWorker)]
         #[oxana(on_demand)]
         struct TupleOnDemandJob(String, u64, Option<bool>, Vec<String>);
 
@@ -750,10 +836,7 @@ mod tests {
             Some(json!(["", 0, null, []]))
         );
 
-        struct UnitOnDemandWorker;
-
         #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-        #[oxana(worker = UnitOnDemandWorker)]
         #[oxana(on_demand)]
         struct UnitOnDemandJob;
 

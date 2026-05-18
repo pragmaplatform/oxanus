@@ -40,7 +40,6 @@ impl FooBatchWorker {
 }
 
 #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-#[oxana(worker = ContextBatchWorker)]
 struct ContextBatchJob {
     seen_key: String,
     value: String,
@@ -68,7 +67,6 @@ impl ContextBatchWorker {
 }
 
 #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-#[oxana(worker = RetryBatchWorker)]
 struct RetryBatchJob {}
 
 #[derive(oxana::Worker)]
@@ -92,7 +90,6 @@ impl RetryBatchWorker {
 }
 
 #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-#[oxana(worker = PanicBatchWorker)]
 struct PanicBatchJob {}
 
 #[derive(oxana::Worker)]
@@ -112,7 +109,6 @@ impl PanicBatchWorker {
 }
 
 #[derive(Debug, Serialize, Deserialize, oxana::Job)]
-#[oxana(worker = SizingBatchWorker)]
 struct SizingBatchJob {
     sizes_key: String,
 }
@@ -163,15 +159,16 @@ pub async fn test_batch_worker_processes_full_batch_once() -> TestResult {
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueBatch>()
-        .register_worker::<FooBatchWorker, FooBatchJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueBatch>()
+        .worker::<FooBatchWorker, FooBatchJob>()
         .exit_when_processed(3);
 
     let values_key = uuid::Uuid::new_v4().to_string();
@@ -190,7 +187,7 @@ pub async fn test_batch_worker_processes_full_batch_once() -> TestResult {
             .await?;
     }
 
-    oxana::run(config, ctx).await?;
+    runtime.run().await?;
 
     let calls: Option<i64> = redis_conn.get(calls_key).await?;
     let values: Vec<String> = redis_conn.lrange(values_key, 0, -1).await?;
@@ -206,15 +203,16 @@ pub async fn test_batch_worker_flushes_partial_batch_after_timeout() -> TestResu
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueBatch>()
-        .register_worker::<FooBatchWorker, FooBatchJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueBatch>()
+        .worker::<FooBatchWorker, FooBatchJob>()
         .exit_when_processed(2);
 
     let values_key = uuid::Uuid::new_v4().to_string();
@@ -233,7 +231,7 @@ pub async fn test_batch_worker_flushes_partial_batch_after_timeout() -> TestResu
             .await?;
     }
 
-    oxana::run(config, ctx).await?;
+    runtime.run().await?;
 
     let calls: Option<i64> = redis_conn.get(calls_key).await?;
     let values: Vec<String> = redis_conn.lrange(values_key, 0, -1).await?;
@@ -249,15 +247,16 @@ pub async fn test_batch_worker_kills_only_invalid_jobs_in_mixed_batch() -> TestR
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueBatch>()
-        .register_worker::<FooBatchWorker, FooBatchJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueBatch>()
+        .worker::<FooBatchWorker, FooBatchJob>()
         .exit_when_processed(2);
 
     let values_key = uuid::Uuid::new_v4().to_string();
@@ -283,7 +282,7 @@ pub async fn test_batch_worker_kills_only_invalid_jobs_in_mixed_batch() -> TestR
             .await?;
     }
 
-    oxana::run(config, ctx).await?;
+    runtime.run().await?;
 
     let calls: Option<i64> = redis_conn.get(calls_key).await?;
     let values: Vec<String> = redis_conn.lrange(values_key, 0, -1).await?;
@@ -304,21 +303,22 @@ pub async fn test_batch_worker_kills_only_invalid_jobs_in_mixed_batch() -> TestR
 #[tokio::test]
 pub async fn test_batch_worker_retries_each_job_after_batch_error() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool)?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueBatch>()
-        .register_worker::<RetryBatchWorker, RetryBatchJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueBatch>()
+        .worker::<RetryBatchWorker, RetryBatchJob>()
         .exit_when_processed(4);
 
     storage.enqueue(QueueBatch, RetryBatchJob {}).await?;
     storage.enqueue(QueueBatch, RetryBatchJob {}).await?;
 
-    let stats = oxana::run(config, ctx).await?;
+    let stats = runtime.run().await?;
 
     assert_eq!(stats.processed, 4);
     assert_eq!(stats.failed, 2);
@@ -334,21 +334,22 @@ pub async fn test_batch_worker_retries_each_job_after_batch_error() -> TestResul
 #[tokio::test]
 pub async fn test_batch_worker_panic_marks_each_job_panicked() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool)?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueBatch>()
-        .register_worker::<PanicBatchWorker, PanicBatchJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueBatch>()
+        .worker::<PanicBatchWorker, PanicBatchJob>()
         .exit_when_processed(2);
 
     storage.enqueue(QueueBatch, PanicBatchJob {}).await?;
     storage.enqueue(QueueBatch, PanicBatchJob {}).await?;
 
-    let stats = oxana::run(config, ctx).await?;
+    let stats = runtime.run().await?;
 
     assert_eq!(stats.processed, 2);
     assert_eq!(stats.failed, 2);
@@ -366,15 +367,16 @@ pub async fn test_batch_worker_never_exceeds_batch_size_with_higher_queue_concur
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool)?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueBatchHighConcurrency>()
-        .register_worker::<SizingBatchWorker, SizingBatchJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueBatchHighConcurrency>()
+        .worker::<SizingBatchWorker, SizingBatchJob>()
         .exit_when_processed(5);
 
     let sizes_key = uuid::Uuid::new_v4().to_string();
@@ -389,7 +391,7 @@ pub async fn test_batch_worker_never_exceeds_batch_size_with_higher_queue_concur
             .await?;
     }
 
-    oxana::run(config, ctx).await?;
+    runtime.run().await?;
 
     let sizes: Vec<usize> = redis_conn.lrange(sizes_key, 0, -1).await?;
 
@@ -404,16 +406,17 @@ pub async fn test_batch_worker_never_exceeds_batch_size_with_higher_queue_concur
 pub async fn test_batch_worker_kills_all_invalid_jobs_without_processing() -> TestResult {
     let redis_pool = setup();
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool)?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueBatch>()
-        .register_worker::<FooBatchWorker, FooBatchJob>()
-        .with_graceful_shutdown(async {
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueBatch>()
+        .worker::<FooBatchWorker, FooBatchJob>()
+        .shutdown_on(async {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             Ok(())
         });
@@ -430,7 +433,7 @@ pub async fn test_batch_worker_kills_all_invalid_jobs_without_processing() -> Te
             .await?;
     }
 
-    let stats = oxana::run(config, ctx).await?;
+    let stats = runtime.run().await?;
 
     assert_eq!(stats.processed, 0);
     assert_eq!(storage.dead_count().await?, 3);
@@ -445,15 +448,16 @@ pub async fn test_batch_worker_receives_context_per_job() -> TestResult {
     let redis_pool = setup();
     let mut redis_conn = redis_pool.get().await?;
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<QueueBatch>()
-        .register_worker::<ContextBatchWorker, ContextBatchJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<QueueBatch>()
+        .worker::<ContextBatchWorker, ContextBatchJob>()
         .exit_when_processed(2);
 
     let seen_key = uuid::Uuid::new_v4().to_string();
@@ -476,7 +480,7 @@ pub async fn test_batch_worker_receives_context_per_job() -> TestResult {
         )
         .await?;
 
-    oxana::run(config, ctx).await?;
+    runtime.run().await?;
 
     let first_seen: Option<String> = redis_conn.hget(&seen_key, "first").await?;
     let second_seen: Option<String> = redis_conn.hget(&seen_key, "second").await?;
@@ -495,7 +499,7 @@ fn invalid_batch_envelope(values_key: String, calls_key: String) -> oxana::JobEn
         id: id.clone(),
         queue: "batch".to_string(),
         job: oxana::JobData {
-            name: std::any::type_name::<FooBatchWorker>().to_string(),
+            name: std::any::type_name::<FooBatchJob>().to_string(),
             args: serde_json::json!({
                 "values_key": values_key,
                 "calls_key": calls_key

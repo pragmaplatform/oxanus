@@ -27,11 +27,7 @@ struct MetricSuccessJob {
     sleep_ms: u64,
 }
 
-impl oxana::Job for MetricSuccessJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<MetricSuccessWorker>()
-    }
-}
+impl oxana::Job for MetricSuccessJob {}
 
 struct MetricSuccessWorker;
 
@@ -59,11 +55,7 @@ impl oxana::Worker<MetricSuccessJob> for MetricSuccessWorker {
 #[derive(Debug, Serialize, Deserialize)]
 struct MetricFailJob;
 
-impl oxana::Job for MetricFailJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<MetricFailWorker>()
-    }
-}
+impl oxana::Job for MetricFailJob {}
 
 struct MetricFailWorker;
 
@@ -92,11 +84,7 @@ impl oxana::Worker<MetricFailJob> for MetricFailWorker {
 #[derive(Debug, Serialize, Deserialize)]
 struct MetricPanicJob;
 
-impl oxana::Job for MetricPanicJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<MetricPanicWorker>()
-    }
-}
+impl oxana::Job for MetricPanicJob {}
 
 struct MetricPanicWorker;
 
@@ -111,11 +99,7 @@ struct MetricBatchJob {
     sleep_ms: u64,
 }
 
-impl oxana::Job for MetricBatchJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<MetricBatchWorker>()
-    }
-}
+impl oxana::Job for MetricBatchJob {}
 
 struct MetricBatchWorker;
 
@@ -162,16 +146,17 @@ impl oxana::Worker<MetricPanicJob> for MetricPanicWorker {
 #[tokio::test]
 async fn test_job_metrics_record_job_counts_execution_counts_and_ttls() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxana::ContextValue::new(());
+    let ctx = ();
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<MetricsQueueOne>()
-        .register_queue::<MetricsQueueTwo>()
-        .register_worker::<MetricSuccessWorker, MetricSuccessJob>()
-        .register_worker::<MetricFailWorker, MetricFailJob>()
-        .register_worker::<MetricPanicWorker, MetricPanicJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<MetricsQueueOne>()
+        .queue::<MetricsQueueTwo>()
+        .worker::<MetricSuccessWorker, MetricSuccessJob>()
+        .worker::<MetricFailWorker, MetricFailJob>()
+        .worker::<MetricPanicWorker, MetricPanicJob>()
         .exit_when_processed(4);
 
     storage
@@ -183,7 +168,7 @@ async fn test_job_metrics_record_job_counts_execution_counts_and_ttls() -> TestR
     storage.enqueue(MetricsQueueOne, MetricFailJob).await?;
     storage.enqueue(MetricsQueueTwo, MetricPanicJob).await?;
 
-    let run_stats = oxana::run(config, ctx).await?;
+    let run_stats = runtime.run().await?;
     assert_eq!(run_stats.processed, 4);
     assert_eq!(run_stats.failed, 2);
     assert_eq!(run_stats.panicked, 1);
@@ -212,13 +197,13 @@ async fn test_job_metrics_record_job_counts_execution_counts_and_ttls() -> TestR
     assert_eq!(snapshot.workers.len(), 3);
 
     let success = oxana::MetricIdentity {
-        worker: std::any::type_name::<MetricSuccessWorker>().to_string(),
+        worker: std::any::type_name::<MetricSuccessJob>().to_string(),
     };
     let failure = oxana::MetricIdentity {
-        worker: std::any::type_name::<MetricFailWorker>().to_string(),
+        worker: std::any::type_name::<MetricFailJob>().to_string(),
     };
     let panic = oxana::MetricIdentity {
-        worker: std::any::type_name::<MetricPanicWorker>().to_string(),
+        worker: std::any::type_name::<MetricPanicJob>().to_string(),
     };
 
     let success_metrics = storage
@@ -286,13 +271,14 @@ async fn test_job_metrics_record_job_counts_execution_counts_and_ttls() -> TestR
 #[tokio::test]
 async fn test_batch_metrics_record_one_execution_time_for_the_batch() -> TestResult {
     let redis_pool = setup();
-    let ctx = oxana::ContextValue::new(());
+    let ctx = ();
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool)?;
-    let config = oxana::Config::new(&storage)
-        .register_queue::<MetricsQueueOne>()
-        .register_worker::<MetricBatchWorker, MetricBatchJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .queue::<MetricsQueueOne>()
+        .worker::<MetricBatchWorker, MetricBatchJob>()
         .exit_when_processed(2);
 
     storage
@@ -302,12 +288,12 @@ async fn test_batch_metrics_record_one_execution_time_for_the_batch() -> TestRes
         .enqueue(MetricsQueueOne, MetricBatchJob { sleep_ms: 250 })
         .await?;
 
-    let run_stats = oxana::run(config, ctx).await?;
+    let run_stats = runtime.run().await?;
     assert_eq!(run_stats.processed, 2);
     assert_eq!(run_stats.succeeded, 2);
 
     let identity = oxana::MetricIdentity {
-        worker: std::any::type_name::<MetricBatchWorker>().to_string(),
+        worker: std::any::type_name::<MetricBatchJob>().to_string(),
     };
     let metrics = storage
         .job_metrics_for(&identity, oxana::JobMetricsQuery::default())

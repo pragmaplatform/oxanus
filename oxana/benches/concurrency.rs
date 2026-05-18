@@ -23,11 +23,7 @@ pub struct WorkerState {}
 #[oxana(context = WorkerState, error = ServiceError, registry = None)]
 pub struct WorkerNoop;
 
-impl oxana::Job for WorkerNoopJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<WorkerNoop>()
-    }
-}
+impl oxana::Job for WorkerNoopJob {}
 
 impl WorkerNoop {
     async fn process(
@@ -63,12 +59,12 @@ macro_rules! bench_jobs {
         #[divan::bench(args = CONCURRENCY, sample_size = 1, sample_count = 1)]
         fn $name(bencher: divan::Bencher, n: usize) {
             let rt = &tokio::runtime::Runtime::new().unwrap();
-            let config = build_config(n);
-            rt.block_on(async { setup(config, JOBS_COUNT, $sleep_ms).await.unwrap() });
+            let storage = build_storage();
+            rt.block_on(async { setup(&storage, JOBS_COUNT, $sleep_ms).await.unwrap() });
 
             bencher.bench(|| {
                 rt.block_on(async {
-                    execute(n, JOBS_COUNT).await.unwrap();
+                    execute(storage.clone(), n, JOBS_COUNT).await.unwrap();
                 })
             });
         }
@@ -81,13 +77,12 @@ bench_jobs!(run_1000_jobs_taking_2_ms, 2);
 bench_jobs!(run_1000_jobs_taking_10_ms, 10);
 
 async fn setup(
-    config: oxana::Config<WorkerState, ServiceError>,
+    storage: &oxana::Storage,
     jobs_count: u64,
     sleep_ms: u64,
 ) -> Result<(), oxana::OxanaError> {
     for _ in 0..jobs_count {
-        config
-            .storage
+        storage
             .enqueue(QueueOne, WorkerNoopJob { sleep_ms })
             .await?;
     }
@@ -95,11 +90,19 @@ async fn setup(
     Ok(())
 }
 
-async fn execute(concurrency: usize, jobs_count: u64) -> Result<(), oxana::OxanaError> {
-    let config = build_config(concurrency).exit_when_processed(jobs_count);
-    let ctx = oxana::ContextValue::new(WorkerState {});
+async fn execute(
+    storage: oxana::Storage,
+    concurrency: usize,
+    jobs_count: u64,
+) -> Result<(), oxana::OxanaError> {
+    let ctx = WorkerState {};
+    let runtime = storage
+        .runtime(ctx)
+        .queue_with_concurrency::<QueueOne>(concurrency)
+        .worker::<WorkerNoop, WorkerNoopJob>()
+        .exit_when_processed(jobs_count);
 
-    let stats = oxana::run(config, ctx).await?;
+    let stats = runtime.run().await?;
 
     assert_eq!(stats.processed, jobs_count);
     assert_eq!(stats.succeeded, jobs_count);
@@ -119,12 +122,9 @@ fn redis_pool() -> deadpool_redis::Pool {
         .expect("Failed to create Redis pool")
 }
 
-fn build_config(concurrency: usize) -> oxana::Config<WorkerState, ServiceError> {
+fn build_storage() -> oxana::Storage {
     dotenvy::from_filename(".env.test").ok();
-    let storage = oxana::Storage::builder()
+    oxana::Storage::builder()
         .build_from_pool(redis_pool())
-        .expect("Failed to build storage");
-    oxana::Config::new(&storage)
-        .register_queue_with_concurrency::<QueueOne>(concurrency)
-        .register_worker::<WorkerNoop, WorkerNoopJob>()
+        .expect("Failed to build storage")
 }

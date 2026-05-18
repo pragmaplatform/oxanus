@@ -99,7 +99,7 @@ pub fn expand_derive_worker(input: DeriveInput) -> TokenStream {
 
     let type_error = match &args.error {
         Some(error) => quote!(#error),
-        None => quote!(WorkerError),
+        None => quote!(oxana::BoxError),
     };
 
     let worker_impl = expand_worker_impl(struct_ident, &type_args, &type_error, &args);
@@ -138,17 +138,23 @@ fn expand_worker_impl(
     let batch_config = expand_batch_config(struct_ident, args);
     let process = if batch_config.is_some() {
         quote! {
+            async fn process(&self, job: #type_args, ctx: &oxana::JobContext) -> Result<(), Self::Error> {
+                #struct_ident::process_batch(self, vec![oxana::BatchItem {
+                    job,
+                    ctx: ctx.clone(),
+                }]).await?;
+                Ok(())
+            }
+
             async fn run_batch(&self, jobs: Vec<oxana::BatchItem<#type_args>>) -> Result<(), Self::Error> {
-                self.process_batch(jobs).await
+                #struct_ident::process_batch(self, jobs).await?;
+                Ok(())
             }
         }
     } else {
         quote! {
-            async fn run_batch(&self, jobs: Vec<oxana::BatchItem<#type_args>>) -> Result<(), Self::Error> {
-                for oxana::BatchItem { job, ctx } in jobs {
-                    self.process(job, &ctx).await?;
-                }
-
+            async fn process(&self, job: #type_args, ctx: &oxana::JobContext) -> Result<(), Self::Error> {
+                #struct_ident::process(self, job, ctx).await?;
                 Ok(())
             }
         }
@@ -224,7 +230,7 @@ fn expand_registry(
     struct_ident: &Ident,
     type_args: &TokenStream,
     type_context: &TokenStream,
-    type_error: &TokenStream,
+    _type_error: &TokenStream,
     args: &OxanaArgs,
 ) -> TokenStream {
     let component_registry = match &args.registry {
@@ -240,9 +246,10 @@ fn expand_registry(
                     type_name: stringify!(#struct_ident),
                     definition: || {
                         oxana::ComponentDefinition::Worker(oxana::WorkerConfig {
-                            name: std::any::type_name::<#struct_ident>().to_owned(),
-                            factory: oxana::job_factory::<#struct_ident, #type_args, #type_context, #type_error>,
-                            batch_factory: oxana::job_batch_factory::<#struct_ident, #type_args, #type_context, #type_error>,
+                            name: <#type_args as oxana::Job>::name().to_owned(),
+                            legacy_names: vec![std::any::type_name::<#struct_ident>().to_owned()],
+                            factory: oxana::job_factory::<#struct_ident, #type_args, #type_context>,
+                            batch_factory: oxana::job_batch_factory::<#struct_ident, #type_args, #type_context>,
                             batch_config: <#struct_ident as oxana::Worker<#type_args>>::batch_config(),
                             on_demand: <#type_args as oxana::Job>::on_demand_args_template().map(|args_template| {
                                 oxana::OnDemandJobRegistration {

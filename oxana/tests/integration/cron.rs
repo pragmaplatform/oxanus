@@ -11,11 +11,7 @@ pub struct CronWorkerRedisCounter {
     state: WorkerState,
 }
 
-impl oxana::Job for CronWorkerRedisCounterJob {
-    fn worker_name() -> &'static str {
-        std::any::type_name::<CronWorkerRedisCounter>()
-    }
-}
+impl oxana::Job for CronWorkerRedisCounterJob {}
 
 impl oxana::FromContext<WorkerState> for CronWorkerRedisCounter {
     fn from_context(ctx: &WorkerState) -> Self {
@@ -53,18 +49,19 @@ pub async fn test_cron() -> TestResult {
     let mut redis_conn = redis_pool.get().await?;
     let _: i64 = redis_conn.del("cron:counter").await?;
 
-    let ctx = oxana::ContextValue::new(WorkerState {
+    let ctx = WorkerState {
         redis: redis_pool.clone(),
-    });
+    };
 
     let storage = oxana::Storage::builder()
         .namespace(random_string())
         .build_from_pool(redis_pool.clone())?;
-    let config = oxana::Config::new(&storage)
-        .register_worker::<CronWorkerRedisCounter, CronWorkerRedisCounterJob>()
+    let runtime = storage
+        .runtime(ctx)
+        .worker::<CronWorkerRedisCounter, CronWorkerRedisCounterJob>()
         .exit_when_processed(2);
 
-    oxana::run(config, ctx).await?;
+    runtime.run().await?;
 
     let value: Option<i64> = redis_conn.get("cron:counter").await?;
 

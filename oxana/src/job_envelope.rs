@@ -56,8 +56,8 @@ pub enum JobConflictStrategy {
 }
 
 impl JobEnvelope {
-    pub(crate) fn new<T: Job>(queue: String, job: T) -> Result<Self, OxanaError> {
-        let job_name = T::worker_name().to_string();
+    pub(crate) fn new<T: Job + 'static>(queue: String, job: T) -> Result<Self, OxanaError> {
+        let job_name = T::name().to_string();
         let unique_id = job.unique_id();
         let unique = unique_id.is_some();
         let resurrect = T::should_resurrect();
@@ -92,7 +92,7 @@ impl JobEnvelope {
         })
     }
 
-    pub(crate) fn new_scheduled<T: Job>(
+    pub(crate) fn new_scheduled<T: Job + 'static>(
         queue: String,
         job: T,
         scheduled_at: DateTime<Utc>,

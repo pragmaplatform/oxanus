@@ -8,6 +8,7 @@ pub struct StorageBuilder {
     namespace: Option<String>,
     max_pool_size: Option<usize>,
     timeouts: Option<StorageBuilderTimeouts>,
+    redis_response_timeout: Option<Duration>,
 }
 
 #[derive(Clone, Copy)]
@@ -59,6 +60,7 @@ impl StorageBuilder {
             namespace: None,
             max_pool_size: None,
             timeouts: None,
+            redis_response_timeout: None,
         }
     }
 
@@ -77,16 +79,21 @@ impl StorageBuilder {
         self
     }
 
+    pub fn redis_response_timeout(mut self, timeout: Duration) -> Self {
+        self.redis_response_timeout = Some(timeout);
+        self
+    }
+
     pub fn build_from_redis_url(self, url: impl Into<String>) -> Result<Storage, OxanaError> {
         let pool = Self::build_redis_pool(
             url,
             self.max_pool_size.unwrap_or(50),
             self.timeouts.unwrap_or_default(),
+            self.redis_response_timeout
+                .unwrap_or(Duration::from_secs(60)),
         )?;
 
-        Ok(Storage {
-            internal: StorageInternal::new(pool, self.namespace),
-        })
+        Ok(Storage::new(StorageInternal::new(pool, self.namespace)))
     }
 
     pub fn build_from_redis_urls(
@@ -96,18 +103,25 @@ impl StorageBuilder {
     ) -> Result<Storage, OxanaError> {
         let max_pool_size = self.max_pool_size.unwrap_or(50);
         let timeouts = self.timeouts.unwrap_or_default();
-        let pool = Self::build_redis_pool(url, max_pool_size, timeouts)?;
-        let stats_pool = Self::build_redis_pool(stats_url, max_pool_size, timeouts)?;
+        let redis_response_timeout = self
+            .redis_response_timeout
+            .unwrap_or(Duration::from_secs(60));
+        let pool = Self::build_redis_pool(url, max_pool_size, timeouts, redis_response_timeout)?;
+        let stats_pool =
+            Self::build_redis_pool(stats_url, max_pool_size, timeouts, redis_response_timeout)?;
 
-        Ok(Storage {
-            internal: StorageInternal::with_stats_pool(pool, stats_pool, self.namespace),
-        })
+        Ok(Storage::new(StorageInternal::with_stats_pool(
+            pool,
+            stats_pool,
+            self.namespace,
+        )))
     }
 
     fn build_redis_pool(
         url: impl Into<String>,
         max_pool_size: usize,
         timeouts: StorageBuilderTimeouts,
+        redis_response_timeout: Duration,
     ) -> Result<deadpool_redis::Pool, OxanaError> {
         let mut cfg = deadpool_redis::Config::from_url(url);
         cfg.pool = Some(deadpool_redis::PoolConfig {
@@ -118,12 +132,12 @@ impl StorageBuilder {
 
         Ok(cfg
             .builder()?
-            .post_create(Hook::sync_fn(|conn, _| {
+            .post_create(Hook::sync_fn(move |conn, _| {
                 // redis 1.0 introduced a default 500ms response_timeout on
                 // MultiplexedConnection. This causes blocking Redis commands
                 // (BLMOVE, BLPOP, etc.) to time out prematurely. Disable it
                 // so that command-level timeouts govern blocking behavior.
-                conn.set_response_timeout(Duration::from_secs(60));
+                conn.set_response_timeout(redis_response_timeout);
                 Ok(())
             }))
             .runtime(deadpool_redis::Runtime::Tokio1)
@@ -135,7 +149,8 @@ impl StorageBuilder {
     }
 
     pub fn build_from_env_var(self, var_name: &str) -> Result<Storage, OxanaError> {
-        let url = std::env::var(var_name).unwrap_or_else(|_| panic!("{var_name} is not set"));
+        let url = std::env::var(var_name)
+            .map_err(|err| OxanaError::ConfigError(format!("{var_name} is not set: {err}")))?;
         match std::env::var("REDIS_STATS_URL") {
             Ok(stats_url) => self.build_from_redis_urls(url, stats_url),
             Err(_) => self.build_from_redis_url(url),
@@ -144,7 +159,7 @@ impl StorageBuilder {
 
     pub fn build_from_pool(self, pool: deadpool_redis::Pool) -> Result<Storage, OxanaError> {
         let internal = StorageInternal::new(pool, self.namespace);
-        Ok(Storage { internal })
+        Ok(Storage::new(internal))
     }
 
     pub fn build_from_pools(
@@ -153,7 +168,7 @@ impl StorageBuilder {
         stats_pool: deadpool_redis::Pool,
     ) -> Result<Storage, OxanaError> {
         let internal = StorageInternal::with_stats_pool(pool, stats_pool, self.namespace);
-        Ok(Storage { internal })
+        Ok(Storage::new(internal))
     }
 }
 

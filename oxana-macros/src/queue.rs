@@ -12,6 +12,7 @@ struct OxanaArgs {
     key: Option<String>,
     prefix: Option<String>,
     concurrency: Option<ConcurrencyArg>,
+    discovery_interval_ms: Option<u64>,
     throttle: Option<ThrottleArgs>,
 }
 
@@ -115,7 +116,8 @@ pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
 
     let struct_ident = &input.ident;
 
-    let kind = if args.prefix.is_some() {
+    let is_dynamic = args.prefix.is_some();
+    let kind = if is_dynamic {
         if num_fields == 0 {
             abort!(input.ident, "Dynamic queues must have struct fields.");
         }
@@ -140,6 +142,15 @@ pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
     let concurrency = match args.concurrency {
         Some(ConcurrencyArg::Fixed(v)) => quote!(.concurrency(#v)),
         Some(ConcurrencyArg::Dynamic(v)) => quote!(.dynamic_concurrency(#v)),
+        None => quote!(),
+    };
+
+    let discovery_interval = match args.discovery_interval_ms {
+        Some(0) => abort!(
+            input.ident,
+            "discovery_interval_ms must be greater than zero"
+        ),
+        Some(v) => quote!(.discovery_interval(std::time::Duration::from_millis(#v))),
         None => quote!(),
     };
 
@@ -176,12 +187,28 @@ pub fn expand_derive_queue(input: DeriveInput) -> TokenStream {
         quote!()
     };
 
+    let key_impl = if is_dynamic {
+        quote! {
+            let value = serde_json::to_value(self).unwrap_or_default();
+            format!("{}#{}", #key, oxana::value_to_queue_key(value))
+        }
+    } else {
+        quote! {
+            #key.to_string()
+        }
+    };
+
     quote! {
         #[automatically_derived]
         impl oxana::Queue for #struct_ident {
+            fn key(&self) -> String {
+                #key_impl
+            }
+
             fn to_config() -> oxana::QueueConfig {
                 oxana::QueueConfig::#kind(#key)
                     #concurrency
+                    #discovery_interval
                     #throttle
             }
         }

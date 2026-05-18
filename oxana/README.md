@@ -42,7 +42,7 @@ use oxana::Storage;
 use serde::{Serialize, Deserialize};
 
 #[derive(oxana::Registry)]
-struct ComponentRegistry(oxana::ComponentRegistry<MyContext, MyError>);
+struct ComponentRegistry(oxana::ComponentRegistry<MyContext>);
 
 #[derive(Debug, thiserror::Error)]
 enum MyError {}
@@ -56,6 +56,7 @@ struct MyJob {
 }
 
 #[derive(oxana::Worker)]
+#[oxana(context = MyContext)]
 struct MyWorker;
 
 impl MyWorker {
@@ -65,19 +66,19 @@ impl MyWorker {
     }
 }
 
-#[derive(Serialize, oxana::Queue)]
+#[derive(oxana::Queue)]
 #[oxana(key = "my_queue", concurrency = 2)]
 struct MyQueue;
 
 #[tokio::main]
 async fn main() -> Result<(), oxana::OxanaError> {
-    let ctx = oxana::ContextValue::new(MyContext {});
-    let storage = Storage::builder().build_from_env()?;
-    let config = ComponentRegistry::build_config(&storage)
-        .with_graceful_shutdown(tokio::signal::ctrl_c());
+    let storage = Storage::from_env()?;
+    let runtime = storage
+        .runtime(MyContext {})
+        .register::<ComponentRegistry>();
 
     storage.enqueue(MyQueue, MyJob { data: "hello".into() }).await?;
-    oxana::run(config, ctx).await?;
+    runtime.run().await?;
     Ok(())
 }
 ```
@@ -91,12 +92,14 @@ The `oxana-web` crate provides a built-in dashboard for monitoring jobs, queues,
 ```rust
 use oxana_web::OxanaWebState;
 
-let config = ComponentRegistry::build_config(&storage)
-    .with_graceful_shutdown(tokio::signal::ctrl_c());
+let runtime = storage
+    .runtime(MyContext {})
+    .register::<ComponentRegistry>();
+let catalog = runtime.catalog();
 
 let oxana_router = oxana_web::router(OxanaWebState::new(
-    config.storage.clone(),
-    config.catalog(),
+    storage.clone(),
+    catalog,
     "/oxana".to_string(),
 ));
 
@@ -128,11 +131,10 @@ Jobs carry the data that gets enqueued and define enqueue-time metadata. Workers
 
 | `Job` attributes (enqueue-time) | `Worker` attributes (execution-time) |
 | --- | --- |
-| `#[oxana(worker = MyWorker)]` - override inferred `FooJob` -> `FooWorker` binding | `#[oxana(job = MyJob)]` - override inferred `FooWorker` -> `FooJob` binding |
-| `#[oxana(unique_id = "worker_{id}")]` - define unique job identifiers | `#[oxana(context = MyContext)]` - set worker context type |
-| `#[oxana(on_conflict = Skip)]` - handle unique job conflicts (Skip or Replace) | `#[oxana(error = MyError)]` - set worker error type |
-| `#[oxana(resurrect = false)]` - disable crash resurrection for this job type | `#[oxana(registry = MyRegistry)]` - choose component registry |
-| `#[oxana(resume = false)]` - reset prior-attempt job state on retry |  |
+| `#[oxana(unique_id = "worker_{id}")]` - define unique job identifiers | `#[oxana(job = MyJob)]` - override inferred `FooWorker` -> `FooJob` binding |
+| `#[oxana(on_conflict = Skip)]` - handle unique job conflicts (Skip or Replace) | `#[oxana(context = MyContext)]` - set worker context type |
+| `#[oxana(resurrect = false)]` - disable crash resurrection for this job type | `#[oxana(error = MyError)]` - set worker error type |
+| `#[oxana(resume = false)]` - reset prior-attempt job state on retry | `#[oxana(registry = MyRegistry)]` - choose component registry |
 | `#[oxana(throttle_cost = 2)]` - set per-job throttle cost | `#[oxana(max_retries = 3)]` - set maximum retry attempts |
 | `#[oxana(on_demand)]` - expose the job in the web dashboard for manual enqueueing | `#[oxana(retry_delay = 5)]` - set retry delay in seconds |
 |  | `#[oxana(cron(schedule = "*/5 * * * * *", queue = MyQueue))]` - schedule periodic jobs |
@@ -146,7 +148,7 @@ Batch workers use all-or-nothing result semantics: if `process_batch` returns `O
 
 ### Queues
 
-Queues are the channels through which jobs flow. Use the `#[derive(oxana::Queue)]` macro or implement the `Queue` trait manually.
+Queues are the channels through which jobs flow. Use the `#[derive(oxana::Queue)]` macro or implement the `Queue` trait manually. Static queues do not need `Serialize`; dynamic queues need serializable fields so Oxana can derive each runtime queue key.
 
 Queues can be:
 
@@ -163,14 +165,15 @@ Queue attributes:
 
 ### Component Registry
 
-The component registry automatically discovers and registers all workers and queues in your application. Use `#[derive(oxana::Registry)]` to create a registry and `ComponentRegistry::build_config()` to build the configuration.
+The component registry automatically discovers and registers all workers and queues in your application. Use `#[derive(oxana::Registry)]` to create a registry and `storage.runtime(ctx).register::<ComponentRegistry>()` to register them on a typed runtime.
 
 ### Storage
 
 `Storage` provides the interface for job persistence - enqueueing, scheduling, state management, and queue monitoring.
 
-Build it with `Storage::builder().build_from_env()` which reads the `REDIS_URL` environment variable.
+Build it with `Storage::from_env()` or `Storage::builder().build_from_env()`, which read the `REDIS_URL` environment variable.
 Set `REDIS_STATS_URL` to store counters and metrics in a separate Redis instance; when it is not set, stats use `REDIS_URL`.
+Call `storage.runtime(ctx)` to create a typed worker runtime, register queues and workers on that runtime, then call `runtime.run().await`.
 
 ### Context
 
@@ -201,13 +204,15 @@ ctx.state
 shown as normal state in the dashboard. `ctx.state.progress().await?` reloads the
 latest stored progress for the current job.
 
-### Configuration
+### Runtime Configuration
 
-Configuration is done through the `Config` builder, which allows you to:
+Runtime configuration is done on the typed runtime builder, which allows you to:
 
 - Automatically register queues and workers via the component registry
 - Set up graceful shutdown
-- Configure exit conditions
+- Configure exit conditions and runtime timing/backoff knobs
+
+`Storage` remains the enqueueing and monitoring handle; `RuntimeBuilder<C>` is the worker setup and execution handle for app context type `C`.
 
 ### Error Handling
 

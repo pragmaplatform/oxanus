@@ -6,7 +6,7 @@ use std::{
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Duration, Instant, MissedTickBehavior};
 
-use crate::{OxanaError, config::Config, metrics::JobMetricsBuffer};
+use crate::{OxanaError, metrics::JobMetricsBuffer, runtime::Runtime};
 
 const METRICS_FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 const STATS_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
@@ -64,14 +64,13 @@ impl QueueResultStats {
     }
 }
 
-pub async fn run<DT, ET>(
+pub async fn run<DT>(
     mut rx: mpsc::Receiver<WorkerResult>,
-    config: Arc<Config<DT, ET>>,
+    config: Arc<Runtime<DT>>,
     stats: Arc<Mutex<Stats>>,
 ) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     let mut metrics = JobMetricsBuffer::default();
     let mut pending_stats = HashMap::new();
@@ -117,8 +116,8 @@ where
     }
 }
 
-async fn update_stats<DT, ET>(
-    config: &Config<DT, ET>,
+async fn update_stats<DT>(
+    config: &Runtime<DT>,
     stats: Arc<Mutex<Stats>>,
     pending_stats: &mut HashMap<String, QueueResultStats>,
     active_queues: &mut HashSet<String>,
@@ -126,7 +125,6 @@ async fn update_stats<DT, ET>(
 ) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     let processed = {
         let mut stats = stats.lock().await;
@@ -153,7 +151,7 @@ where
         .record(result);
     active_queues.insert(result.queue.clone());
 
-    if let Some(exit_when_processed) = config.exit_when_processed
+    if let Some(exit_when_processed) = config.settings.exit_when_processed
         && processed >= exit_when_processed
     {
         config.cancel_token.cancel();
@@ -162,28 +160,26 @@ where
     Ok(())
 }
 
-async fn flush_before_exit<DT, ET>(
-    config: &Config<DT, ET>,
+async fn flush_before_exit<DT>(
+    config: &Runtime<DT>,
     metrics: &mut JobMetricsBuffer,
     pending_stats: &mut HashMap<String, QueueResultStats>,
     active_queues: &mut HashSet<String>,
 ) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     flush_metrics(config, metrics).await?;
     flush_pending_stats(config, pending_stats).await?;
     refresh_active_queue_lengths(config, active_queues).await
 }
 
-async fn flush_metrics<DT, ET>(
-    config: &Config<DT, ET>,
+async fn flush_metrics<DT>(
+    config: &Runtime<DT>,
     metrics: &mut JobMetricsBuffer,
 ) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     if metrics.is_empty() {
         return Ok(());
@@ -192,7 +188,10 @@ where
     if config
         .storage
         .internal
-        .track_redis_result(config.storage.internal.flush_job_metrics(metrics).await)?
+        .track_redis_result(
+            config.storage.internal.flush_job_metrics(metrics).await,
+            config.settings.redis_failure_tolerance,
+        )?
         .is_some()
     {
         metrics.clear();
@@ -201,13 +200,12 @@ where
     Ok(())
 }
 
-async fn flush_pending_stats<DT, ET>(
-    config: &Config<DT, ET>,
+async fn flush_pending_stats<DT>(
+    config: &Runtime<DT>,
     pending_stats: &mut HashMap<String, QueueResultStats>,
 ) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     if pending_stats.is_empty() {
         return Ok(());
@@ -222,6 +220,7 @@ where
                 .internal
                 .flush_result_stats(pending_stats)
                 .await,
+            config.settings.redis_failure_tolerance,
         )?
         .is_some()
     {
@@ -231,13 +230,12 @@ where
     Ok(())
 }
 
-async fn refresh_active_queue_lengths<DT, ET>(
-    config: &Config<DT, ET>,
+async fn refresh_active_queue_lengths<DT>(
+    config: &Runtime<DT>,
     active_queues: &mut HashSet<String>,
 ) -> Result<(), OxanaError>
 where
     DT: Send + Sync + Clone + 'static,
-    ET: std::error::Error + Send + Sync + 'static,
 {
     if active_queues.is_empty() {
         return Ok(());
@@ -250,6 +248,7 @@ where
             .internal
             .refresh_queue_length_stats(&queues)
             .await,
+        config.settings.redis_failure_tolerance,
     )?;
     prune_active_queues(active_queues, lengths.as_ref());
 
@@ -270,9 +269,10 @@ fn prune_active_queues(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Config, RuntimeSettings};
     use crate::metrics::{JobMetricsQuery, MetricIdentity};
     use crate::test_helper::{random_string, redis_pool};
-    use crate::{Config, Storage};
+    use crate::{Storage, runtime::Runtime};
     use testresult::TestResult;
 
     #[tokio::test]
@@ -280,8 +280,10 @@ mod tests {
         let storage = Storage::builder()
             .namespace(random_string())
             .build_from_pool(redis_pool().await?)?;
-        let config: Arc<Config<(), std::io::Error>> =
-            Arc::new(Config::new(&storage).exit_when_processed(1));
+        let mut settings = RuntimeSettings::new();
+        settings.exit_when_processed = Some(1);
+        let config: Arc<Runtime<()>> =
+            Arc::new(Runtime::new(storage.clone(), Config::new(), settings));
         let stats = Arc::new(Mutex::new(Stats::default()));
         let (tx, rx) = mpsc::channel(2);
         let collector = tokio::spawn(run(rx, Arc::clone(&config), Arc::clone(&stats)));
