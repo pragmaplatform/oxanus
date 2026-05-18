@@ -1,7 +1,11 @@
 use chrono::{DateTime, Utc};
+use std::{
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use crate::{
-    config::RuntimeSettings,
+    config::DEFAULT_DEAD_PROCESS_THRESHOLD,
     error::OxanaError,
     job_envelope::{JobEnvelope, JobId},
     metrics::{
@@ -45,11 +49,31 @@ use crate::prometheus::PrometheusMetrics;
 #[derive(Clone)]
 pub struct Storage {
     pub(crate) internal: StorageInternal,
+    monitoring_settings: Arc<StorageMonitoringSettings>,
 }
 
 impl Storage {
     pub(crate) fn new(internal: StorageInternal) -> Self {
-        Self { internal }
+        Self {
+            internal,
+            monitoring_settings: Arc::new(StorageMonitoringSettings::default()),
+        }
+    }
+
+    pub(crate) fn set_dead_process_threshold(&self, threshold: Duration) {
+        *self
+            .monitoring_settings
+            .dead_process_threshold
+            .write()
+            .expect("monitoring settings lock poisoned") = threshold;
+    }
+
+    pub(crate) fn dead_process_threshold(&self) -> Duration {
+        *self
+            .monitoring_settings
+            .dead_process_threshold
+            .read()
+            .expect("monitoring settings lock poisoned")
     }
 
     /// Creates a new [`StorageBuilder`] for configuring and building a Storage instance.
@@ -311,9 +335,7 @@ impl Storage {
     ///
     /// The full stats, or an [`OxanaError`] if the operation fails.
     pub async fn stats(&self) -> Result<Stats, OxanaError> {
-        self.internal
-            .stats(RuntimeSettings::new().dead_process_threshold)
-            .await
+        self.internal.stats(self.dead_process_threshold()).await
     }
 
     /// Returns Sidekiq-style job execution metrics for all workers.
@@ -477,9 +499,7 @@ impl Storage {
     ///
     /// The list of processes, or an [`OxanaError`] if the operation fails.
     pub async fn processes(&self) -> Result<Vec<Process>, OxanaError> {
-        self.internal
-            .processes(RuntimeSettings::new().dead_process_threshold)
-            .await
+        self.internal.processes(self.dead_process_threshold()).await
     }
 
     /// Returns the namespace this storage instance is using.
@@ -641,6 +661,18 @@ fn validate_dynamic_concurrency(
     }
 }
 
+struct StorageMonitoringSettings {
+    dead_process_threshold: RwLock<Duration>,
+}
+
+impl Default for StorageMonitoringSettings {
+    fn default() -> Self {
+        Self {
+            dead_process_threshold: RwLock::new(DEFAULT_DEAD_PROCESS_THRESHOLD),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,7 +709,8 @@ mod tests {
 
     #[test]
     fn runtime_setting_setters_override_defaults() {
-        let runtime = test_storage()
+        let storage = test_storage();
+        let runtime = storage
             .runtime(())
             .heartbeat_interval(Duration::from_millis(11))
             .dead_process_threshold(Duration::from_millis(12))
@@ -713,6 +746,7 @@ mod tests {
         );
         assert_eq!(settings.shutdown_timeout, Duration::from_millis(23));
         assert_eq!(settings.exit_when_processed, Some(24));
+        assert_eq!(storage.dead_process_threshold(), Duration::from_millis(12));
     }
 
     #[test]

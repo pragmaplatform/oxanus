@@ -6,7 +6,14 @@ use std::{
 
 pub trait Queue: Send + Sync {
     fn key(&self) -> String {
-        Self::to_config().key_or_prefix()
+        match Self::to_config().kind {
+            QueueKind::Static { key } => key,
+            QueueKind::Dynamic { prefix, .. } => {
+                panic!(
+                    "Dynamic queue {prefix} must implement Queue::key() with an instance-specific suffix"
+                )
+            }
+        }
     }
 
     fn to_config() -> QueueConfig;
@@ -310,6 +317,22 @@ mod tests {
             dynamic_queue.key(),
             "test_dynamic_queue#name=John:age=30:is_student=true"
         );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "Dynamic queue manual_dynamic must implement Queue::key() with an instance-specific suffix"
+    )]
+    fn default_dynamic_queue_key_panics() {
+        struct ManualDynamicQueue;
+
+        impl Queue for ManualDynamicQueue {
+            fn to_config() -> QueueConfig {
+                QueueConfig::as_dynamic("manual_dynamic")
+            }
+        }
+
+        let _key = ManualDynamicQueue.key();
     }
 
     #[cfg(feature = "macros")]

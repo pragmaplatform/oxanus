@@ -140,6 +140,7 @@ where
 
     pub fn dead_process_threshold(mut self, threshold: Duration) -> Self {
         self.settings.dead_process_threshold = threshold;
+        self.storage.set_dead_process_threshold(threshold);
         self
     }
 

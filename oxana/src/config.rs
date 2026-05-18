@@ -10,6 +10,8 @@ use crate::storage_types::{
 use crate::worker::{FromContext, Job, Worker};
 use crate::worker_registry::{self, WorkerConfig, WorkerConfigKind, WorkerRegistry};
 
+pub(crate) const DEFAULT_DEAD_PROCESS_THRESHOLD: Duration = Duration::from_secs(5);
+
 pub(crate) type RetryDelayOverrideFn =
     dyn Fn(&(dyn std::error::Error + Send + Sync), u32, u64) -> Option<u64> + Send + Sync;
 
@@ -44,7 +46,7 @@ impl RuntimeSettings {
             shutdown_timeout: Duration::from_secs(180),
             retry_delay_override: None,
             heartbeat_interval: Duration::from_millis(500),
-            dead_process_threshold: Duration::from_secs(5),
+            dead_process_threshold: DEFAULT_DEAD_PROCESS_THRESHOLD,
             resurrect_scan_interval: Duration::from_secs(2),
             redis_failure_tolerance: 30,
             retry_poll_interval: Duration::from_millis(300),
